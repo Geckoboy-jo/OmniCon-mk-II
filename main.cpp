@@ -15,6 +15,11 @@ struct DatabaseConfig {
 
 bool isSupportedUrl(const std::string& url);
 
+constexpr const char* kDatabaseHost = "localhost";
+constexpr const char* kDatabasePort = "3306";
+constexpr const char* kDatabaseUser = "block_app";
+constexpr const char* kDatabaseName = "omnicon_blocks";
+
 std::string trim(const std::string& value)
 {
     const std::string whitespace = " \t\r\n";
@@ -33,18 +38,6 @@ std::string readLine(const std::string& prompt)
     std::string value;
     std::getline(std::cin, value);
     return trim(value);
-}
-
-std::string readLineWithDefault(const std::string& prompt, const std::string& defaultValue)
-{
-    const std::string value = readLine(prompt + " [" + defaultValue + "]: ");
-    return value.empty() ? defaultValue : value;
-}
-
-std::string getEnvOrDefault(const char* key, const std::string& defaultValue)
-{
-    const char* value = std::getenv(key);
-    return value == nullptr ? defaultValue : std::string(value);
 }
 
 bool hasCommand(const std::string& command)
@@ -120,20 +113,38 @@ int nextGameId()
     return gameIdSeed++;
 }
 
+std::string stripOuterQuotes(const std::string& value)
+{
+    if (value.size() >= 2) {
+        const char first = value.front();
+        const char last = value.back();
+        if ((first == '"' && last == '"') || (first == '\'' && last == '\'')) {
+            return value.substr(1, value.size() - 2);
+        }
+    }
+
+    return value;
+}
+
+bool readLocalFileToBytes(const std::filesystem::path& filePath, std::vector<unsigned char>& bytes)
+{
+    std::ifstream input(filePath, std::ios::binary);
+    if (!input) {
+        return false;
+    }
+
+    bytes.assign(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
+    return input.good() || input.eof();
+}
+
 DatabaseConfig promptDatabaseConfig()
 {
     DatabaseConfig config;
-    config.host = readLineWithDefault("Database host", getEnvOrDefault("OMNICON_DB_HOST", "localhost"));
-    config.port = readLineWithDefault("Database port", getEnvOrDefault("OMNICON_DB_PORT", "3306"));
-    config.user = readLineWithDefault("Database user", getEnvOrDefault("OMNICON_DB_USER", "block_app"));
-    config.database = readLineWithDefault("Database name", getEnvOrDefault("OMNICON_DB_NAME", "omnicon_blocks"));
-
-    const std::string envPassword = getEnvOrDefault("OMNICON_DB_PASSWORD", "");
-    if (envPassword.empty()) {
-        config.password = readLine("Database password: ");
-    } else {
-        config.password = envPassword;
-    }
+    config.host = kDatabaseHost;
+    config.port = kDatabasePort;
+    config.user = kDatabaseUser;
+    config.database = kDatabaseName;
+    config.password = readLine("Database password: ");
 
     return config;
 }
@@ -257,21 +268,63 @@ bool shouldSkipHref(const std::string& href)
     return href.rfind("mailto:", 0) == 0 || href.rfind("javascript:", 0) == 0;
 }
 
-bool looksLikeFileLink(const std::string& url)
+std::string toLowerCopy(std::string value)
+{
+    for (char& character : value) {
+        if (character >= 'A' && character <= 'Z') {
+            character = static_cast<char>(character - 'A' + 'a');
+        }
+    }
+
+    return value;
+}
+
+std::string fileExtensionFromUrl(const std::string& url)
 {
     if (url.empty()) {
-        return false;
+        return "";
     }
 
     const std::size_t queryStart = url.find_first_of("?#");
     const std::string cleanUrl = queryStart == std::string::npos ? url : url.substr(0, queryStart);
 
     if (cleanUrl.empty() || cleanUrl.back() == '/') {
-        return false;
+        return "";
     }
 
     const std::string name = fileNameFromUrl(cleanUrl);
-    return name.find('.') != std::string::npos;
+    const std::size_t dot = name.find_last_of('.');
+    if (dot == std::string::npos || dot + 1 >= name.size()) {
+        return "";
+    }
+
+    return toLowerCopy(name.substr(dot + 1));
+}
+
+bool looksLikeDownloadableFileLink(const std::string& url)
+{
+    static const std::set<std::string> allowedExtensions = {
+        "zip", "7z", "rar", "tar", "gz", "bz2", "xz",
+        "iso", "bin", "cue", "rom", "nes", "sfc", "smc",
+        "n64", "z64", "v64", "gba", "gb", "gbc", "nds",
+        "chd", "wad", "cia", "rvz", "wbfs"
+    };
+
+    static const std::set<std::string> blockedExtensions = {
+        "jpg", "jpeg", "png", "gif", "bmp", "webp", "svg", "ico",
+        "html", "htm", "php", "asp", "aspx", "jsp"
+    };
+
+    const std::string extension = fileExtensionFromUrl(url);
+    if (extension.empty()) {
+        return false;
+    }
+
+    if (blockedExtensions.find(extension) != blockedExtensions.end()) {
+        return false;
+    }
+
+    return allowedExtensions.find(extension) != allowedExtensions.end();
 }
 
 std::vector<std::string> extractPageFileLinks(const std::string& pageUrl, const std::string& html)
@@ -290,7 +343,7 @@ std::vector<std::string> extractPageFileLinks(const std::string& pageUrl, const 
         }
 
         const std::string resolved = resolveUrl(pageUrl, href);
-        if (!isSupportedUrl(resolved) || !looksLikeFileLink(resolved)) {
+        if (!isSupportedUrl(resolved) || !looksLikeDownloadableFileLink(resolved)) {
             continue;
         }
 
@@ -338,7 +391,8 @@ void printHelp()
     std::cout << "Commands:\n"
               << "  download <url>  Download one file and store it as a block\n"
               << "  download-all <url>  Download file links from a page and store each as a block\n"
-              << "  config          Re-enter database connection settings\n"
+              << "  load-folder <path>  Upload every regular file in a local folder\n"
+              << "  config          Re-enter database password\n"
               << "  help            Show this message\n"
               << "  quit            Exit the REPL\n";
 }
@@ -391,11 +445,76 @@ int main()
 
         const std::string downloadCommand = "download ";
         const std::string downloadAllCommand = "download-all ";
+        const std::string loadFolderCommand = "load-folder ";
         const bool isSingleDownload = input.rfind(downloadCommand, 0) == 0;
         const bool isBatchDownload = input.rfind(downloadAllCommand, 0) == 0;
+        const bool isFolderCommand = input.rfind(loadFolderCommand, 0) == 0;
 
-        if (!isSingleDownload && !isBatchDownload) {
+        const std::string rawPathInput = isFolderCommand ? trim(input.substr(loadFolderCommand.size())) : input;
+        const std::filesystem::path folderPath = stripOuterQuotes(rawPathInput);
+        const bool isDirectFolderPath = !isSingleDownload && !isBatchDownload && !isFolderCommand
+            && !rawPathInput.empty() && std::filesystem::is_directory(folderPath);
+
+        if (!isSingleDownload && !isBatchDownload && !isFolderCommand && !isDirectFolderPath) {
             std::cout << "Unknown command. Type 'help' for usage.\n";
+            continue;
+        }
+
+        if (isFolderCommand || isDirectFolderPath) {
+            if (rawPathInput.empty()) {
+                std::cout << "Folder path is required.\n";
+                continue;
+            }
+
+            if (!std::filesystem::exists(folderPath) || !std::filesystem::is_directory(folderPath)) {
+                std::cout << "Folder path does not exist or is not a directory.\n";
+                continue;
+            }
+
+            if (!mysqlAvailable) {
+                mysqlAvailable = hasCommand("mysql");
+                if (!mysqlAvailable) {
+                    std::cout << "mysql client is required for upload storage. Install mysql and retry.\n";
+                    continue;
+                }
+                config = promptDatabaseConfig();
+            }
+
+            int successCount = 0;
+            int failureCount = 0;
+
+            const std::filesystem::directory_options dirOptions = std::filesystem::directory_options::skip_permission_denied;
+            std::error_code walkError;
+            for (std::filesystem::recursive_directory_iterator it(folderPath, dirOptions, walkError), end; it != end; ++it) {
+                if (walkError) {
+                    ++failureCount;
+                    walkError.clear();
+                    continue;
+                }
+
+                if (!it->is_regular_file()) {
+                    continue;
+                }
+
+                std::vector<unsigned char> bytes;
+                if (!readLocalFileToBytes(it->path(), bytes)) {
+                    ++failureCount;
+                    std::cout << "  Failed to read " << it->path().string() << "\n";
+                    continue;
+                }
+
+                const int gameId = nextGameId();
+                const std::string fileName = it->path().filename().string();
+                if (insertBlock(config, gameId, fileName, bytes)) {
+                    ++successCount;
+                    std::cout << "  Stored GameID=" << gameId << " Name=" << fileName << "\n";
+                } else {
+                    ++failureCount;
+                    std::cout << "  Failed to store " << it->path().string() << "\n";
+                }
+            }
+
+            std::cout << "Folder load complete. Stored=" << successCount << " Failed=" << failureCount << "\n";
             continue;
         }
 

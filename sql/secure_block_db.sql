@@ -25,14 +25,19 @@ CREATE TABLE IF NOT EXISTS blocks (
   CONSTRAINT chk_blocks_name_nonempty CHECK (CHAR_LENGTH(TRIM(name)) > 0)
 ) ENGINE=InnoDB;
 
-ALTER TABLE blocks
-  ADD COLUMN IF NOT EXISTS game LONGBLOB NOT NULL,
-  ADD COLUMN IF NOT EXISTS save_data LONGBLOB NULL,
-  ADD COLUMN IF NOT EXISTS image LONGBLOB NULL;
+-- 3) Least-privilege app account for cloud access only.
+-- Replace CHANGE_ME_STRONG_PASSWORD and REPLACE_WITH_ALLOWED_CLIENT_HOST before execution.
+-- Recommended host values:
+--   '203.0.113.10'         (single client public IP; best)
+--   '10.0.0.%'             (private subnet)
+--   'app-host.example.com' (single trusted host)
+CREATE USER IF NOT EXISTS 'block_app'@'REPLACE_WITH_ALLOWED_CLIENT_HOST' IDENTIFIED BY 'CHANGE_ME_STRONG_PASSWORD'
+  REQUIRE SSL
+  PASSWORD EXPIRE INTERVAL 180 DAY
+  FAILED_LOGIN_ATTEMPTS 5
+  PASSWORD_LOCK_TIME 2;
 
--- 3) Least-privilege app account for local-only access.
--- Replace CHANGE_ME_STRONG_PASSWORD before execution.
-CREATE USER IF NOT EXISTS 'block_app'@'localhost' IDENTIFIED BY 'CHANGE_ME_STRONG_PASSWORD'
+ALTER USER 'block_app'@'REPLACE_WITH_ALLOWED_CLIENT_HOST' IDENTIFIED BY 'CHANGE_ME_STRONG_PASSWORD'
   REQUIRE SSL
   PASSWORD EXPIRE INTERVAL 180 DAY
   FAILED_LOGIN_ATTEMPTS 5
@@ -40,6 +45,6 @@ CREATE USER IF NOT EXISTS 'block_app'@'localhost' IDENTIFIED BY 'CHANGE_ME_STRON
 
 GRANT SELECT, INSERT, UPDATE, DELETE
 ON omnicon_blocks.*
-TO 'block_app'@'localhost';
+TO 'block_app'@'REPLACE_WITH_ALLOWED_CLIENT_HOST';
 
 FLUSH PRIVILEGES;
