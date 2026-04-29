@@ -1,1 +1,26 @@
-include makeFile
+CC := g++
+CFLAGS := -std=c++17 -Wall -Wextra -pedantic
+TARGET := omnicon_repl
+SOURCES := main.cpp
+
+.PHONY: all run clean reset save
+
+all: $(TARGET)
+
+$(TARGET): $(SOURCES)
+	$(CC) $(CFLAGS) $(SOURCES) -o $(TARGET)
+
+run: $(TARGET)
+	./$(TARGET)
+
+clean:
+	rm -f $(TARGET)
+reset:
+	$(MAKE) clean
+	clear
+	$(MAKE)
+	-$(MAKE) run
+save:
+	git add .
+	git commit -m "save"
+	git push

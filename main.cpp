@@ -2,6 +2,7 @@
 
 #include <set>
 #include <regex>
+#include <chrono>
 
 namespace {
 
@@ -15,8 +16,8 @@ struct DatabaseConfig {
 
 bool isSupportedUrl(const std::string& url);
 
-constexpr const char* kDatabaseHost = "localhost";
-constexpr const char* kDatabasePort = "3306";
+constexpr const char* kDatabaseHost = "127.0.0.1";
+constexpr const char* kDatabasePort = "13306";
 constexpr const char* kDatabaseUser = "block_app";
 constexpr const char* kDatabaseName = "omnicon_blocks";
 
@@ -109,7 +110,10 @@ std::string fileNameFromUrl(const std::string& url)
 
 int nextGameId()
 {
-    static int gameIdSeed = 100000;
+    static int gameIdSeed = static_cast<int>(
+        std::chrono::duration_cast<std::chrono::seconds>(
+            std::chrono::system_clock::now().time_since_epoch())
+            .count());
     return gameIdSeed++;
 }
 
