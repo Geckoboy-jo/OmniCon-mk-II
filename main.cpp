@@ -1,5 +1,8 @@
 #include "top.hpp"
+#include "NES.hpp"
 
+#include <cstdlib>
+#include <cctype>
 #include <set>
 #include <regex>
 #include <chrono>
@@ -130,6 +133,34 @@ std::string stripOuterQuotes(const std::string& value)
     return value;
 }
 
+std::string normalizePath(const std::string& path)
+{
+    std::string normalized = path;
+    
+    // Convert Windows backslashes to forward slashes
+    for (char& c : normalized) {
+        if (c == '\\') {
+            c = '/';
+        }
+    }
+    
+    // Check if this is a Windows path (e.g., C:/, D:/, etc.)
+    if (normalized.size() >= 2 && normalized[1] == ':') {
+        // Convert Windows path to WSL path: C:/Users/... -> /mnt/c/users/...
+        char drive = std::tolower(normalized[0]);
+        std::string wslPath = "/mnt/" + std::string(1, drive) + normalized.substr(2);
+        
+        // Convert to lowercase for case-insensitive matching on Windows filesystems
+        for (char& c : wslPath) {
+            c = std::tolower(c);
+        }
+        
+        return wslPath;
+    }
+    
+    return normalized;
+}
+
 bool readLocalFileToBytes(const std::filesystem::path& filePath, std::vector<unsigned char>& bytes)
 {
     std::ifstream input(filePath, std::ios::binary);
@@ -148,7 +179,13 @@ DatabaseConfig promptDatabaseConfig()
     config.port = kDatabasePort;
     config.user = kDatabaseUser;
     config.database = kDatabaseName;
-    config.password = readLine("Database password: ");
+
+    const char* envPassword = std::getenv("MYSQL_APP_PASSWORD");
+    if (envPassword != nullptr && envPassword[0] != '\0') {
+        config.password = envPassword;
+    } else {
+        config.password = readLine("Database password: ");
+    }
 
     return config;
 }
@@ -363,18 +400,16 @@ bool insertBlock(const DatabaseConfig& config, int gameId, const std::string& fi
 {
     const std::string gameHex = hexEncode(gameData);
     const std::string sql =
-        "INSERT INTO blocks (game_id, name, game, save_data, image) VALUES ("
+        "INSERT IGNORE INTO blocks (game_id, name, game, save_data, image) VALUES ("
         + std::to_string(gameId) + ", '" + sqlEscape(fileName) + "', X'" + gameHex + "', X'', X'');\n";
 
     std::string command;
-    if (!config.password.empty()) {
-        command += "MYSQL_PWD=" + shellEscape(config.password) + " ";
-    }
-
-    command += "mysql --host=" + shellEscape(config.host)
+    command += "mysql --protocol=TCP --host=" + shellEscape(config.host)
         + " --port=" + shellEscape(config.port)
         + " --user=" + shellEscape(config.user)
-        + " --database=" + shellEscape(config.database);
+        + " --password=" + shellEscape(config.password)
+        + " --database=" + shellEscape(config.database)
+        + " 2>/dev/null";
 
     FILE* mysqlPipe = popen(command.c_str(), "w");
     if (mysqlPipe == nullptr) {
@@ -396,6 +431,8 @@ void printHelp()
               << "  download <url>  Download one file and store it as a block\n"
               << "  download-all <url>  Download file links from a page and store each as a block\n"
               << "  load-folder <path>  Upload every regular file in a local folder\n"
+              << "  play <path>     Load and run a .nes ROM file with Agnes NES emulator\n"
+              << "                  (Supports Windows paths via WSL: C:\\Users\\...\\file.nes)\n"
               << "  config          Re-enter database password\n"
               << "  help            Show this message\n"
               << "  quit            Exit the REPL\n";
@@ -447,6 +484,31 @@ int main()
             continue;
         }
 
+        const std::string playCommand = "play ";
+        const bool isPlayCommand = input.rfind(playCommand, 0) == 0;
+
+        if (isPlayCommand) {
+            std::string romPath = trim(input.substr(playCommand.size()));
+            romPath = stripOuterQuotes(romPath);
+            romPath = normalizePath(romPath);
+
+            if (romPath.empty()) {
+                std::cout << "ROM path is required.\n";
+                continue;
+            }
+
+            if (!std::filesystem::exists(romPath)) {
+                std::cout << "ROM file does not exist: " << romPath << "\n";
+                continue;
+            }
+
+            NESEmulation nes;
+            if (nes.loadRom(romPath)) {
+                nes.runInteractive();
+            }
+            continue;
+        }
+
         const std::string downloadCommand = "download ";
         const std::string downloadAllCommand = "download-all ";
         const std::string loadFolderCommand = "load-folder ";
@@ -455,7 +517,7 @@ int main()
         const bool isFolderCommand = input.rfind(loadFolderCommand, 0) == 0;
 
         const std::string rawPathInput = isFolderCommand ? trim(input.substr(loadFolderCommand.size())) : input;
-        const std::filesystem::path folderPath = stripOuterQuotes(rawPathInput);
+        const std::filesystem::path folderPath = normalizePath(stripOuterQuotes(rawPathInput));
         const bool isDirectFolderPath = !isSingleDownload && !isBatchDownload && !isFolderCommand
             && !rawPathInput.empty() && std::filesystem::is_directory(folderPath);
 

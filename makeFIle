@@ -1,0 +1,19 @@
+CXX = main.cpp wrapper.cpp 
+HXX = top.hpp wrapper.hpp block.hpp
+target = OmniCon
+
+$(target):
+	g++ -o $(target) $(CXX) -I. -std=c++17
+clean:
+	rm -f $(target)
+save:
+	git add .
+	git commit -m "save"
+	git push
+reset:
+	make clean
+	clear
+	make 
+	make run
+run:
+	./$(target)
