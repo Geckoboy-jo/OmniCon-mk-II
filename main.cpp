@@ -1,11 +1,16 @@
 #include "top.hpp"
 #include "NES.hpp"
+#include "GameBoy.hpp"
+#include "SNES.hpp"
+#include "save_tree.hpp"
 
 #include <cstdlib>
 #include <cctype>
 #include <set>
 #include <regex>
 #include <chrono>
+#include <cstdint>
+#include <sstream>
 
 namespace {
 
@@ -96,6 +101,231 @@ std::string hexEncode(const std::vector<unsigned char>& bytes)
     return hex;
 }
 
+bool hexDecode(const std::string& hex, std::vector<unsigned char>& bytes)
+{
+    if (hex.size() % 2 != 0) {
+        return false;
+    }
+
+    auto hexValue = [](char character) -> int {
+        if (character >= '0' && character <= '9') return character - '0';
+        if (character >= 'A' && character <= 'F') return character - 'A' + 10;
+        if (character >= 'a' && character <= 'f') return character - 'a' + 10;
+        return -1;
+    };
+
+    bytes.clear();
+    bytes.reserve(hex.size() / 2);
+
+    for (std::size_t index = 0; index < hex.size(); index += 2) {
+        const int high = hexValue(hex[index]);
+        const int low = hexValue(hex[index + 1]);
+        if (high < 0 || low < 0) {
+            bytes.clear();
+            return false;
+        }
+
+        bytes.push_back(static_cast<unsigned char>((high << 4) | low));
+    }
+
+    return true;
+}
+
+std::uint64_t fnv1a64(const unsigned char* data, std::size_t size, std::uint64_t seed = 1469598103934665603ULL)
+{
+    std::uint64_t hash = seed;
+    for (std::size_t index = 0; index < size; ++index) {
+        hash ^= static_cast<std::uint64_t>(data[index]);
+        hash *= 1099511628211ULL;
+    }
+
+    return hash;
+}
+
+std::uint64_t stableSaveGameId(const std::string& platform, const std::vector<unsigned char>& romBytes)
+{
+    std::uint64_t hash = fnv1a64(reinterpret_cast<const unsigned char*>(platform.data()), platform.size());
+    hash = fnv1a64(romBytes.data(), romBytes.size(), hash);
+    if (hash == 0) {
+        hash = 1;
+    }
+
+    return hash;
+}
+
+std::string buildMysqlCommand(const DatabaseConfig& config)
+{
+    std::string command;
+    command += "mysql --protocol=TCP --batch --raw --skip-column-names --host=" + shellEscape(config.host)
+        + " --port=" + shellEscape(config.port)
+        + " --user=" + shellEscape(config.user)
+        + " --password=" + shellEscape(config.password)
+        + " --database=" + shellEscape(config.database)
+        + " 2>/dev/null";
+    return command;
+}
+
+bool runMysqlQuery(const DatabaseConfig& config, const std::string& query, std::string& output)
+{
+    const std::string command =
+        "mysql --protocol=TCP --batch --raw --skip-column-names --host=" + shellEscape(config.host)
+        + " --port=" + shellEscape(config.port)
+        + " --user=" + shellEscape(config.user)
+        + " --password=" + shellEscape(config.password)
+        + " --database=" + shellEscape(config.database)
+        + " --execute=" + shellEscape(query)
+        + " 2>/dev/null";
+
+    FILE* mysqlPipe = popen(command.c_str(), "r");
+    if (mysqlPipe == nullptr) {
+        return false;
+    }
+
+    char buffer[4096];
+    output.clear();
+    while (true) {
+        const std::size_t readCount = fread(buffer, 1, sizeof(buffer), mysqlPipe);
+        if (readCount > 0) {
+            output.append(buffer, buffer + readCount);
+        }
+
+        if (readCount < sizeof(buffer)) {
+            if (feof(mysqlPipe)) {
+                break;
+            }
+            if (ferror(mysqlPipe)) {
+                pclose(mysqlPipe);
+                return false;
+            }
+        }
+    }
+
+    return pclose(mysqlPipe) == 0;
+}
+
+bool readLocalFileToBytes(const std::filesystem::path& filePath, std::vector<unsigned char>& bytes);
+
+bool loadSaveIndexFromDatabase(const DatabaseConfig& config, SaveBPlusTree& saveIndex)
+{
+    std::string output;
+    if (!runMysqlQuery(config,
+            "SELECT game_id, HEX(save_data) FROM blocks WHERE save_data IS NOT NULL AND OCTET_LENGTH(save_data) > 0;",
+            output)) {
+        return false;
+    }
+
+    std::istringstream stream(output);
+    std::string line;
+    while (std::getline(stream, line)) {
+        if (line.empty()) {
+            continue;
+        }
+
+        const std::size_t tab = line.find('\t');
+        if (tab == std::string::npos) {
+            continue;
+        }
+
+        const std::string keyText = trim(line.substr(0, tab));
+        const std::string hexText = trim(line.substr(tab + 1));
+        if (keyText.empty() || hexText.empty()) {
+            continue;
+        }
+
+        try {
+            const std::uint64_t key = static_cast<std::uint64_t>(std::stoull(keyText));
+            std::vector<unsigned char> saveBytes;
+            if (hexDecode(hexText, saveBytes)) {
+                saveIndex.upsert(key, std::move(saveBytes));
+            }
+        } catch (...) {
+            continue;
+        }
+    }
+
+    return true;
+}
+
+bool persistSaveData(const DatabaseConfig& config,
+    std::uint64_t gameId,
+    const std::string& fileName,
+    const std::vector<unsigned char>& romData,
+    const std::vector<unsigned char>& saveData)
+{
+    if (saveData.empty()) {
+        return false;
+    }
+
+    const std::string romHex = hexEncode(romData);
+    const std::string saveHex = hexEncode(saveData);
+    const std::string sql =
+        "INSERT INTO blocks (game_id, name, game, save_data, image) VALUES ("
+        + std::to_string(gameId) + ", '" + sqlEscape(fileName) + "', X'" + romHex + "', X'" + saveHex + "', X'') "
+        "ON DUPLICATE KEY UPDATE name = VALUES(name), game = VALUES(game), save_data = VALUES(save_data);\n";
+
+    const std::string command = buildMysqlCommand(config);
+    FILE* mysqlPipe = popen(command.c_str(), "w");
+    if (mysqlPipe == nullptr) {
+        return false;
+    }
+
+    const std::size_t writeCount = fwrite(sql.data(), 1, sql.size(), mysqlPipe);
+    if (writeCount != sql.size()) {
+        pclose(mysqlPipe);
+        return false;
+    }
+
+    return pclose(mysqlPipe) == 0;
+}
+
+template <typename Emulator>
+void runGameSession(const DatabaseConfig& config,
+    SaveBPlusTree& saveIndex,
+    const std::string& platform,
+    const std::string& romPath,
+    bool persistToDatabase)
+{
+    std::vector<unsigned char> romBytes;
+    if (!readLocalFileToBytes(romPath, romBytes)) {
+        std::cout << "Failed to read ROM bytes for save lookup.\n";
+        return;
+    }
+
+    const std::uint64_t gameId = stableSaveGameId(platform, romBytes);
+    std::vector<unsigned char> saveBytes;
+    const bool hasSave = saveIndex.find(gameId, saveBytes);
+
+    Emulator emulator;
+    if (!emulator.loadRom(romPath)) {
+        return;
+    }
+
+    if (hasSave && !saveBytes.empty()) {
+        if (emulator.restoreSaveData(saveBytes)) {
+            std::cout << "Loaded save data for this ROM.\n";
+        } else {
+            std::cout << "Found save data, but it could not be restored.\n";
+        }
+    }
+
+    emulator.runInteractive();
+
+    const std::vector<unsigned char> newSave = emulator.dumpSaveData();
+    if (newSave.empty()) {
+        return;
+    }
+
+    saveIndex.upsert(gameId, newSave);
+    const std::string fileName = std::filesystem::path(romPath).filename().string();
+    if (persistToDatabase) {
+        if (persistSaveData(config, gameId, fileName, romBytes, newSave)) {
+            std::cout << "Saved emulator state for " << fileName << "\n";
+        } else {
+            std::cout << "Save state updated in memory, but database persistence failed.\n";
+        }
+    }
+}
+
 std::string fileNameFromUrl(const std::string& url)
 {
     std::size_t end = url.find_first_of("?#");
@@ -111,9 +341,9 @@ std::string fileNameFromUrl(const std::string& url)
     return url.substr(slash + 1, end - slash - 1);
 }
 
-int nextGameId()
+std::uint64_t nextGameId()
 {
-    static int gameIdSeed = static_cast<int>(
+    static std::uint64_t gameIdSeed = static_cast<std::uint64_t>(
         std::chrono::duration_cast<std::chrono::seconds>(
             std::chrono::system_clock::now().time_since_epoch())
             .count());
@@ -396,7 +626,7 @@ std::vector<std::string> extractPageFileLinks(const std::string& pageUrl, const 
     return links;
 }
 
-bool insertBlock(const DatabaseConfig& config, int gameId, const std::string& fileName, const std::vector<unsigned char>& gameData)
+bool insertBlock(const DatabaseConfig& config, std::uint64_t gameId, const std::string& fileName, const std::vector<unsigned char>& gameData)
 {
     const std::string gameHex = hexEncode(gameData);
     const std::string sql =
@@ -431,8 +661,11 @@ void printHelp()
               << "  download <url>  Download one file and store it as a block\n"
               << "  download-all <url>  Download file links from a page and store each as a block\n"
               << "  load-folder <path>  Upload every regular file in a local folder\n"
-              << "  play <path>     Load and run a .nes ROM file with Agnes NES emulator\n"
+              << "  play <path>     Load and run a ROM file (.nes for NES, .gb/.gbc/.sgb for Game Boy, .smc/.sfc for SNES)\n"
               << "                  (Supports Windows paths via WSL: C:\\Users\\...\\file.nes)\n"
+              << "  controls-gb     Change global Game Boy controls\n"
+              << "  controls        Change global NES controls (applies to all ROMs)\n"
+              << "  controls-snes   Change global SNES controls\n"
               << "  config          Re-enter database password\n"
               << "  help            Show this message\n"
               << "  quit            Exit the REPL\n";
@@ -459,8 +692,14 @@ int main()
 
     std::cout << "OmniCon downloader REPL\n";
     DatabaseConfig config{};
+    SaveBPlusTree saveIndex;
     if (mysqlAvailable) {
         config = promptDatabaseConfig();
+        if (loadSaveIndexFromDatabase(config, saveIndex)) {
+            std::cout << "Loaded cached save data index.\n";
+        } else {
+            std::cout << "Save data index could not be loaded; play sessions will still work, but cached save lookup is disabled.\n";
+        }
     }
     printHelp();
 
@@ -481,6 +720,24 @@ int main()
 
         if (input == "config") {
             config = promptDatabaseConfig();
+            if (mysqlAvailable) {
+                loadSaveIndexFromDatabase(config, saveIndex);
+            }
+            continue;
+        }
+
+        if (input == "controls" || input == "change controls" || input == "change-controls") {
+            NESEmulation::configureGlobalControls();
+            continue;
+        }
+
+        if (input == "controls-snes" || input == "change snes controls" || input == "change-snes-controls") {
+            SNESEmulation::configureGlobalControls();
+            continue;
+        }
+
+        if (input == "controls-gb" || input == "change gb controls" || input == "change-gb-controls") {
+            GameBoyEmulation::configureGlobalControls();
             continue;
         }
 
@@ -502,9 +759,21 @@ int main()
                 continue;
             }
 
-            NESEmulation nes;
-            if (nes.loadRom(romPath)) {
-                nes.runInteractive();
+            std::string ext = std::filesystem::path(romPath).extension().string();
+            ext = toLowerCopy(ext);
+
+            const bool isSnes = (ext == ".smc" || ext == ".sfc");
+            const bool isGameBoy = (ext == ".gb" || ext == ".gbc" || ext == ".sgb");
+            const bool isNes  = (ext == ".nes");
+
+            if (isGameBoy) {
+                runGameSession<GameBoyEmulation>(config, saveIndex, "gb", romPath, mysqlAvailable);
+            } else if (isSnes) {
+                runGameSession<SNESEmulation>(config, saveIndex, "snes", romPath, mysqlAvailable);
+            } else if (isNes) {
+                runGameSession<NESEmulation>(config, saveIndex, "nes", romPath, mysqlAvailable);
+            } else {
+                std::cout << "Unsupported ROM format. Use .nes (NES), .gb/.gbc/.sgb (Game Boy), or .smc/.sfc (SNES).\n";
             }
             continue;
         }
@@ -569,7 +838,7 @@ int main()
                     continue;
                 }
 
-                const int gameId = nextGameId();
+                const std::uint64_t gameId = nextGameId();
                 const std::string fileName = it->path().filename().string();
                 if (insertBlock(config, gameId, fileName, bytes)) {
                     ++successCount;
@@ -600,7 +869,7 @@ int main()
         }
 
         if (isSingleDownload) {
-            const int gameId = nextGameId();
+            const std::uint64_t gameId = nextGameId();
             const std::string fileName = fileNameFromUrl(url);
             std::vector<unsigned char> bytes;
 
@@ -634,7 +903,7 @@ int main()
         int successCount = 0;
         int failureCount = 0;
         for (const std::string& link : links) {
-            const int gameId = nextGameId();
+            const std::uint64_t gameId = nextGameId();
             const std::string fileName = fileNameFromUrl(link);
             std::vector<unsigned char> bytes;
 

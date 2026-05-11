@@ -11,7 +11,7 @@ USE omnicon_blocks;
 -- 2) Core table mapped from class `block` in block.hpp.
 CREATE TABLE IF NOT EXISTS blocks (
   block_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-  game_id INT NOT NULL,
+  game_id BIGINT UNSIGNED NOT NULL,
   name VARCHAR(120) NOT NULL,
   file_path VARCHAR(500) NOT NULL,
   file_size BIGINT UNSIGNED NOT NULL,

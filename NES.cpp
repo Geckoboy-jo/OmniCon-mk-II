@@ -1,4 +1,5 @@
 #include "NES.hpp"
+#include "audio_clock.hpp"
 #include <fstream>
 #include <iostream>
 #include <cstring>
@@ -54,14 +55,29 @@ const char* controllerButtonName(SDL_GameControllerButton button)
 
 } // namespace
 
+NESEmulation::InputMode NESEmulation::globalInputMode = NESEmulation::InputMode::KeyboardOnly;
+NESEmulation::KeyBindings NESEmulation::globalKeyBindings = {};
+NESEmulation::ControllerBindings NESEmulation::globalControllerBindings = {};
+bool NESEmulation::globalInputConfigured = false;
+
 NESEmulation::NESEmulation()
         : emulator(nullptr), isRunning(false), window(nullptr), renderer(nullptr),
           screenTexture(nullptr), controller(nullptr), controllerDeviceIndex(-1),
-          scaleX(2), scaleY(2), inputMode(InputMode::KeyboardOnly)
+                    scaleX(2), scaleY(2), workerInput{}, emulationThreadStopRequested(false),
+                    emulationThreadRunning(false), emulationThreadFailed(false), frameReady(false),
+                    inputMode(InputMode::KeyboardOnly)
 {
     frameBuffer.resize(AGNES_SCREEN_WIDTH * AGNES_SCREEN_HEIGHT * 4, 0);
+        latestFrame.resize(AGNES_SCREEN_WIDTH * AGNES_SCREEN_HEIGHT * 4, 0);
     emulator = agnes_make();
     setDefaultBindings();
+    if (globalInputConfigured) {
+        inputMode = globalInputMode;
+        keyBindings = globalKeyBindings;
+        controllerBindings = globalControllerBindings;
+    } else {
+        saveGlobalInputSettings();
+    }
     if (!emulator) {
         std::cerr << "Failed to create Agnes emulator instance.\n";
     }
@@ -103,20 +119,28 @@ bool NESEmulation::loadRom(const string& path)
     size_t fileSize = file.tellg();
     file.seekg(0, std::ios::beg);
 
-    std::vector<char> fileData(fileSize);
-    file.read(fileData.data(), fileSize);
+    romData.assign(fileSize, 0);
+    file.read(reinterpret_cast<char*>(romData.data()), fileSize);
     file.close();
 
+    if (!file) {
+        std::cerr << "Failed to read ROM file contents.\n";
+        romData.clear();
+        return false;
+    }
+
     // Validate iNES header (first 4 bytes should be "NES\x1a")
-    if (fileSize < 16 || fileData[0] != 'N' || fileData[1] != 'E' || 
-        fileData[2] != 'S' || fileData[3] != 0x1a) {
+    if (fileSize < 16 || romData[0] != 'N' || romData[1] != 'E' || 
+        romData[2] != 'S' || romData[3] != 0x1a) {
         std::cerr << "Invalid NES ROM file format (missing or corrupted iNES header).\n";
+        romData.clear();
         return false;
     }
 
     // Try to load into Agnes
-    if (!agnes_load_ines_data(emulator, fileData.data(), fileSize)) {
+    if (!agnes_load_ines_data(emulator, romData.data(), fileSize)) {
         std::cerr << "Agnes emulator failed to load ROM.\n";
+        romData.clear();
         return false;
     }
 
@@ -128,8 +152,42 @@ bool NESEmulation::loadRom(const string& path)
 
 void NESEmulation::unloadRom()
 {
+    stopEmulationWorker();
     isRunning = false;
     romPath.clear();
+    romData.clear();
+}
+
+std::vector<unsigned char> NESEmulation::dumpSaveData() const
+{
+    if (!emulator || !isRunning) {
+        return {};
+    }
+
+    const size_t stateSize = agnes_state_size();
+    if (stateSize == 0) {
+        return {};
+    }
+
+    std::vector<unsigned char> state(stateSize, 0);
+    agnes_state_t* statePtr = reinterpret_cast<agnes_state_t*>(state.data());
+    agnes_dump_state(emulator, statePtr);
+    return state;
+}
+
+bool NESEmulation::restoreSaveData(const std::vector<unsigned char>& data)
+{
+    if (!emulator || !isRunning) {
+        return false;
+    }
+
+    const size_t expectedSize = agnes_state_size();
+    if (data.size() != expectedSize || expectedSize == 0) {
+        return false;
+    }
+
+    const agnes_state_t* statePtr = reinterpret_cast<const agnes_state_t*>(data.data());
+    return agnes_restore_state(emulator, statePtr);
 }
 
 void NESEmulation::calculateScale(int screenWidth, int screenHeight)
@@ -264,6 +322,14 @@ void NESEmulation::setDefaultBindings()
         SDL_CONTROLLER_BUTTON_BACK,
         SDL_CONTROLLER_BUTTON_START
     };
+}
+
+void NESEmulation::saveGlobalInputSettings()
+{
+    globalInputMode = inputMode;
+    globalKeyBindings = keyBindings;
+    globalControllerBindings = controllerBindings;
+    globalInputConfigured = true;
 }
 
 void NESEmulation::listControllers() const
@@ -450,6 +516,9 @@ void NESEmulation::configureInputMenu()
 
         std::cout << "Unknown menu option.\n";
     }
+
+    saveGlobalInputSettings();
+    std::cout << "Global controls updated.\n";
 }
 
 void NESEmulation::handleKeyboardEvent(SDL_Keycode key, bool pressed, agnes_input_t& input, bool& running)
@@ -489,16 +558,12 @@ void NESEmulation::renderFrame()
         return;
     }
 
-    for (int y = 0; y < AGNES_SCREEN_HEIGHT; y++) {
-        for (int x = 0; x < AGNES_SCREEN_WIDTH; x++) {
-            agnes_color_t color = agnes_get_screen_pixel(emulator, x, y);
-
-            const int offset = (y * AGNES_SCREEN_WIDTH + x) * 4;
-            frameBuffer[offset + 0] = color.r;
-            frameBuffer[offset + 1] = color.g;
-            frameBuffer[offset + 2] = color.b;
-            frameBuffer[offset + 3] = 255;
+    {
+        std::lock_guard<std::mutex> lock(frameMutex);
+        if (!frameReady.load()) {
+            return;
         }
+        frameBuffer = latestFrame;
     }
 
     if (SDL_UpdateTexture(screenTexture, nullptr, frameBuffer.data(), AGNES_SCREEN_WIDTH * 4) < 0) {
@@ -519,7 +584,7 @@ void NESEmulation::renderFrame()
 
 void NESEmulation::nextFrame()
 {
-    if (!emulator || !isRunning) {
+    if (!emulator || !isRunning.load()) {
         return;
     }
 
@@ -531,16 +596,17 @@ void NESEmulation::nextFrame()
 
 void NESEmulation::setInput(const agnes_input_t& input)
 {
-    if (!emulator || !isRunning) {
+    if (!emulator || !isRunning.load()) {
         return;
     }
 
-    agnes_set_input(emulator, &input, nullptr);
+    std::lock_guard<std::mutex> lock(inputMutex);
+    workerInput = input;
 }
 
 agnes_color_t NESEmulation::getPixel(int x, int y) const
 {
-    if (!emulator || !isRunning) {
+    if (!emulator || !isRunning.load()) {
         return {0, 0, 0, 0};
     }
 
@@ -548,7 +614,18 @@ agnes_color_t NESEmulation::getPixel(int x, int y) const
         return {0, 0, 0, 0};
     }
 
-    return agnes_get_screen_pixel(emulator, x, y);
+    std::lock_guard<std::mutex> lock(frameMutex);
+    if (!frameReady.load() || latestFrame.size() < static_cast<std::size_t>(AGNES_SCREEN_WIDTH * AGNES_SCREEN_HEIGHT * 4)) {
+        return {0, 0, 0, 0};
+    }
+
+    const std::size_t offset = (static_cast<std::size_t>(y) * static_cast<std::size_t>(AGNES_SCREEN_WIDTH) + static_cast<std::size_t>(x)) * 4;
+    return {
+        latestFrame[offset + 0],
+        latestFrame[offset + 1],
+        latestFrame[offset + 2],
+        latestFrame[offset + 3]
+    };
 }
 
 // Helper function to display NES frame as ASCII art (simple visualization)
@@ -580,9 +657,35 @@ void NESEmulation::displayFrame() const
     }
 }
 
+void NESEmulation::configureGlobalControls()
+{
+    NESEmulation configSession;
+
+    const bool hadControllerSubsystem = (SDL_WasInit(SDL_INIT_GAMECONTROLLER) != 0);
+    if (!hadControllerSubsystem && SDL_InitSubSystem(SDL_INIT_GAMECONTROLLER) < 0) {
+        std::cerr << "Failed to initialize controller subsystem: " << SDL_GetError() << "\n";
+        return;
+    }
+
+    if (SDL_NumJoysticks() > 0) {
+        for (int i = 0; i < SDL_NumJoysticks(); ++i) {
+            if (SDL_IsGameController(i)) {
+                configSession.openControllerByIndex(i);
+                break;
+            }
+        }
+    }
+
+    configSession.configureInputMenu();
+
+    if (!hadControllerSubsystem) {
+        SDL_QuitSubSystem(SDL_INIT_GAMECONTROLLER);
+    }
+}
+
 void NESEmulation::runInteractive()
 {
-    if (!emulator || !isRunning) {
+    if (!emulator || !isRunning.load()) {
         std::cerr << "No ROM loaded.\n";
         return;
     }
@@ -600,8 +703,6 @@ void NESEmulation::runInteractive()
             }
         }
     }
-
-    configureInputMenu();
 
     initSDL();
 
@@ -623,6 +724,12 @@ void NESEmulation::runInteractive()
     agnes_input_t input = {};
     bool running = true;
     bool windowClosed = false;
+
+    if (!startEmulationWorker()) {
+        std::cerr << "Failed to start NES emulation worker thread.\n";
+        cleanupSDL();
+        return;
+    }
 
     while (running && !windowClosed) {
         // Handle SDL events
@@ -680,19 +787,87 @@ void NESEmulation::runInteractive()
         
         // Update input
         setInput(input);
-        
-        // Emulate next frame
-        nextFrame();
 
-        if (!isRunning) {
+        if (emulationThreadFailed.load() || !isRunning.load()) {
             running = false;
             break;
         }
         
         // Render frame
         renderFrame();
+
+        SDL_Delay(1);
     }
-    
+
+    stopEmulationWorker();
     cleanupSDL();
     std::cout << "\nEmulation stopped.\n";
+}
+
+bool NESEmulation::startEmulationWorker()
+{
+    if (emulationThreadRunning.load() || !emulator || !isRunning.load()) {
+        return false;
+    }
+
+    emulationThreadStopRequested = false;
+    emulationThreadFailed = false;
+    frameReady = false;
+    emulationThread = std::thread(&NESEmulation::emulationWorkerLoop, this);
+    return true;
+}
+
+void NESEmulation::stopEmulationWorker()
+{
+    emulationThreadStopRequested = true;
+    if (emulationThread.joinable()) {
+        emulationThread.join();
+    }
+}
+
+void NESEmulation::emulationWorkerLoop()
+{
+    emulationThreadRunning = true;
+
+    std::vector<unsigned char> localFrame(static_cast<std::size_t>(AGNES_SCREEN_WIDTH * AGNES_SCREEN_HEIGHT) * 4, 0);
+    AudioMasterClock clock;
+    clock.configure(48000, 60.0988, 80);
+
+    while (!emulationThreadStopRequested.load() && isRunning.load()) {
+        agnes_input_t inputSnapshot = {};
+        {
+            std::lock_guard<std::mutex> lock(inputMutex);
+            inputSnapshot = workerInput;
+        }
+
+        agnes_set_input(emulator, &inputSnapshot, nullptr);
+        if (!agnes_next_frame(emulator)) {
+            std::cerr << "Emulator failed to advance frame. This ROM may not be supported by Agnes.\n";
+            isRunning = false;
+            emulationThreadFailed = true;
+            break;
+        }
+
+        for (int y = 0; y < AGNES_SCREEN_HEIGHT; ++y) {
+            for (int x = 0; x < AGNES_SCREEN_WIDTH; ++x) {
+                const agnes_color_t color = agnes_get_screen_pixel(emulator, x, y);
+                const std::size_t offset = (static_cast<std::size_t>(y) * static_cast<std::size_t>(AGNES_SCREEN_WIDTH) + static_cast<std::size_t>(x)) * 4;
+                localFrame[offset + 0] = color.r;
+                localFrame[offset + 1] = color.g;
+                localFrame[offset + 2] = color.b;
+                localFrame[offset + 3] = 255;
+            }
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(frameMutex);
+            latestFrame.swap(localFrame);
+            frameReady = true;
+        }
+
+        clock.onFrameProduced();
+        clock.throttle();
+    }
+
+    emulationThreadRunning = false;
 }
