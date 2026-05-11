@@ -776,9 +776,8 @@ void LibretroSameBoyBackend::onAudioPull(Uint8* stream, int len)
             }
             ++underrunEvents;
             stablePulls = 0;
-            if (toCopyFrames == 0) {
-                audioPrimed = false;
-            }
+            // Any underrun means we're too close to starvation; force re-prime.
+            audioPrimed = false;
         } else {
             if (stablePulls < 10000) {
                 ++stablePulls;
@@ -794,6 +793,8 @@ void LibretroSameBoyBackend::onAudioPull(Uint8* stream, int len)
     const int got = SDL_AudioStreamGet(audioStream, stream, requested);
     if (got < requested && got > 0) {
         std::memset(stream + got, 0, static_cast<std::size_t>(len - got));
+        // Partial reads still crackle in practice; re-prime to rebuild headroom.
+        audioPrimed = false;
         ++underrunEvents;
         stablePulls = 0;
     } else if (got <= 0) {
@@ -1511,7 +1512,8 @@ void GameBoyEmulation::emulationWorkerLoop()
 
     std::vector<unsigned char> localFrame(static_cast<std::size_t>(kGameBoyScreenWidth * kGameBoyScreenHeight) * 4, 0);
     AudioMasterClock clock;
-    clock.configure(backend ? backend->getAudioSampleRate() : 48000, backend ? backend->getNominalFps() : 59.7275, 90);
+    // Keep enough lead to satisfy adaptive GB audio prebuffer (up to ~240 ms).
+    clock.configure(backend ? backend->getAudioSampleRate() : 48000, backend ? backend->getNominalFps() : 59.7275, 260);
 
     while (!emulationThreadStopRequested.load() && isRunning.load()) {
         sameboy_input_t inputSnapshot = {};
