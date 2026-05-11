@@ -2,6 +2,7 @@
 #include "NES.hpp"
 #include "GameBoy.hpp"
 #include "SNES.hpp"
+#include "Atari800.hpp"
 #include "save_tree.hpp"
 
 #include <cstdlib>
@@ -661,11 +662,12 @@ void printHelp()
               << "  download <url>  Download one file and store it as a block\n"
               << "  download-all <url>  Download file links from a page and store each as a block\n"
               << "  load-folder <path>  Upload every regular file in a local folder\n"
-              << "  play <path>     Load and run a ROM file (.nes for NES, .gb/.gbc/.sgb for Game Boy, .smc/.sfc for SNES)\n"
+              << "  play <path>     Load and run a ROM file (.nes for NES, .gb/.gbc/.sgb for Game Boy, .smc/.sfc for SNES, .atr/.xfd/.atx/.xex/.car for Atari 800)\n"
               << "                  (Supports Windows paths via WSL: C:\\Users\\...\\file.nes)\n"
               << "  controls-gb     Change global Game Boy controls\n"
               << "  controls        Change global NES controls (applies to all ROMs)\n"
               << "  controls-snes   Change global SNES controls\n"
+              << "  controls-atari  Change global Atari 800 controls\n"
               << "  config          Re-enter database password\n"
               << "  help            Show this message\n"
               << "  quit            Exit the REPL\n";
@@ -741,6 +743,11 @@ int main()
             continue;
         }
 
+        if (input == "controls-atari" || input == "change atari controls" || input == "change-atari-controls") {
+            Atari800Emulation::configureGlobalControls();
+            continue;
+        }
+
         const std::string playCommand = "play ";
         const bool isPlayCommand = input.rfind(playCommand, 0) == 0;
 
@@ -764,16 +771,19 @@ int main()
 
             const bool isSnes = (ext == ".smc" || ext == ".sfc");
             const bool isGameBoy = (ext == ".gb" || ext == ".gbc" || ext == ".sgb");
+            const bool isAtari800 = (ext == ".atr" || ext == ".xfd" || ext == ".atx" || ext == ".xex" || ext == ".car" || ext == ".rom" || ext == ".cas" || ext == ".com");
             const bool isNes  = (ext == ".nes");
 
             if (isGameBoy) {
                 runGameSession<GameBoyEmulation>(config, saveIndex, "gb", romPath, mysqlAvailable);
             } else if (isSnes) {
                 runGameSession<SNESEmulation>(config, saveIndex, "snes", romPath, mysqlAvailable);
+            } else if (isAtari800) {
+                runGameSession<Atari800Emulation>(config, saveIndex, "atari800", romPath, mysqlAvailable);
             } else if (isNes) {
                 runGameSession<NESEmulation>(config, saveIndex, "nes", romPath, mysqlAvailable);
             } else {
-                std::cout << "Unsupported ROM format. Use .nes (NES), .gb/.gbc/.sgb (Game Boy), or .smc/.sfc (SNES).\n";
+                std::cout << "Unsupported ROM format. Use .nes (NES), .gb/.gbc/.sgb (Game Boy), .smc/.sfc (SNES), or .atr/.xfd/.atx/.xex/.car/.rom/.cas/.com (Atari 800).\n";
             }
             continue;
         }

@@ -234,6 +234,7 @@ private:
     int coreSampleRate = 48000;
     int audioSampleRate = 48000;
     double coreFps = 60.0;
+    std::vector<uint8_t> audioConvertBuffer;
 
     static LibretroSnes9xBackend* s_instance;
     static bool    s_envCb(unsigned cmd, void* data);
@@ -551,11 +552,16 @@ bool LibretroSnes9xBackend::ensureAudioDevice(int sampleRate)
         }
     }
 
+#ifdef SDL_HINT_AUDIO_RESAMPLING_MODE
+    // Prefer quality over speed to reduce fuzzy resampling artifacts.
+    SDL_SetHintWithPriority(SDL_HINT_AUDIO_RESAMPLING_MODE, "best", SDL_HINT_OVERRIDE);
+#endif
+
     SDL_AudioSpec desired = {};
     desired.freq = sampleRate;
     desired.format = AUDIO_S16SYS;
     desired.channels = 2;
-    desired.samples = 512;
+    desired.samples = 1024;
     desired.callback = nullptr;
 
     SDL_AudioSpec obtained = {};
@@ -606,14 +612,17 @@ void LibretroSnes9xBackend::queueAudioFrames(const int16_t* data, size_t frames)
         return;
     }
 
-    const size_t inputBytes = frames * 2 * sizeof(int16_t);
+    const int frameBytes = 2 * static_cast<int>(sizeof(int16_t));
+    const size_t inputBytes = frames * static_cast<size_t>(frameBytes);
     if (SDL_AudioStreamPut(audioStream, data, static_cast<int>(inputBytes)) < 0) {
         return;
     }
 
-    const std::size_t maxQueuedBytes = static_cast<std::size_t>(audioSampleRate) * 2 * sizeof(int16_t) / 8;
-    if (SDL_GetQueuedAudioSize(audioDevice) > maxQueuedBytes) {
-        SDL_ClearQueuedAudio(audioDevice);
+    // Keep a bounded device queue and leave excess in audioStream to avoid hard clears/pop noise.
+    const std::size_t maxQueuedBytes = static_cast<std::size_t>(audioSampleRate) * 2 * sizeof(int16_t) / 5;
+    const std::size_t queuedBytes = static_cast<std::size_t>(SDL_GetQueuedAudioSize(audioDevice));
+    if (queuedBytes >= maxQueuedBytes) {
+        return;
     }
 
     int available = SDL_AudioStreamAvailable(audioStream);
@@ -621,10 +630,16 @@ void LibretroSnes9xBackend::queueAudioFrames(const int16_t* data, size_t frames)
         return;
     }
 
-    std::vector<unsigned char> converted(static_cast<std::size_t>(available));
-    const int got = SDL_AudioStreamGet(audioStream, converted.data(), available);
+    std::size_t toQueue = std::min<std::size_t>(static_cast<std::size_t>(available), maxQueuedBytes - queuedBytes);
+    toQueue -= toQueue % static_cast<std::size_t>(frameBytes);
+    if (toQueue == 0) {
+        return;
+    }
+
+    audioConvertBuffer.resize(toQueue);
+    const int got = SDL_AudioStreamGet(audioStream, audioConvertBuffer.data(), static_cast<int>(toQueue));
     if (got > 0) {
-        SDL_QueueAudio(audioDevice, converted.data(), static_cast<Uint32>(got));
+        SDL_QueueAudio(audioDevice, audioConvertBuffer.data(), static_cast<Uint32>(got));
     }
 }
 

@@ -1,5 +1,6 @@
 #include "GameBoy.hpp"
 #include "audio_clock.hpp"
+#include "third_party/SameBoy/Core/gb.h"
 
 #include <fstream>
 #include <iostream>
@@ -8,6 +9,7 @@
 #include <chrono>
 #include <cstring>
 #include <memory>
+#include <cmath>
 #include <dlfcn.h>
 
 namespace {
@@ -81,6 +83,537 @@ public:
     bool restoreSaveData(const std::vector<unsigned char>& data) override { (void)data; return false; }
     sameboy_color_t getPixel(int x, int y) const override { (void)x; (void)y; return {0, 0, 0, 255}; }
 };
+
+GB_model_t selectSameBoyModel(const std::string& path, const std::vector<unsigned char>& romData)
+{
+    const auto endsWith = [&path](const char* suffix) {
+        const std::size_t suffixLength = std::strlen(suffix);
+        return path.size() >= suffixLength && path.compare(path.size() - suffixLength, suffixLength, suffix) == 0;
+    };
+
+    if (endsWith(".sgb")) {
+        return GB_MODEL_SGB_NTSC_NO_SFC;
+    }
+
+    if (endsWith(".gbc")) {
+        return GB_MODEL_CGB_E;
+    }
+
+    if (romData.size() > 0x143) {
+        const uint8_t cgbFlag = romData[0x143];
+        if (cgbFlag == 0x80 || cgbFlag == 0xC0) {
+            return GB_MODEL_CGB_E;
+        }
+    }
+
+    return GB_MODEL_DMG_B;
+}
+
+void loadNativeSameBoyBootRom(GB_gameboy_t* gb, GB_boot_rom_t type)
+{
+    if (!gb) {
+        return;
+    }
+
+    const char* modelName = nullptr;
+    switch (type) {
+        case GB_BOOT_ROM_DMG_0:
+        case GB_BOOT_ROM_DMG:
+            modelName = "dmg";
+            break;
+        case GB_BOOT_ROM_MGB:
+            modelName = "mgb";
+            break;
+        case GB_BOOT_ROM_SGB:
+            modelName = "sgb";
+            break;
+        case GB_BOOT_ROM_SGB2:
+            modelName = "sgb2";
+            break;
+        case GB_BOOT_ROM_CGB_0:
+            modelName = "cgb0";
+            break;
+        case GB_BOOT_ROM_CGB:
+        case GB_BOOT_ROM_CGB_E:
+            modelName = "cgb";
+            break;
+        case GB_BOOT_ROM_AGB_0:
+        case GB_BOOT_ROM_AGB:
+            modelName = "agb";
+            break;
+        default:
+            break;
+    }
+
+    if (!modelName) {
+        return;
+    }
+
+    const std::string path = std::string("third_party/SameBoy/build/bin/BootROMs/") + modelName + "_boot.bin";
+    if (GB_load_boot_rom(gb, path.c_str()) != 0) {
+        std::cerr << "[GB] Failed to load SameBoy boot ROM: " << path << "\n";
+    }
+}
+
+class NativeSameBoyBackend final : public SameBoyBackend {
+public:
+    NativeSameBoyBackend();
+    ~NativeSameBoyBackend() override;
+
+    bool loadRom(const std::string& path) override;
+    bool nextFrame() override;
+    void setInput(const sameboy_input_t& input) override;
+    std::vector<unsigned char> dumpSaveData() const override;
+    bool restoreSaveData(const std::vector<unsigned char>& data) override;
+    sameboy_color_t getPixel(int x, int y) const override;
+    int getAudioSampleRate() const override { return audioSampleRate; }
+    double getNominalFps() const override { return coreFps; }
+
+private:
+    bool ensureAudioDevice(int sampleRate);
+    void closeAudioDevice();
+    void queueAudioFrames(const int16_t* data, size_t frames);
+    void onAudioPull(Uint8* stream, int len);
+    void onAudioSample(const GB_sample_t& sample);
+    const int16_t* applyRateControl(const int16_t* data, size_t frames, size_t& outFrames, int bufferedFramesBefore);
+
+    static uint32_t s_rgbEncode(GB_gameboy_t* gb, uint8_t r, uint8_t g, uint8_t b);
+    static void s_audioSampleCb(GB_gameboy_t* gb, GB_sample_t* sample);
+    static void sdlAudioPullCb(void* userdata, Uint8* stream, int len);
+
+    GB_gameboy_t* gameBoy = nullptr;
+    std::vector<unsigned char> romData;
+    std::vector<uint32_t> framePixels;
+    std::vector<int16_t> pendingAudioFrames;
+    sameboy_input_t currentInput = {};
+    bool gameLoaded = false;
+    int frameWidth = 160;
+    int frameHeight = 144;
+    SDL_AudioDeviceID audioDevice = 0;
+    int audioSampleRate = 48000;
+    double coreFps = 59.7275;
+    bool audioPrimed = false;
+    int targetPrebufferMs = 120;
+    int underrunEvents = 0;
+    int stablePulls = 0;
+    std::vector<int16_t> audioRing;
+    size_t audioRingRead = 0;
+    size_t audioRingWrite = 0;
+    size_t audioRingCount = 0;
+    int16_t lastAudioLeft = 0;
+    int16_t lastAudioRight = 0;
+    std::vector<int16_t> rateAdjustedBatch;
+    double rateControlPhase = 0.0;
+    double rateControlRatio = 1.0;
+};
+
+NativeSameBoyBackend::NativeSameBoyBackend()
+{
+    pendingAudioFrames.reserve(4096);
+    ensureAudioDevice(audioSampleRate);
+}
+
+NativeSameBoyBackend::~NativeSameBoyBackend()
+{
+    closeAudioDevice();
+    if (gameBoy) {
+        GB_dealloc(gameBoy);
+        gameBoy = nullptr;
+    }
+}
+
+bool NativeSameBoyBackend::loadRom(const std::string& path)
+{
+    std::ifstream file(path, std::ios::binary | std::ios::ate);
+    if (!file.is_open()) {
+        std::cerr << "[GB] Cannot open ROM: " << path << "\n";
+        return false;
+    }
+
+    const auto size = static_cast<size_t>(file.tellg());
+    file.seekg(0, std::ios::beg);
+    romData.resize(size);
+    if (!file.read(reinterpret_cast<char*>(romData.data()), static_cast<std::streamsize>(size))) {
+        std::cerr << "[GB] Failed to read ROM: " << path << "\n";
+        romData.clear();
+        return false;
+    }
+
+    if (gameBoy) {
+        GB_dealloc(gameBoy);
+        gameBoy = nullptr;
+    }
+
+    gameBoy = GB_init(GB_alloc(), selectSameBoyModel(path, romData));
+    if (!gameBoy) {
+        std::cerr << "[GB] Failed to initialize native SameBoy core.\n";
+        romData.clear();
+        return false;
+    }
+
+    if (!ensureAudioDevice(audioSampleRate)) {
+        std::cerr << "[GB] Continuing without audio output.\n";
+    }
+
+    framePixels.assign(static_cast<size_t>(frameWidth * frameHeight), 0);
+    pendingAudioFrames.clear();
+    currentInput = {};
+
+    GB_set_user_data(gameBoy, this);
+    GB_set_boot_rom_load_callback(gameBoy, loadNativeSameBoyBootRom);
+    GB_set_rgb_encode_callback(gameBoy, s_rgbEncode);
+    GB_set_pixels_output(gameBoy, framePixels.data());
+    GB_set_border_mode(gameBoy, GB_BORDER_NEVER);
+    GB_set_color_correction_mode(gameBoy, GB_COLOR_CORRECTION_DISABLED);
+    GB_set_highpass_filter_mode(gameBoy, GB_HIGHPASS_REMOVE_DC_OFFSET);
+    GB_set_interference_volume(gameBoy, 0.0);
+    GB_set_sample_rate(gameBoy, static_cast<unsigned>(audioSampleRate));
+    GB_apu_set_sample_callback(gameBoy, s_audioSampleCb);
+    GB_load_rom_from_buffer(gameBoy, romData.data(), romData.size());
+
+    frameWidth = static_cast<int>(GB_get_screen_width(gameBoy));
+    frameHeight = static_cast<int>(GB_get_screen_height(gameBoy));
+    coreFps = GB_get_usual_frame_rate(gameBoy);
+    if (frameWidth <= 0 || frameHeight <= 0) {
+        frameWidth = 160;
+        frameHeight = 144;
+    }
+
+    framePixels.assign(static_cast<size_t>(frameWidth * frameHeight), 0);
+    GB_set_pixels_output(gameBoy, framePixels.data());
+
+    if (audioDevice != 0) {
+        SDL_LockAudioDevice(audioDevice);
+        audioRingRead = 0;
+        audioRingWrite = 0;
+        audioRingCount = 0;
+        lastAudioLeft = 0;
+        lastAudioRight = 0;
+        audioPrimed = false;
+        targetPrebufferMs = 120;
+        underrunEvents = 0;
+        stablePulls = 0;
+        SDL_PauseAudioDevice(audioDevice, 1);
+        SDL_UnlockAudioDevice(audioDevice);
+    }
+
+    gameLoaded = true;
+    return true;
+}
+
+bool NativeSameBoyBackend::nextFrame()
+{
+    if (!gameBoy || !gameLoaded) {
+        return false;
+    }
+
+    GB_set_key_state(gameBoy, GB_KEY_UP, currentInput.up);
+    GB_set_key_state(gameBoy, GB_KEY_DOWN, currentInput.down);
+    GB_set_key_state(gameBoy, GB_KEY_LEFT, currentInput.left);
+    GB_set_key_state(gameBoy, GB_KEY_RIGHT, currentInput.right);
+    GB_set_key_state(gameBoy, GB_KEY_A, currentInput.a);
+    GB_set_key_state(gameBoy, GB_KEY_B, currentInput.b);
+    GB_set_key_state(gameBoy, GB_KEY_SELECT, currentInput.select);
+    GB_set_key_state(gameBoy, GB_KEY_START, currentInput.start);
+
+    pendingAudioFrames.clear();
+    GB_run_frame(gameBoy);
+    queueAudioFrames(pendingAudioFrames.data(), pendingAudioFrames.size() / 2);
+    return true;
+}
+
+void NativeSameBoyBackend::setInput(const sameboy_input_t& input)
+{
+    currentInput = input;
+}
+
+std::vector<unsigned char> NativeSameBoyBackend::dumpSaveData() const
+{
+    if (!gameBoy || !gameLoaded) {
+        return {};
+    }
+
+    const size_t saveSize = GB_get_save_state_size(gameBoy);
+    if (saveSize == 0) {
+        return {};
+    }
+
+    std::vector<unsigned char> saveData(saveSize);
+    GB_save_state_to_buffer(gameBoy, saveData.data());
+    return saveData;
+}
+
+bool NativeSameBoyBackend::restoreSaveData(const std::vector<unsigned char>& data)
+{
+    if (!gameBoy || !gameLoaded || data.empty()) {
+        return false;
+    }
+
+    return GB_load_state_from_buffer(gameBoy, data.data(), data.size()) == 0;
+}
+
+sameboy_color_t NativeSameBoyBackend::getPixel(int x, int y) const
+{
+    if (x < 0 || y < 0 || x >= frameWidth || y >= frameHeight) {
+        return {0, 0, 0, 255};
+    }
+
+    const uint32_t pixel = framePixels[static_cast<size_t>(y) * static_cast<size_t>(frameWidth) + static_cast<size_t>(x)];
+    return {
+        static_cast<unsigned char>(pixel & 0xFF),
+        static_cast<unsigned char>((pixel >> 8) & 0xFF),
+        static_cast<unsigned char>((pixel >> 16) & 0xFF),
+        static_cast<unsigned char>((pixel >> 24) & 0xFF)
+    };
+}
+
+bool NativeSameBoyBackend::ensureAudioDevice(int sampleRate)
+{
+    if (sampleRate <= 0) {
+        sampleRate = 48000;
+    }
+
+    if (audioDevice != 0 && sampleRate == audioSampleRate) {
+        return true;
+    }
+
+    closeAudioDevice();
+
+    if ((SDL_WasInit(SDL_INIT_AUDIO) & SDL_INIT_AUDIO) == 0) {
+        if (SDL_InitSubSystem(SDL_INIT_AUDIO) < 0) {
+            std::cerr << "[GB] Failed to initialize SDL audio subsystem: " << SDL_GetError() << "\n";
+            return false;
+        }
+    }
+
+#ifdef SDL_HINT_AUDIO_RESAMPLING_MODE
+    SDL_SetHintWithPriority(SDL_HINT_AUDIO_RESAMPLING_MODE, "best", SDL_HINT_OVERRIDE);
+#endif
+
+    SDL_AudioSpec desired = {};
+    desired.freq = sampleRate;
+    desired.format = AUDIO_S16SYS;
+    desired.channels = 2;
+    desired.samples = 2048;
+    desired.callback = sdlAudioPullCb;
+    desired.userdata = this;
+
+    SDL_AudioSpec obtained = {};
+    audioDevice = SDL_OpenAudioDevice(nullptr, 0, &desired, &obtained, 0);
+    if (audioDevice == 0) {
+        std::cerr << "[GB] Failed to open SDL audio device: " << SDL_GetError() << "\n";
+        return false;
+    }
+
+    audioSampleRate = obtained.freq > 0 ? obtained.freq : sampleRate;
+    const std::size_t ringFrames = std::max<std::size_t>(4096, static_cast<std::size_t>(audioSampleRate) / 2);
+    audioRing.assign(ringFrames * 2, 0);
+    audioRingRead = 0;
+    audioRingWrite = 0;
+    audioRingCount = 0;
+    audioPrimed = false;
+    targetPrebufferMs = 120;
+    underrunEvents = 0;
+    stablePulls = 0;
+    lastAudioLeft = 0;
+    lastAudioRight = 0;
+    SDL_PauseAudioDevice(audioDevice, 1);
+    return true;
+}
+
+void NativeSameBoyBackend::closeAudioDevice()
+{
+    audioRing.clear();
+    audioRingRead = 0;
+    audioRingWrite = 0;
+    audioRingCount = 0;
+    audioPrimed = false;
+    lastAudioLeft = 0;
+    lastAudioRight = 0;
+    rateAdjustedBatch.clear();
+    rateControlPhase = 0.0;
+    rateControlRatio = 1.0;
+
+    if (audioDevice != 0) {
+        SDL_ClearQueuedAudio(audioDevice);
+        SDL_CloseAudioDevice(audioDevice);
+        audioDevice = 0;
+    }
+}
+
+const int16_t* NativeSameBoyBackend::applyRateControl(const int16_t* data, size_t frames, size_t& outFrames, int bufferedFramesBefore)
+{
+    outFrames = frames;
+    if (!data || frames == 0) {
+        return data;
+    }
+
+    const int targetFrames = std::max(1, (audioSampleRate * targetPrebufferMs) / 1000);
+    const int errorFrames = targetFrames - bufferedFramesBefore;
+    const double normalizedError = std::clamp(
+        static_cast<double>(errorFrames) / static_cast<double>(targetFrames),
+        -1.0,
+        1.0);
+
+    constexpr double kMaxDelta = 0.0015;
+    const double targetRatio = std::clamp(1.0 + (normalizedError * kMaxDelta), 1.0 - kMaxDelta, 1.0 + kMaxDelta);
+    rateControlRatio = (rateControlRatio * 0.98) + (targetRatio * 0.02);
+
+    if (std::abs(rateControlRatio - 1.0) < 0.0002) {
+        outFrames = frames;
+        rateControlPhase = 0.0;
+        return data;
+    }
+
+    const std::size_t targetOutFrames = std::max<std::size_t>(
+        1,
+        static_cast<std::size_t>(std::llround(static_cast<double>(frames) * rateControlRatio)));
+    const double srcStep = 1.0 / rateControlRatio;
+
+    rateAdjustedBatch.resize(targetOutFrames * 2);
+    double srcPos = rateControlPhase;
+    for (std::size_t out = 0; out < targetOutFrames; ++out) {
+        std::size_t idx = static_cast<std::size_t>(srcPos);
+        double frac = srcPos - static_cast<double>(idx);
+
+        if (idx >= frames - 1) {
+            idx = frames - 1;
+            frac = 0.0;
+        }
+
+        const std::size_t nextIdx = std::min<std::size_t>(idx + 1, frames - 1);
+        const int32_t l0 = data[idx * 2];
+        const int32_t r0 = data[idx * 2 + 1];
+        const int32_t l1 = data[nextIdx * 2];
+        const int32_t r1 = data[nextIdx * 2 + 1];
+
+        const double l = static_cast<double>(l0) + (static_cast<double>(l1 - l0) * frac);
+        const double r = static_cast<double>(r0) + (static_cast<double>(r1 - r0) * frac);
+
+        rateAdjustedBatch[out * 2] = static_cast<int16_t>(std::clamp(l, -32768.0, 32767.0));
+        rateAdjustedBatch[out * 2 + 1] = static_cast<int16_t>(std::clamp(r, -32768.0, 32767.0));
+
+        srcPos += srcStep;
+    }
+
+    rateControlPhase = srcPos - std::floor(srcPos);
+    outFrames = targetOutFrames;
+    return rateAdjustedBatch.data();
+}
+
+void NativeSameBoyBackend::queueAudioFrames(const int16_t* data, size_t frames)
+{
+    if (!data || frames == 0 || audioDevice == 0) {
+        return;
+    }
+
+    SDL_LockAudioDevice(audioDevice);
+
+    const std::size_t capacityFrames = audioRing.size() / 2;
+    if (capacityFrames == 0) {
+        SDL_UnlockAudioDevice(audioDevice);
+        return;
+    }
+
+    const int bufferedFramesBefore = static_cast<int>(audioRingCount);
+    size_t adjustedFrames = frames;
+    const int16_t* adjustedData = applyRateControl(data, frames, adjustedFrames, bufferedFramesBefore);
+
+    for (std::size_t i = 0; i < adjustedFrames; ++i) {
+        if (audioRingCount >= capacityFrames) {
+            audioRingRead = (audioRingRead + 1) % capacityFrames;
+            --audioRingCount;
+        }
+
+        audioRing[audioRingWrite * 2] = adjustedData[i * 2];
+        audioRing[audioRingWrite * 2 + 1] = adjustedData[i * 2 + 1];
+        audioRingWrite = (audioRingWrite + 1) % capacityFrames;
+        ++audioRingCount;
+    }
+
+    if (underrunEvents > 0) {
+        targetPrebufferMs = std::min(220, targetPrebufferMs + 20);
+        underrunEvents = 0;
+        stablePulls = 0;
+    } else if (stablePulls > 300 && targetPrebufferMs > 90) {
+        targetPrebufferMs = std::max(90, targetPrebufferMs - 10);
+        stablePulls = 0;
+    }
+
+    const int prebufferFrames = (audioSampleRate * targetPrebufferMs) / 1000;
+    if (!audioPrimed && static_cast<int>(audioRingCount) >= prebufferFrames) {
+        audioPrimed = true;
+        SDL_PauseAudioDevice(audioDevice, 0);
+    }
+
+    SDL_UnlockAudioDevice(audioDevice);
+}
+
+void NativeSameBoyBackend::onAudioPull(Uint8* stream, int len)
+{
+    std::memset(stream, 0, static_cast<std::size_t>(len));
+    if (!audioPrimed || audioRing.empty()) {
+        return;
+    }
+
+    const int frameBytes = 2 * static_cast<int>(sizeof(int16_t));
+    const std::size_t requestedFrames = static_cast<std::size_t>(len / frameBytes);
+    auto* out = reinterpret_cast<int16_t*>(stream);
+    const std::size_t capacityFrames = audioRing.size() / 2;
+    const std::size_t toCopyFrames = std::min<std::size_t>(requestedFrames, audioRingCount);
+
+    for (std::size_t i = 0; i < toCopyFrames; ++i) {
+        out[i * 2] = audioRing[audioRingRead * 2];
+        out[i * 2 + 1] = audioRing[audioRingRead * 2 + 1];
+        lastAudioLeft = out[i * 2];
+        lastAudioRight = out[i * 2 + 1];
+        audioRingRead = (audioRingRead + 1) % capacityFrames;
+    }
+    audioRingCount -= toCopyFrames;
+
+    if (toCopyFrames < requestedFrames) {
+        for (std::size_t i = toCopyFrames; i < requestedFrames; ++i) {
+            out[i * 2] = lastAudioLeft;
+            out[i * 2 + 1] = lastAudioRight;
+        }
+        ++underrunEvents;
+        stablePulls = 0;
+        audioPrimed = false;
+    } else if (stablePulls < 10000) {
+        ++stablePulls;
+    }
+}
+
+void NativeSameBoyBackend::onAudioSample(const GB_sample_t& sample)
+{
+    pendingAudioFrames.push_back(sample.left);
+    pendingAudioFrames.push_back(sample.right);
+}
+
+uint32_t NativeSameBoyBackend::s_rgbEncode(GB_gameboy_t* gb, uint8_t r, uint8_t g, uint8_t b)
+{
+    (void)gb;
+    return static_cast<uint32_t>(r) |
+           (static_cast<uint32_t>(g) << 8) |
+           (static_cast<uint32_t>(b) << 16) |
+           0xFF000000u;
+}
+
+void NativeSameBoyBackend::s_audioSampleCb(GB_gameboy_t* gb, GB_sample_t* sample)
+{
+    auto* backend = static_cast<NativeSameBoyBackend*>(GB_get_user_data(gb));
+    if (backend && sample) {
+        backend->onAudioSample(*sample);
+    }
+}
+
+void NativeSameBoyBackend::sdlAudioPullCb(void* userdata, Uint8* stream, int len)
+{
+    auto* backend = static_cast<NativeSameBoyBackend*>(userdata);
+    if (backend) {
+        backend->onAudioPull(stream, len);
+    }
+}
 
 namespace libretro {
     static constexpr unsigned ENV_GET_CAN_DUPE        = 3;
@@ -169,6 +702,7 @@ private:
     void onAudioPull(Uint8* stream, int len);
     void queueSingleSample(int16_t left, int16_t right);
     void flushSingleSampleBatch();
+    const int16_t* applyRateControl(const int16_t* data, size_t frames, size_t& outFrames, int bufferedFramesBefore);
 
     void* coreHandle = nullptr;
     void    (*fn_init)() = nullptr;
@@ -206,6 +740,9 @@ private:
     int underrunEvents = 0;
     int stablePulls = 0;
     std::vector<int16_t> singleSampleBatch;
+    std::vector<int16_t> rateAdjustedBatch;
+    double rateControlPhase = 0.0;
+    double rateControlRatio = 1.0;
     bool useDirectRing = true;
     std::vector<int16_t> audioRing;
     size_t audioRingRead = 0;
@@ -562,6 +1099,11 @@ bool LibretroSameBoyBackend::ensureAudioDevice(int sampleRate)
         }
     }
 
+#ifdef SDL_HINT_AUDIO_RESAMPLING_MODE
+    // Prefer quality over speed to reduce fuzzy resampling artifacts.
+    SDL_SetHintWithPriority(SDL_HINT_AUDIO_RESAMPLING_MODE, "best", SDL_HINT_OVERRIDE);
+#endif
+
     SDL_AudioSpec desired = {};
     desired.freq = sampleRate;
     desired.format = AUDIO_S16SYS;
@@ -632,8 +1174,73 @@ void LibretroSameBoyBackend::closeAudioDevice()
 
     audioPrimed = false;
     singleSampleBatch.clear();
+    rateAdjustedBatch.clear();
+    rateControlPhase = 0.0;
+    rateControlRatio = 1.0;
     lastAudioLeft = 0;
     lastAudioRight = 0;
+}
+
+const int16_t* LibretroSameBoyBackend::applyRateControl(const int16_t* data, size_t frames, size_t& outFrames, int bufferedFramesBefore)
+{
+    outFrames = frames;
+    if (!data || frames == 0) {
+        return data;
+    }
+
+    const int targetFrames = std::max(1, (audioSampleRate * targetPrebufferMs) / 1000);
+    const int errorFrames = targetFrames - bufferedFramesBefore;
+    const double normalizedError = std::clamp(
+        static_cast<double>(errorFrames) / static_cast<double>(targetFrames),
+        -1.0,
+        1.0);
+
+    // Tiny PLL-like correction to keep buffer near target without audible pitch wobble.
+    constexpr double kMaxDelta = 0.0015;
+    const double targetRatio = std::clamp(1.0 + (normalizedError * kMaxDelta), 1.0 - kMaxDelta, 1.0 + kMaxDelta);
+    // Smooth corrections to avoid short-term ratio flutter.
+    rateControlRatio = (rateControlRatio * 0.98) + (targetRatio * 0.02);
+
+    if (std::abs(rateControlRatio - 1.0) < 0.0002) {
+        outFrames = frames;
+        rateControlPhase = 0.0;
+        return data;
+    }
+
+    const std::size_t targetOutFrames = std::max<std::size_t>(
+        1,
+        static_cast<std::size_t>(std::llround(static_cast<double>(frames) * rateControlRatio)));
+    const double srcStep = 1.0 / rateControlRatio;
+
+    rateAdjustedBatch.resize(targetOutFrames * 2);
+    double srcPos = rateControlPhase;
+    for (std::size_t out = 0; out < targetOutFrames; ++out) {
+        std::size_t idx = static_cast<std::size_t>(srcPos);
+        double frac = srcPos - static_cast<double>(idx);
+
+        if (idx >= frames - 1) {
+            idx = frames - 1;
+            frac = 0.0;
+        }
+
+        const std::size_t nextIdx = std::min<std::size_t>(idx + 1, frames - 1);
+        const int32_t l0 = data[idx * 2];
+        const int32_t r0 = data[idx * 2 + 1];
+        const int32_t l1 = data[nextIdx * 2];
+        const int32_t r1 = data[nextIdx * 2 + 1];
+
+        const double l = static_cast<double>(l0) + (static_cast<double>(l1 - l0) * frac);
+        const double r = static_cast<double>(r0) + (static_cast<double>(r1 - r0) * frac);
+
+        rateAdjustedBatch[out * 2] = static_cast<int16_t>(std::clamp(l, -32768.0, 32767.0));
+        rateAdjustedBatch[out * 2 + 1] = static_cast<int16_t>(std::clamp(r, -32768.0, 32767.0));
+
+        srcPos += srcStep;
+    }
+
+    rateControlPhase = srcPos - std::floor(srcPos);
+    outFrames = targetOutFrames;
+    return rateAdjustedBatch.data();
 }
 
 void LibretroSameBoyBackend::queueAudioFrames(const int16_t* data, size_t frames)
@@ -649,6 +1256,12 @@ void LibretroSameBoyBackend::queueAudioFrames(const int16_t* data, size_t frames
     SDL_LockAudioDevice(audioDevice);
 
     const int frameBytes = 2 * static_cast<int>(sizeof(int16_t));
+    const int bufferedFramesBefore = useDirectRing
+        ? static_cast<int>(audioRingCount)
+        : (audioStream ? (SDL_AudioStreamAvailable(audioStream) / frameBytes) : 0);
+
+    size_t adjustedFrames = frames;
+    const int16_t* adjustedData = applyRateControl(data, frames, adjustedFrames, bufferedFramesBefore);
 
     if (useDirectRing) {
         const std::size_t capacityFrames = audioRing.size() / 2;
@@ -657,14 +1270,14 @@ void LibretroSameBoyBackend::queueAudioFrames(const int16_t* data, size_t frames
             return;
         }
 
-        for (std::size_t i = 0; i < frames; ++i) {
+        for (std::size_t i = 0; i < adjustedFrames; ++i) {
             if (audioRingCount >= capacityFrames) {
                 audioRingRead = (audioRingRead + 1) % capacityFrames;
                 --audioRingCount;
             }
 
-            audioRing[audioRingWrite * 2] = data[i * 2];
-            audioRing[audioRingWrite * 2 + 1] = data[i * 2 + 1];
+            audioRing[audioRingWrite * 2] = adjustedData[i * 2];
+            audioRing[audioRingWrite * 2 + 1] = adjustedData[i * 2 + 1];
             audioRingWrite = (audioRingWrite + 1) % capacityFrames;
             ++audioRingCount;
         }
@@ -674,8 +1287,8 @@ void LibretroSameBoyBackend::queueAudioFrames(const int16_t* data, size_t frames
             return;
         }
 
-        const size_t inputBytes = frames * static_cast<size_t>(frameBytes);
-        if (SDL_AudioStreamPut(audioStream, data, static_cast<int>(inputBytes)) < 0) {
+        const size_t inputBytes = adjustedFrames * static_cast<size_t>(frameBytes);
+        if (SDL_AudioStreamPut(audioStream, adjustedData, static_cast<int>(inputBytes)) < 0) {
             SDL_UnlockAudioDevice(audioDevice);
             return;
         }
@@ -852,7 +1465,7 @@ GameBoyEmulation::GameBoyEmulation()
             emulationThreadStopRequested(false), emulationThreadRunning(false),
             emulationThreadFailed(false), frameReady(false), inputMode(InputMode::KeyboardOnly)
 {
-    backend = std::make_unique<LibretroSameBoyBackend>();
+    backend = std::make_unique<NativeSameBoyBackend>();
     frameBuffer.resize(kGameBoyScreenWidth * kGameBoyScreenHeight * 4, 0);
         latestFrame.resize(kGameBoyScreenWidth * kGameBoyScreenHeight * 4, 0);
     setDefaultBindings();

@@ -11,47 +11,65 @@ public:
     {
         sampleRate = std::max(1000, sampleRateHz);
         targetFps = (fps > 1.0) ? fps : 60.0;
-        samplesPerFrame = static_cast<double>(sampleRate) / targetFps;
-        leadSamples = static_cast<double>(std::max(0, leadMs)) * static_cast<double>(sampleRate) / 1000.0;
+        frameDuration = std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+            std::chrono::duration<double>(1.0 / targetFps));
+        maxLead = std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+            std::chrono::duration<double>(static_cast<double>(std::max(0, leadMs)) / 1000.0));
         reset();
     }
 
     void reset()
     {
-        start = std::chrono::steady_clock::now();
-        producedSamples = 0.0;
+        const auto now = std::chrono::steady_clock::now();
+        nextFrameDeadline = now;
+        initialized = false;
     }
 
     void onFrameProduced()
     {
-        producedSamples += samplesPerFrame;
+        if (!initialized) {
+            nextFrameDeadline = std::chrono::steady_clock::now() + frameDuration;
+            initialized = true;
+            return;
+        }
+
+        nextFrameDeadline += frameDuration;
+
+        const auto now = std::chrono::steady_clock::now();
+        if (nextFrameDeadline < now - maxLead) {
+            nextFrameDeadline = now;
+        }
     }
 
     void throttle() const
     {
-        const auto now = std::chrono::steady_clock::now();
-        const std::chrono::duration<double> elapsed = now - start;
-        const double consumedSamples = elapsed.count() * static_cast<double>(sampleRate);
-        const double maxProduced = consumedSamples + leadSamples;
-
-        if (producedSamples <= maxProduced) {
+        if (!initialized) {
             return;
         }
 
-        const double sleepSamples = producedSamples - maxProduced;
-        const double sleepSeconds = sleepSamples / static_cast<double>(sampleRate);
-        if (sleepSeconds > 0.0) {
-            std::this_thread::sleep_for(std::chrono::duration<double>(sleepSeconds));
+        auto now = std::chrono::steady_clock::now();
+        if (nextFrameDeadline <= now) {
+            return;
+        }
+
+        // Sleep most of the wait interval, then finish with short yields for tighter pacing.
+        auto remaining = nextFrameDeadline - now;
+        if (remaining > std::chrono::milliseconds(1)) {
+            std::this_thread::sleep_until(nextFrameDeadline - std::chrono::milliseconds(1));
+        }
+
+        while ((now = std::chrono::steady_clock::now()) < nextFrameDeadline) {
+            std::this_thread::yield();
         }
     }
 
 private:
     int sampleRate = 48000;
     double targetFps = 60.0;
-    double samplesPerFrame = 800.0;
-    double leadSamples = 3840.0;
-    mutable double producedSamples = 0.0;
-    mutable std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
+    std::chrono::steady_clock::duration frameDuration = std::chrono::milliseconds(16);
+    std::chrono::steady_clock::duration maxLead = std::chrono::milliseconds(80);
+    mutable bool initialized = false;
+    mutable std::chrono::steady_clock::time_point nextFrameDeadline = std::chrono::steady_clock::now();
 };
 
 #endif
