@@ -382,16 +382,12 @@ bool LibretroAtari800Backend::onEnvironment(unsigned cmd, void* data)
 void LibretroAtari800Backend::onVideoRefresh(const void* data, unsigned width, unsigned height, size_t pitch)
 {
     if (!data) {
-            std::cerr << "[Atari800] VideoRefresh: " << width << "x" << height << " pitch=" << pitch << "\n";
-            std::cerr.flush();
-
         return;
     }
 
     // Clamp dimensions to reasonable limits to prevent huge allocations
     if (width == 0 || height == 0 || width > 2048 || height > 2048) {
         std::cerr << "[Atari800] Rejecting invalid video dimensions: " << width << "x" << height << "\n";
-            std::cerr.flush();
         return;
     }
 
@@ -400,13 +396,10 @@ void LibretroAtari800Backend::onVideoRefresh(const void* data, unsigned width, u
         frameHeight = static_cast<int>(height);
         framePixels.clear();
         framePixels.resize(static_cast<size_t>(frameWidth * frameHeight) * 4, 0);
-        std::cerr << "[Atari800] Video buffer resized to " << frameWidth << "x" << frameHeight << "\n";
-        std::cerr.flush();
     }
 
     if (framePixels.empty()) {
         std::cerr << "[Atari800] ERROR: framePixels buffer is empty during video refresh\n";
-            std::cerr.flush();
         return;
     }
 
@@ -565,23 +558,13 @@ bool LibretroAtari800Backend::nextFrame()
     // Verify framePixels is properly sized before running core
     if (framePixels.empty()) {
         std::cerr << "[Atari800] Error: framePixels buffer not initialized before nextFrame()\n";
-        std::cerr.flush();
         return false;
     }
 
-    std::cerr << "[Atari800] Before fn_run: framePixels.size()=" << framePixels.size()
-              << ", format=" << pixelFormat << ", gameLoaded=" << gameLoaded << "\n";
-    std::cerr.flush();
-
     try {
-        std::cerr << "[Atari800] Calling fn_run()...\n";
-        std::cerr.flush();
         fn_run();
-        std::cerr << "[Atari800] After fn_run: success\n";
-        std::cerr.flush();
     } catch (...) {
         std::cerr << "[Atari800] Exception caught during core execution\n";
-        std::cerr.flush();
         return false;
     }
     return true;
@@ -1515,17 +1498,8 @@ void Atari800Emulation::emulationWorkerLoop()
 
     std::vector<unsigned char> localFrame(static_cast<std::size_t>(kAtari800ScreenWidth * kAtari800ScreenHeight) * 4, 0);
 
-        std::cerr << "[Atari800] About to configure audio clock...\n";
-        std::cerr.flush();
-
     AudioMasterClock clock;
     clock.configure(backend->getAudioSampleRate(), backend->getNominalFps(), 120);
-
-    std::cerr << "[Atari800] Clock configured successfully. Audio rate: " << backend->getAudioSampleRate()
-              << ", FPS: " << backend->getNominalFps() << "\n";
-    std::cerr.flush();
-    std::cerr << "[Atari800] About to enter emulation loop...\n";
-    std::cerr.flush();
 
     while (!emulationThreadStopRequested.load() && isRunning.load()) {
         try {
