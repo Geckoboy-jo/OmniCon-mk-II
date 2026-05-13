@@ -93,8 +93,8 @@ private:
     static ControllerBindings globalControllerBindings;
     static bool globalInputConfigured;
 
-    static constexpr int kAtari800ScreenWidth = 384;
-    static constexpr int kAtari800ScreenHeight = 240;
+    static constexpr int kAtari800ScreenWidth = 400;
+    static constexpr int kAtari800ScreenHeight = 300;
 
     void initSDL();
     void cleanupSDL();

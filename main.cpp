@@ -310,6 +310,7 @@ void runGameSession(const DatabaseConfig& config,
     }
 
     emulator.runInteractive();
+    std::cout << "Returning to REPL.\n";
 
     const std::vector<unsigned char> newSave = emulator.dumpSaveData();
     if (newSave.empty()) {
