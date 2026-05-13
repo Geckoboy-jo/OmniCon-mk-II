@@ -7,17 +7,10 @@
 #include <cctype>
 #include <cstring>
 #include <cstdint>
+#include <filesystem>
 #include <memory>
 #include <dlfcn.h>
-#include <signal.h>
-#include <setjmp.h>
 
-static jmp_buf crash_recovery;
-static void segfault_handler(int sig) {
-    std::cerr << "[Atari800] SEGMENTATION FAULT CAUGHT - Aborting emulation\n";
-    std::cerr.flush();
-    longjmp(crash_recovery, 1);
-}
 namespace {
 
 std::string trim(const std::string& value)
@@ -99,12 +92,15 @@ public:
 
 namespace libretro {
     static constexpr unsigned ENV_GET_CAN_DUPE        = 3;
+    static constexpr unsigned ENV_GET_SYSTEM_DIRECTORY = 9;
     static constexpr unsigned ENV_SET_PIXEL_FORMAT    = 10;
     static constexpr unsigned ENV_GET_VARIABLE        = 15;
     static constexpr unsigned ENV_SET_VARIABLES       = 16;
     static constexpr unsigned ENV_GET_VARIABLE_UPDATE = 17;
     static constexpr unsigned ENV_SET_SUPPORT_NO_GAME = 18;
     static constexpr unsigned ENV_GET_LOG_INTERFACE   = 27;
+    static constexpr unsigned ENV_GET_CONTENT_DIRECTORY = 30;
+    static constexpr unsigned ENV_GET_SAVE_DIRECTORY  = 31;
     static constexpr unsigned ENV_SET_GEOMETRY        = 37;
 
     static constexpr unsigned PIXEL_0RGB1555 = 0;
@@ -215,6 +211,9 @@ private:
     bool gameLoaded = false;
     std::vector<uint8_t> romData;
     std::string loadedRomPath;  // Keep path string alive for libretro core
+    std::string systemDirectory;
+    std::string saveDirectory;
+    std::string contentDirectory;
     SDL_AudioDeviceID audioDevice = 0;
     SDL_AudioStream* audioStream = nullptr;
     int coreSampleRate = 48000;
@@ -253,6 +252,17 @@ std::string LibretroAtari800Backend::resolveCorePath()
 LibretroAtari800Backend::LibretroAtari800Backend()
 {
     corePath = resolveCorePath();
+
+    const std::filesystem::path workspaceRoot = std::filesystem::current_path();
+    const std::filesystem::path frontendDataRoot = workspaceRoot / ".omnicon" / "atari800";
+    std::error_code ec;
+    std::filesystem::create_directories(frontendDataRoot / "system", ec);
+    std::filesystem::create_directories(frontendDataRoot / "save", ec);
+    std::filesystem::create_directories(frontendDataRoot / "content", ec);
+    systemDirectory = (frontendDataRoot / "system").string();
+    saveDirectory = (frontendDataRoot / "save").string();
+    contentDirectory = (frontendDataRoot / "content").string();
+
     coreHandle = dlopen(corePath.c_str(), RTLD_LAZY);
     if (!coreHandle) {
         std::cerr << "[Atari800] Failed to load core: " << corePath << ": " << dlerror() << "\n";
@@ -334,6 +344,9 @@ bool LibretroAtari800Backend::onEnvironment(unsigned cmd, void* data)
         case libretro::ENV_GET_CAN_DUPE:
             *static_cast<bool*>(data) = true;
             return true;
+        case libretro::ENV_GET_SYSTEM_DIRECTORY:
+            *static_cast<const char**>(data) = systemDirectory.c_str();
+            return true;
         case libretro::ENV_SET_PIXEL_FORMAT:
             pixelFormat = *static_cast<unsigned*>(data);
             return true;
@@ -348,6 +361,12 @@ bool LibretroAtari800Backend::onEnvironment(unsigned cmd, void* data)
             return true;
         case libretro::ENV_GET_LOG_INTERFACE:
             return false;
+        case libretro::ENV_GET_CONTENT_DIRECTORY:
+            *static_cast<const char**>(data) = contentDirectory.c_str();
+            return true;
+        case libretro::ENV_GET_SAVE_DIRECTORY:
+            *static_cast<const char**>(data) = saveDirectory.c_str();
+            return true;
         case libretro::ENV_SET_GEOMETRY: {
             const auto* geom = static_cast<const libretro::game_geometry*>(data);
             frameWidth = static_cast<int>(geom->base_width);
@@ -474,6 +493,12 @@ bool LibretroAtari800Backend::loadRom(const std::string& path)
 
     // Store path as member variable to keep it alive for libretro core
     loadedRomPath = path;
+    std::error_code ec;
+    const std::filesystem::path romPath(path);
+    const std::filesystem::path romParent = romPath.parent_path();
+    if (!romParent.empty() && std::filesystem::exists(romParent, ec)) {
+        contentDirectory = romParent.string();
+    }
     
     libretro::game_info gameInfo = {};
     gameInfo.path = loadedRomPath.c_str();
