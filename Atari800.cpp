@@ -206,6 +206,7 @@ private:
     unsigned pixelFormat = libretro::PIXEL_0RGB1555;
     bool gameLoaded = false;
     std::vector<uint8_t> romData;
+    std::string loadedRomPath;  // Keep path string alive for libretro core
     SDL_AudioDeviceID audioDevice = 0;
     SDL_AudioStream* audioStream = nullptr;
     int coreSampleRate = 48000;
@@ -278,6 +279,8 @@ LibretroAtari800Backend::~LibretroAtari800Backend()
         dlclose(coreHandle);
         coreHandle = nullptr;
     }
+    loadedRomPath.clear();
+    romData.clear();
     if (s_instance == this) {
         s_instance = nullptr;
     }
@@ -406,13 +409,17 @@ bool LibretroAtari800Backend::loadRom(const std::string& path)
         fn_unload_game();
         gameLoaded = false;
         romData.clear();
+        loadedRomPath.clear();
     }
 
     libretro::system_info sysInfo = {};
     fn_get_system_info(&sysInfo);
 
+    // Store path as member variable to keep it alive for libretro core
+    loadedRomPath = path;
+    
     libretro::game_info gameInfo = {};
-    gameInfo.path = path.c_str();
+    gameInfo.path = loadedRomPath.c_str();
     gameInfo.meta = nullptr;
 
     if (!sysInfo.need_fullpath) {
@@ -437,11 +444,12 @@ bool LibretroAtari800Backend::loadRom(const std::string& path)
     if (!fn_load_game(&gameInfo)) {
         std::cerr << "[Atari800] Core rejected ROM at: " << path << "\n";
         std::cerr << "[Atari800] Possible causes: file not found, unsupported format, or corrupted file\n";
-        if (!sysInfo.need_fullpath) {
-            std::cerr << "[Atari800] ROM data loaded in memory (" << gameInfo.size << " bytes)\n";
-        } else {
+        if (sysInfo.need_fullpath) {
             std::cerr << "[Atari800] Core attempted to load from file path (need_fullpath=true)\n";
+        } else {
+            std::cerr << "[Atari800] ROM data was loaded in memory (" << gameInfo.size << " bytes)\n";
         }
+        loadedRomPath.clear();
         romData.clear();
         return false;
     }
@@ -460,6 +468,7 @@ bool LibretroAtari800Backend::loadRom(const std::string& path)
     if (avInfo.timing.fps > 1.0) {
         coreFps = avInfo.timing.fps;
     }
+    std::cerr << "[Atari800] ROM loaded successfully: " << loadedRomPath << " (" << frameWidth << "x" << frameHeight << " @ " << coreFps << " fps)\n";
     framePixels.resize(static_cast<size_t>(frameWidth * frameHeight) * 4, 0);
     ensureAudioDevice(static_cast<int>(avInfo.timing.sample_rate));
     return true;
@@ -471,7 +480,18 @@ bool LibretroAtari800Backend::nextFrame()
         return false;
     }
 
-    fn_run();
+    // Verify framePixels is properly sized before running core
+    if (framePixels.empty()) {
+        std::cerr << "[Atari800] Error: framePixels buffer not initialized before nextFrame()\n";
+        return false;
+    }
+
+    try {
+        fn_run();
+    } catch (...) {
+        std::cerr << "[Atari800] Exception caught during core execution\n";
+        return false;
+    }
     return true;
 }
 
@@ -515,6 +535,13 @@ atari800_color_t LibretroAtari800Backend::getPixel(int x, int y) const
     }
 
     const size_t offset = (static_cast<size_t>(y) * static_cast<size_t>(frameWidth) + static_cast<size_t>(x)) * 4;
+    const size_t requiredSize = offset + 4;
+    
+    // Defensive check: ensure framePixels is large enough
+    if (requiredSize > framePixels.size()) {
+        return {0, 0, 0, 255};
+    }
+    
     return {framePixels[offset], framePixels[offset + 1], framePixels[offset + 2], framePixels[offset + 3]};
 }
 
@@ -1249,6 +1276,14 @@ void Atari800Emulation::runInteractive()
         return;
     }
 
+    // Verify backend is actually available before starting emulation
+    const LibretroAtari800Backend* libretroBackend = 
+        dynamic_cast<const LibretroAtari800Backend*>(backend.get());
+    if (libretroBackend && !libretroBackend->isAvailable()) {
+        std::cerr << "Atari 800 libretro core is not available. Cannot run emulation.\n";
+        return;
+    }
+
     if (SDL_Init(SDL_INIT_GAMECONTROLLER) < 0) {
         std::cerr << "Failed to initialize controller subsystem: " << SDL_GetError() << "\n";
     }
@@ -1375,20 +1410,39 @@ void Atari800Emulation::emulationWorkerLoop()
 {
     emulationThreadRunning = true;
 
+    if (!backend) {
+        std::cerr << "[Atari800] Backend is null in emulation worker loop\n";
+        emulationThreadRunning = false;
+        emulationThreadFailed = true;
+        return;
+    }
+
     std::vector<unsigned char> localFrame(static_cast<std::size_t>(kAtari800ScreenWidth * kAtari800ScreenHeight) * 4, 0);
     AudioMasterClock clock;
-    clock.configure(backend ? backend->getAudioSampleRate() : 48000, backend ? backend->getNominalFps() : 60.0, 120);
+    clock.configure(backend->getAudioSampleRate(), backend->getNominalFps(), 120);
 
     while (!emulationThreadStopRequested.load() && isRunning.load()) {
-        atari800_input_t inputSnapshot = {};
-        {
-            std::lock_guard<std::mutex> lock(inputMutex);
-            inputSnapshot = workerInput;
-        }
+        try {
+            atari800_input_t inputSnapshot = {};
+            {
+                std::lock_guard<std::mutex> lock(inputMutex);
+                inputSnapshot = workerInput;
+            }
 
-        backend->setInput(inputSnapshot);
-        if (!backend->nextFrame()) {
-            std::cerr << "Atari 800 emulator failed to advance frame.\n";
+            backend->setInput(inputSnapshot);
+            if (!backend->nextFrame()) {
+                std::cerr << "[Atari800] Emulator failed to advance frame.\n";
+                isRunning = false;
+                emulationThreadFailed = true;
+                break;
+            }
+        } catch (const std::exception& e) {
+            std::cerr << "[Atari800] Exception in emulation worker: " << e.what() << "\n";
+            isRunning = false;
+            emulationThreadFailed = true;
+            break;
+        } catch (...) {
+            std::cerr << "[Atari800] Unknown exception in emulation worker\n";
             isRunning = false;
             emulationThreadFailed = true;
             break;
@@ -1398,10 +1452,12 @@ void Atari800Emulation::emulationWorkerLoop()
             for (int x = 0; x < kAtari800ScreenWidth; ++x) {
                 const atari800_color_t color = backend->getPixel(x, y);
                 const std::size_t offset = (static_cast<std::size_t>(y) * static_cast<std::size_t>(kAtari800ScreenWidth) + static_cast<std::size_t>(x)) * 4;
-                localFrame[offset + 0] = color.r;
-                localFrame[offset + 1] = color.g;
-                localFrame[offset + 2] = color.b;
-                localFrame[offset + 3] = 255;
+                if (offset + 3 < localFrame.size()) {
+                    localFrame[offset + 0] = color.r;
+                    localFrame[offset + 1] = color.g;
+                    localFrame[offset + 2] = color.b;
+                    localFrame[offset + 3] = 255;
+                }
             }
         }
 

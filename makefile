@@ -3,7 +3,7 @@ CFLAGS := -std=c++17 -Wall -Wextra -pedantic
 SDL_CFLAGS := $(shell sdl2-config --cflags 2>/dev/null || echo "-I/usr/include/SDL2")
 SDL_LIBS := $(shell sdl2-config --libs 2>/dev/null || echo "-lSDL2")
 TARGET := omnicon_repl
-SOURCES := main.cpp NES.cpp GameBoy.cpp SNES.cpp Atari800.cpp agnes.c
+SOURCES := main.cpp wrapper.cpp NES.cpp GameBoy.cpp SNES.cpp Atari800.cpp agnes.c
 SAMEBOY_BUILD := third_party/SameBoy/build/lib/libsameboy.a
 SAMEBOY_CORE_SOURCES := $(wildcard third_party/SameBoy/Core/*.c)
 SAMEBOY_BOOTROMS := \
@@ -16,6 +16,8 @@ SAMEBOY_BOOTROMS := \
 	third_party/SameBoy/build/bin/BootROMs/sgb2_boot.bin
 
 .PHONY: all run clean reset save
+
+all: $(TARGET)
 
 
 $(SAMEBOY_BUILD): $(SAMEBOY_CORE_SOURCES)

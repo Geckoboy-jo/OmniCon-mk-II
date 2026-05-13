@@ -774,16 +774,24 @@ int main()
             const bool isAtari800 = (ext == ".atr" || ext == ".xfd" || ext == ".atx" || ext == ".xex" || ext == ".car" || ext == ".rom" || ext == ".cas" || ext == ".com");
             const bool isNes  = (ext == ".nes");
 
-            if (isGameBoy) {
-                runGameSession<GameBoyEmulation>(config, saveIndex, "gb", romPath, mysqlAvailable);
-            } else if (isSnes) {
-                runGameSession<SNESEmulation>(config, saveIndex, "snes", romPath, mysqlAvailable);
-            } else if (isAtari800) {
-                runGameSession<Atari800Emulation>(config, saveIndex, "atari800", romPath, mysqlAvailable);
-            } else if (isNes) {
-                runGameSession<NESEmulation>(config, saveIndex, "nes", romPath, mysqlAvailable);
-            } else {
-                std::cout << "Unsupported ROM format. Use .nes (NES), .gb/.gbc/.sgb (Game Boy), .smc/.sfc (SNES), or .atr/.xfd/.atx/.xex/.car/.rom/.cas/.com (Atari 800).\n";
+            try {
+                if (isGameBoy) {
+                    runGameSession<GameBoyEmulation>(config, saveIndex, "gb", romPath, mysqlAvailable);
+                } else if (isSnes) {
+                    runGameSession<SNESEmulation>(config, saveIndex, "snes", romPath, mysqlAvailable);
+                } else if (isAtari800) {
+                    runGameSession<Atari800Emulation>(config, saveIndex, "atari800", romPath, mysqlAvailable);
+                } else if (isNes) {
+                    runGameSession<NESEmulation>(config, saveIndex, "nes", romPath, mysqlAvailable);
+                } else {
+                    std::cout << "Unsupported ROM format. Use .nes (NES), .gb/.gbc/.sgb (Game Boy), .smc/.sfc (SNES), or .atr/.xfd/.atx/.xex/.car/.rom/.cas/.com (Atari 800).\n";
+                }
+            } catch (const std::exception& e) {
+                std::cerr << "Error during emulation: " << e.what() << "\n";
+                std::cerr << "Returning to REPL. You can try loading a different ROM.\n";
+            } catch (...) {
+                std::cerr << "Unknown error during emulation.\n";
+                std::cerr << "Returning to REPL. You can try loading a different ROM.\n";
             }
             continue;
         }

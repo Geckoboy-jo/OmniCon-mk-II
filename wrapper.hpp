@@ -9,5 +9,5 @@ private:
 public:
     wrapper(){}
     ~wrapper(){}
-    void run(){return;}
+    void run();
 };
