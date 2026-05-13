@@ -10,9 +10,24 @@
 #include <cstdint>
 #include <filesystem>
 #include <memory>
+#include <sstream>
 #include <dlfcn.h>
 
 namespace {
+
+bool isAtariDebugEnabled()
+{
+    const char* value = std::getenv("OMNICON_ATARI_DEBUG");
+    return value && *value && std::strcmp(value, "0") != 0;
+}
+
+void atariDebugLog(const std::string& message)
+{
+    if (!isAtariDebugEnabled()) {
+        return;
+    }
+    std::cerr << "[Atari800 DEBUG] " << message << "\n";
+}
 
 std::string trim(const std::string& value)
 {
@@ -334,9 +349,10 @@ private:
     double displayAspectRatio = 4.0 / 3.0;
     std::vector<uint8_t> audioConvertBuffer;
     std::string optSystem = "800XL (64K)";
-    std::string optVideoStandard = "NTSC";
-    std::string optResolution = "320x240";
+    std::string optVideoStandard = "PAL";
+    std::string optResolution = "336x240";
     std::string optArtifactingMode = "none";
+    std::string optLegacyCfg = "disabled";
 
     static LibretroAtari800Backend* s_instance;
     static bool s_envCb(unsigned cmd, void* data);
@@ -494,6 +510,10 @@ bool LibretroAtari800Backend::onEnvironment(unsigned cmd, void* data)
                     variable->value = optArtifactingMode.c_str();
                     return true;
                 }
+                if (std::strcmp(variable->key, "atari800_cfg") == 0) {
+                    variable->value = optLegacyCfg.c_str();
+                    return true;
+                }
             }
             return false;
         case libretro::ENV_SET_VARIABLES:
@@ -501,6 +521,7 @@ bool LibretroAtari800Backend::onEnvironment(unsigned cmd, void* data)
                 const auto* variable = static_cast<const libretro::variable*>(data);
                 for (; variable && variable->key; ++variable) {
                     if (std::strcmp(variable->key, "atari800_system") == 0) {
+                        atariDebugLog(std::string("Option def atari800_system: ") + (variable->value ? variable->value : "<null>"));
                         std::string value = chooseOptionValue(variable->value, "800XL (64K)");
                         if (value.empty()) {
                             value = chooseOptionValueContains(variable->value, "800XL");
@@ -509,31 +530,37 @@ bool LibretroAtari800Backend::onEnvironment(unsigned cmd, void* data)
                             optSystem = value;
                         }
                     } else if (std::strcmp(variable->key, "atari800_ntscpal") == 0) {
-                        std::string value = chooseOptionValue(variable->value, "NTSC");
+                        atariDebugLog(std::string("Option def atari800_ntscpal: ") + (variable->value ? variable->value : "<null>"));
+                        std::string value = chooseOptionValue(variable->value, "PAL");
                         if (value.empty()) {
-                            value = chooseOptionValueContains(variable->value, "NTSC");
+                            value = chooseOptionValueContains(variable->value, "PAL");
                         }
                         if (value.empty()) {
-                            value = chooseOptionValue(variable->value, "PAL");
+                            value = chooseOptionValue(variable->value, "NTSC");
+                        }
+                        if (value.empty()) {
+                            value = chooseOptionValueContains(variable->value, "NTSC");
                         }
                         if (!value.empty()) {
                             optVideoStandard = value;
                         }
                     } else if (std::strcmp(variable->key, "atari800_resolution") == 0) {
-                        std::string value = chooseOptionValue(variable->value, "320x240");
+                        atariDebugLog(std::string("Option def atari800_resolution: ") + (variable->value ? variable->value : "<null>"));
+                        std::string value = chooseOptionValue(variable->value, "336x240");
                         if (value.empty()) {
-                            value = chooseOptionValue(variable->value, "336x240");
-                        }
-                        if (value.empty()) {
-                            value = chooseOptionValueContains(variable->value, "320x240");
+                            value = chooseOptionValue(variable->value, "320x240");
                         }
                         if (value.empty()) {
                             value = chooseOptionValueContains(variable->value, "336x240");
+                        }
+                        if (value.empty()) {
+                            value = chooseOptionValueContains(variable->value, "320x240");
                         }
                         if (!value.empty()) {
                             optResolution = value;
                         }
                     } else if (std::strcmp(variable->key, "atari800_artifacting_mode") == 0) {
+                        atariDebugLog(std::string("Option def atari800_artifacting_mode: ") + (variable->value ? variable->value : "<null>"));
                         std::string value = chooseOptionValue(variable->value, "none");
                         if (value.empty()) {
                             value = chooseOptionValueContains(variable->value, "none");
@@ -547,8 +574,37 @@ bool LibretroAtari800Backend::onEnvironment(unsigned cmd, void* data)
                         if (!value.empty()) {
                             optArtifactingMode = value;
                         }
+                    } else if (std::strcmp(variable->key, "atari800_cfg") == 0) {
+                        atariDebugLog(std::string("Option def atari800_cfg: ") + (variable->value ? variable->value : "<null>"));
+                        std::string value = chooseOptionValue(variable->value, "disabled");
+                        if (value.empty()) {
+                            value = chooseOptionValueContains(variable->value, "disabled");
+                        }
+                        if (value.empty()) {
+                            value = chooseOptionValue(variable->value, "off");
+                        }
+                        if (value.empty()) {
+                            value = chooseOptionValueContains(variable->value, "off");
+                        }
+                        if (value.empty()) {
+                            value = chooseOptionValue(variable->value, "false");
+                        }
+                        if (value.empty()) {
+                            value = chooseOptionValueContains(variable->value, "false");
+                        }
+                        if (!value.empty()) {
+                            optLegacyCfg = value;
+                        }
                     }
                 }
+
+                     std::ostringstream os;
+                     os << "Core options selected: system='" << optSystem
+                         << "' ntscpal='" << optVideoStandard
+                         << "' resolution='" << optResolution
+                         << "' artifacting='" << optArtifactingMode
+                         << "' legacy_cfg='" << optLegacyCfg << "'";
+                     atariDebugLog(os.str());
             }
             return true;
         case libretro::ENV_GET_VARIABLE_UPDATE:
@@ -594,10 +650,27 @@ void LibretroAtari800Backend::onVideoRefresh(const void* data, unsigned width, u
     }
 
     if (static_cast<int>(width) != frameWidth || static_cast<int>(height) != frameHeight) {
+        std::ostringstream os;
+        os << "Video refresh geometry change " << frameWidth << "x" << frameHeight
+           << " -> " << width << "x" << height << ", pitch=" << pitch
+           << ", pixelFormat=" << pixelFormat;
+        atariDebugLog(os.str());
         frameWidth = static_cast<int>(width);
         frameHeight = static_cast<int>(height);
         framePixels.clear();
         framePixels.resize(static_cast<size_t>(frameWidth * frameHeight) * 4, 0);
+    }
+
+    static int refreshLogCount = 0;
+    if (refreshLogCount < 8) {
+        std::ostringstream os;
+        os << "Video refresh frame " << refreshLogCount
+           << ": src=" << width << "x" << height
+           << " pitch=" << pitch
+           << " minExpectedPitch="
+           << ((pixelFormat == libretro::PIXEL_XRGB8888) ? (width * 4) : (width * 2));
+        atariDebugLog(os.str());
+        ++refreshLogCount;
     }
 
     if (framePixels.empty()) {
@@ -688,6 +761,22 @@ bool LibretroAtari800Backend::loadRom(const std::string& path)
 
     // Store path as member variable to keep it alive for libretro core
     loadedRomPath = path;
+    {
+        std::string lowerPath = loadedRomPath;
+        std::transform(lowerPath.begin(), lowerPath.end(), lowerPath.begin(),
+            [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        const bool isDiskOrTape =
+            lowerPath.size() >= 4 && (
+                lowerPath.rfind(".atr") == lowerPath.size() - 4 ||
+                lowerPath.rfind(".xfd") == lowerPath.size() - 4 ||
+                lowerPath.rfind(".atx") == lowerPath.size() - 4 ||
+                lowerPath.rfind(".cas") == lowerPath.size() - 4);
+        if (isDiskOrTape) {
+            optSystem = "400/800 (OS B)";
+        } else {
+            optSystem = "800XL (64K)";
+        }
+    }
     std::error_code ec;
     const std::filesystem::path romPath(path);
     const std::filesystem::path romParent = romPath.parent_path();
@@ -1164,7 +1253,9 @@ void Atari800Emulation::initSDL()
         return;
     }
 
-    SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "0");
+    // Atari frames often require non-integer horizontal resampling to reach display 4:3.
+    // Linear filtering avoids dark vertical column artifacts caused by nearest-neighbor drops.
+    SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "1");
 
     SDL_DisplayMode displayMode;
     SDL_GetCurrentDisplayMode(0, &displayMode);
@@ -1191,11 +1282,26 @@ void Atari800Emulation::initSDL()
 
     renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
     if (!renderer) {
+        renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_SOFTWARE);
+    }
+    if (!renderer) {
         std::cerr << "Failed to create SDL renderer: " << SDL_GetError() << "\n";
         SDL_DestroyWindow(window);
         window = nullptr;
         SDL_Quit();
         return;
+    }
+
+    if (isAtariDebugEnabled()) {
+        SDL_RendererInfo info = {};
+        if (SDL_GetRendererInfo(renderer, &info) == 0) {
+            std::ostringstream os;
+            os << "Using SDL renderer backend='" << (info.name ? info.name : "unknown")
+               << "' flags=0x" << std::hex << info.flags;
+            atariDebugLog(os.str());
+        } else {
+            atariDebugLog(std::string("SDL_GetRendererInfo failed: ") + SDL_GetError());
+        }
     }
 
     screenTexture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC,
@@ -1547,6 +1653,34 @@ void Atari800Emulation::renderFrame()
         frameBuffer = latestFrame;
     }
 
+    const std::size_t expectedBytes = static_cast<std::size_t>(frameWidth) * static_cast<std::size_t>(frameHeight) * 4;
+    if (frameBuffer.size() != expectedBytes) {
+        std::ostringstream os;
+        os << "Frame buffer size mismatch before upload: frame=" << frameWidth << "x" << frameHeight
+           << " expectedBytes=" << expectedBytes
+           << " actualBytes=" << frameBuffer.size();
+        atariDebugLog(os.str());
+        return;
+    }
+
+    static int renderLogCount = 0;
+    if (renderLogCount < 12) {
+        Uint32 textureFormat = 0;
+        int textureAccess = 0;
+        int textureWidth = 0;
+        int textureHeight = 0;
+        if (screenTexture && SDL_QueryTexture(screenTexture, &textureFormat, &textureAccess, &textureWidth, &textureHeight) == 0) {
+            std::ostringstream os;
+            os << "Render frame " << renderLogCount
+               << ": frame=" << frameWidth << "x" << frameHeight
+               << " texture=" << textureWidth << "x" << textureHeight
+               << " pitch=" << (frameWidth * 4)
+               << " frameBytes=" << frameBuffer.size();
+            atariDebugLog(os.str());
+        }
+        ++renderLogCount;
+    }
+
     if (SDL_UpdateTexture(screenTexture, nullptr, frameBuffer.data(), frameWidth * 4) < 0) {
         std::cerr << "Failed to update texture: " << SDL_GetError() << "\n";
         return;
@@ -1780,7 +1914,9 @@ void Atari800Emulation::emulationWorkerLoop()
         return;
     }
 
-    std::vector<unsigned char> localFrame(static_cast<std::size_t>(frameWidth * frameHeight) * 4, 0);
+    int workerFrameWidth = std::max(1, backend->getFrameWidth());
+    int workerFrameHeight = std::max(1, backend->getFrameHeight());
+    std::vector<unsigned char> localFrame(static_cast<std::size_t>(workerFrameWidth * workerFrameHeight) * 4, 0);
 
     AudioMasterClock clock;
     clock.configure(backend->getAudioSampleRate(), backend->getNominalFps(), 120);
@@ -1803,10 +1939,10 @@ void Atari800Emulation::emulationWorkerLoop()
 
             const int backendFrameWidth = std::max(1, backend->getFrameWidth());
             const int backendFrameHeight = std::max(1, backend->getFrameHeight());
-            if (backendFrameWidth != frameWidth || backendFrameHeight != frameHeight) {
-                frameWidth = backendFrameWidth;
-                frameHeight = backendFrameHeight;
-                localFrame.assign(static_cast<std::size_t>(frameWidth * frameHeight) * 4, 0);
+            if (backendFrameWidth != workerFrameWidth || backendFrameHeight != workerFrameHeight) {
+                workerFrameWidth = backendFrameWidth;
+                workerFrameHeight = backendFrameHeight;
+                localFrame.assign(static_cast<std::size_t>(workerFrameWidth * workerFrameHeight) * 4, 0);
             }
         } catch (const std::exception& e) {
             std::cerr << "[Atari800] Exception in emulation worker: " << e.what() << "\n";
@@ -1820,10 +1956,10 @@ void Atari800Emulation::emulationWorkerLoop()
             break;
         }
 
-        for (int y = 0; y < frameHeight; ++y) {
-            for (int x = 0; x < frameWidth; ++x) {
+        for (int y = 0; y < workerFrameHeight; ++y) {
+            for (int x = 0; x < workerFrameWidth; ++x) {
                 const atari800_color_t color = backend->getPixel(x, y);
-                const std::size_t offset = (static_cast<std::size_t>(y) * static_cast<std::size_t>(frameWidth) + static_cast<std::size_t>(x)) * 4;
+                const std::size_t offset = (static_cast<std::size_t>(y) * static_cast<std::size_t>(workerFrameWidth) + static_cast<std::size_t>(x)) * 4;
                 if (offset + 3 < localFrame.size()) {
                     localFrame[offset + 0] = color.r;
                     localFrame[offset + 1] = color.g;
