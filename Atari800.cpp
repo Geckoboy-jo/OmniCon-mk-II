@@ -228,13 +228,16 @@ std::string LibretroAtari800Backend::resolveCorePath()
 {
     const char* envPath = std::getenv("OMNICON_ATARI800_CORE");
     if (envPath && *envPath && std::filesystem::exists(envPath)) {
+        std::cerr << "[Atari800] Using Atari800 core from environment: " << envPath << "\n";
         return envPath;
     }
 
     if (std::filesystem::exists(kWorkspaceCorePath)) {
+        std::cerr << "[Atari800] Using Atari800 core from workspace: " << kWorkspaceCorePath << "\n";
         return kWorkspaceCorePath;
     }
 
+    std::cerr << "[Atari800] Using Atari800 core from system: " << kDefaultSystemCorePath << "\n";
     return kDefaultSystemCorePath;
 }
 
@@ -432,7 +435,13 @@ bool LibretroAtari800Backend::loadRom(const std::string& path)
     }
 
     if (!fn_load_game(&gameInfo)) {
-        std::cerr << "[Atari800] Core rejected ROM: " << path << "\n";
+        std::cerr << "[Atari800] Core rejected ROM at: " << path << "\n";
+        std::cerr << "[Atari800] Possible causes: file not found, unsupported format, or corrupted file\n";
+        if (!sysInfo.need_fullpath) {
+            std::cerr << "[Atari800] ROM data loaded in memory (" << gameInfo.size << " bytes)\n";
+        } else {
+            std::cerr << "[Atari800] Core attempted to load from file path (need_fullpath=true)\n";
+        }
         romData.clear();
         return false;
     }
@@ -715,9 +724,9 @@ bool Atari800Emulation::loadRom(const string& path)
         return false;
     }
 
-    std::ifstream file(path, std::ios::binary);
-    if (!file.is_open()) {
-        std::cerr << "Failed to open ROM file: " << path << "\n";
+    // Validate file exists
+    if (!std::filesystem::exists(path)) {
+        std::cerr << "ROM file does not exist: " << path << "\n";
         return false;
     }
 
@@ -745,8 +754,9 @@ bool Atari800Emulation::loadRom(const string& path)
         return false;
     }
 
-    file.close();
-    if (!backend->loadRom(path)) {
+    // Convert to absolute path to ensure libretro core can locate the file
+    const std::string absolutePath = std::filesystem::absolute(path).string();
+    if (!backend->loadRom(absolutePath)) {
         return false;
     }
 
