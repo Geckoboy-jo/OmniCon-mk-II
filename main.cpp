@@ -1,7 +1,10 @@
 #include "top.hpp"
 #include "NES.hpp"
 #include "SNES.hpp"
+#include "GameBoy.hpp"
+#include "GameBoyColor.hpp"
 #include "Atari2600.hpp"
+#include "Atari5200.hpp"
 
 #include <cstdlib>
 #include <cctype>
@@ -433,13 +436,22 @@ void printHelp()
               << "  download <url>  Download one file and store it as a block\n"
               << "  download-all <url>  Download file links from a page and store each as a block\n"
               << "  load-folder <path>  Upload every regular file in a local folder\n"
-              << "  play <path>     Load and run a ROM by extension (.nes/.smc/.sfc/.a26/.bin/.rom)\n"
-              << "                  (Supports Windows paths via WSL: C:\\Users\\...\\file.a26)\n"
+              << "  play <path>     Load and run a ROM by extension\n"
+              << "                  .nes -> NES, .smc/.sfc -> SNES, .gb -> Game Boy\n"
+              << "                  .gbc -> Game Boy Color, .a26 -> Atari 2600\n"
+              << "                  .a52/.bin/.rom -> Atari 5200/2600\n"
+              << "                  (Supports Windows paths: C:\\Users\\...\\file.gbc)\n"
+              << "  play-gb <path>  Load and run a Game Boy ROM (.gb/.gbc/.sgb)\n"
+              << "  play-gbc <path> Load and run a Game Boy Color ROM (.gbc/.gb/.sgb)\n"
               << "  play-snes <path>  Load and run a .smc/.sfc ROM file with SuperPy SNES emulator\n"
               << "  play-atari2600 <path>  Load and run an Atari 2600 ROM (.a26/.bin/.rom)\n"
+              << "  play-atari5200 <path>  Load and run an Atari 5200 ROM (.a52/.bin/.rom)\n"
               << "  controls        Change global NES controls (applies to all ROMs)\n"
+              << "  controls-gb     Change global Game Boy controls\n"
+              << "  controls-gbc    Change global Game Boy Color controls\n"
               << "  controls-snes   Change global SNES controls\n"
               << "  controls-atari2600   Change global Atari 2600 controls\n"
+              << "  controls-atari5200   Change global Atari 5200 controls\n"
               << "  config          Re-enter database password\n"
               << "  help            Show this message\n"
               << "  quit            Exit the REPL\n";
@@ -506,12 +518,38 @@ int main()
             continue;
         }
 
+        if (input == "controls-atari5200" || input == "change atari5200 controls" || input == "change-atari5200-controls") {
+            Atari5200Emulation::configureGlobalControls();
+            continue;
+        }
+
+        if (input == "controls-gb" || input == "change gb controls" || input == "change-gb-controls") {
+            GameBoyEmulation::configureGlobalControls();
+            continue;
+        }
+
+        if (input == "controls-gbc" || input == "change gbc controls" || input == "change-gbc-controls") {
+            GameBoyColorEmulation::configureGlobalControls();
+            continue;
+        }
+
         const std::string playCommand = "play ";
         const std::string playSnesCommand = "play-snes ";
+        const std::string playGbCommand = "play-gb ";
+        const std::string playGbcCommand = "play-gbc ";
         const std::string playAtari2600Command = "play-atari2600 ";
-        const bool isPlayCommand = input.rfind(playCommand, 0) == 0;
+        const std::string playAtari5200Command = "play-atari5200 ";
+        const bool isPlayCommand = input.rfind(playCommand, 0) == 0
+            && input.rfind(playSnesCommand, 0) != 0
+            && input.rfind(playGbCommand, 0) != 0
+            && input.rfind(playGbcCommand, 0) != 0
+            && input.rfind(playAtari2600Command, 0) != 0
+            && input.rfind(playAtari5200Command, 0) != 0;
         const bool isPlaySnesCommand = input.rfind(playSnesCommand, 0) == 0;
+        const bool isPlayGbCommand = input.rfind(playGbCommand, 0) == 0;
+        const bool isPlayGbcCommand = input.rfind(playGbcCommand, 0) == 0;
         const bool isPlayAtari2600Command = input.rfind(playAtari2600Command, 0) == 0;
+        const bool isPlayAtari5200Command = input.rfind(playAtari5200Command, 0) == 0;
 
         if (isPlayCommand) {
             std::string romPath = trim(input.substr(playCommand.size()));
@@ -531,21 +569,99 @@ int main()
             std::filesystem::path romFsPath(romPath);
             std::string extension = toLowerCopy(romFsPath.extension().string());
 
-            if (extension == ".smc" || extension == ".sfc") {
+            if (extension == ".gbc" || extension == ".sgb") {
+                GameBoyColorEmulation gbc;
+                if (gbc.loadRom(romPath)) {
+                    gbc.runInteractive();
+                }
+            } else if (extension == ".gb") {
+                GameBoyEmulation gb;
+                if (gb.loadRom(romPath)) {
+                    gb.runInteractive();
+                }
+            } else if (extension == ".smc" || extension == ".sfc") {
                 SNESEmulation snes;
                 if (snes.loadRom(romPath)) {
                     snes.runInteractive();
                 }
-            } else if (extension == ".a26" || extension == ".bin" || extension == ".rom") {
+            } else if (extension == ".a26") {
                 Atari2600Emulation atari2600;
                 if (atari2600.loadRom(romPath)) {
                     atari2600.runInteractive();
+                }
+            } else if (extension == ".a52") {
+                Atari5200Emulation atari5200;
+                if (atari5200.loadRom(romPath)) {
+                    atari5200.runInteractive();
+                }
+            } else if (extension == ".bin" || extension == ".rom") {
+                // Ambiguous extension: try Atari 5200 first, then Atari 2600, then NES
+                Atari5200Emulation atari5200;
+                if (atari5200.loadRom(romPath)) {
+                    atari5200.runInteractive();
+                } else {
+                    Atari2600Emulation atari2600;
+                    if (atari2600.loadRom(romPath)) {
+                        atari2600.runInteractive();
+                    }
                 }
             } else {
                 NESEmulation nes;
                 if (nes.loadRom(romPath)) {
                     nes.runInteractive();
                 }
+            }
+            continue;
+        }
+
+        if (isPlayGbCommand) {
+            std::string romPath = trim(input.substr(playGbCommand.size()));
+            romPath = stripOuterQuotes(romPath);
+            romPath = normalizePath(romPath);
+
+            if (romPath.empty()) {
+                std::cout << "ROM path is required.\n";
+                continue;
+            }
+
+            if (!std::filesystem::exists(romPath)) {
+                std::cout << "ROM file does not exist: " << romPath << "\n";
+                continue;
+            }
+
+            GameBoyEmulation gb;
+            try {
+                if (gb.loadRom(romPath)) {
+                    gb.runInteractive();
+                }
+            } catch (const std::exception& e) {
+                std::cerr << "Game Boy error: " << e.what() << "\n";
+            }
+            continue;
+        }
+
+        if (isPlayGbcCommand) {
+            std::string romPath = trim(input.substr(playGbcCommand.size()));
+            romPath = stripOuterQuotes(romPath);
+            romPath = normalizePath(romPath);
+
+            if (romPath.empty()) {
+                std::cout << "ROM path is required.\n";
+                continue;
+            }
+
+            if (!std::filesystem::exists(romPath)) {
+                std::cout << "ROM file does not exist: " << romPath << "\n";
+                continue;
+            }
+
+            GameBoyColorEmulation gbc;
+            try {
+                if (gbc.loadRom(romPath)) {
+                    gbc.runInteractive();
+                }
+            } catch (const std::exception& e) {
+                std::cerr << "Game Boy Color error: " << e.what() << "\n";
             }
             continue;
         }
@@ -590,6 +706,28 @@ int main()
             Atari2600Emulation atari2600;
             if (atari2600.loadRom(romPath)) {
                 atari2600.runInteractive();
+            }
+            continue;
+        }
+
+        if (isPlayAtari5200Command) {
+            std::string romPath = trim(input.substr(playAtari5200Command.size()));
+            romPath = stripOuterQuotes(romPath);
+            romPath = normalizePath(romPath);
+
+            if (romPath.empty()) {
+                std::cout << "ROM path is required.\n";
+                continue;
+            }
+
+            if (!std::filesystem::exists(romPath)) {
+                std::cout << "ROM file does not exist: " << romPath << "\n";
+                continue;
+            }
+
+            Atari5200Emulation atari5200;
+            if (atari5200.loadRom(romPath)) {
+                atari5200.runInteractive();
             }
             continue;
         }

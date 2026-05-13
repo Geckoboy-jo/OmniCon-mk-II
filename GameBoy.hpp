@@ -62,6 +62,7 @@ private:
 
     std::unique_ptr<SameBoyBackend> backend;
     string romPath;
+    string windowTitle = "Game Boy Emulator - SameBoy";
     std::atomic<bool> isRunning;
 
     SDL_Window* window;
@@ -127,6 +128,7 @@ public:
     bool isLoaded() const { return backend != nullptr; }
     bool isEmulatorRunning() const { return isRunning.load(); }
     string getRomPath() const { return romPath; }
+    void setWindowTitle(const string& title) { windowTitle = title; }
 };
 
 #endif

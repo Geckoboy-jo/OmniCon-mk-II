@@ -1560,7 +1560,7 @@ void GameBoyEmulation::initSDL()
     const int windowHeight = kGameBoyScreenHeight * scaleY;
 
     window = SDL_CreateWindow(
-        "Game Boy Emulator - SameBoy",
+        windowTitle.c_str(),
         SDL_WINDOWPOS_CENTERED,
         SDL_WINDOWPOS_CENTERED,
         windowWidth,
