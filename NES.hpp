@@ -1,5 +1,6 @@
 #include "top.hpp"
 #include "agnes.h"
+#include <memory>
 #include <thread>
 #include <chrono>
 #include <mutex>
@@ -7,6 +8,8 @@
 #include <array>
 #include <vector>
 #include <SDL2/SDL.h>
+
+class NesBackend;
 
 class NESEmulation
 {
@@ -39,7 +42,7 @@ private:
         SDL_GameControllerButton start;
     };
 
-    agnes_t* emulator;
+    std::unique_ptr<NesBackend> backend;
     string romPath;
     string savePath;
     std::atomic<bool> isRunning;
@@ -101,7 +104,7 @@ public:
     void runInteractive();
     static void configureGlobalControls();
     
-    bool isLoaded() const { return emulator != nullptr; }
+    bool isLoaded() const { return backend != nullptr; }
     bool isEmulatorRunning() const { return isRunning.load(); }
     string getRomPath() const { return romPath; }
 };

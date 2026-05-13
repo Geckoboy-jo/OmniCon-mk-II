@@ -1,0 +1,337 @@
+g++ -std=c++17 -Wall -Wextra -pedantic -I/usr/include/SDL2 -D_REENTRANT main.cpp wrapper.cpp NES.cpp GameBoy.cpp SNES.cpp Atari800.cpp agnes.c -o omnicon_repl third_party/SameBoy/build/lib/libsameboy.a -lSDL2 -ldl -lm
+In file included from GameBoy.cpp:3:
+third_party/SameBoy/Core/gb.h:740:1: warning: embedding a directive within macro arguments is not portable
+  740 | #ifndef GB_DISABLE_DEBUGGER
+      | ^
+third_party/SameBoy/Core/gb.h:794:1: warning: embedding a directive within macro arguments is not portable
+  794 | #endif
+      | ^
+third_party/SameBoy/Core/gb.h:796:1: warning: embedding a directive within macro arguments is not portable
+  796 | #ifndef GB_DISABLE_REWIND
+      | ^
+third_party/SameBoy/Core/gb.h:808:1: warning: embedding a directive within macro arguments is not portable
+  808 | #endif
+      | ^
+third_party/SameBoy/Core/gb.h:817:1: warning: embedding a directive within macro arguments is not portable
+  817 | #ifndef GB_DISABLE_CHEATS
+      | ^
+third_party/SameBoy/Core/gb.h:823:1: warning: embedding a directive within macro arguments is not portable
+  823 | #endif
+      | ^
+third_party/SameBoy/Core/gb.h:824:1: warning: embedding a directive within macro arguments is not portable
+  824 | #ifndef GB_DISABLE_CHEAT_SEARCH
+      | ^
+third_party/SameBoy/Core/gb.h:829:1: warning: embedding a directive within macro arguments is not portable
+  829 | #endif
+      | ^
+In file included from third_party/SameBoy/Core/gb.h:39:
+third_party/SameBoy/Core/cheats.h:26:17: warning: ISO C++ forbids flexible array member ‘cheats’ [-Wpedantic]
+   26 |     GB_cheat_t *cheats[];
+      |                 ^~~~~~
+third_party/SameBoy/Core/gb.h:72:12: warning: ISO C++ prohibits anonymous structs [-Wpedantic]
+   72 |     struct {
+      |            ^
+third_party/SameBoy/Core/gb.h:317:12: warning: ISO C++ prohibits anonymous structs [-Wpedantic]
+  317 |     struct {
+      |            ^
+third_party/SameBoy/Core/gb.h:325:12: warning: ISO C++ prohibits anonymous structs [-Wpedantic]
+  325 |     struct {
+      |            ^
+agnes.c: In function ‘void scanline_visible_pre(ppu_t*, bool*)’:
+agnes.c:1010:52: warning: unused parameter ‘out_new_frame’ [-Wunused-parameter]
+ 1010 | static void scanline_visible_pre(ppu_t *ppu, bool *out_new_frame) {
+      |                                              ~~~~~~^~~~~~~~~~~~~
+agnes.c: In function ‘void eval_sprites(ppu_t*)’:
+agnes.c:1151:51: warning: comparison is always false due to limited range of data type [-Wtype-limits]
+ 1151 |         if (sprite->y_pos > 0xef || sprite->x_pos > 0xff) {
+      |                                     ~~~~~~~~~~~~~~^~~~~~
+agnes.c: In function ‘int op_adc(cpu_t*, uint16_t, addr_mode_t)’:
+agnes.c:1799:58: warning: unused parameter ‘mode’ [-Wunused-parameter]
+ 1799 | static int op_adc(cpu_t *cpu, uint16_t addr, addr_mode_t mode) {
+      |                                              ~~~~~~~~~~~~^~~~
+agnes.c: In function ‘int op_and(cpu_t*, uint16_t, addr_mode_t)’:
+agnes.c:1810:58: warning: unused parameter ‘mode’ [-Wunused-parameter]
+ 1810 | static int op_and(cpu_t *cpu, uint16_t addr, addr_mode_t mode) {
+      |                                              ~~~~~~~~~~~~^~~~
+agnes.c: In function ‘int op_bcc(cpu_t*, uint16_t, addr_mode_t)’:
+agnes.c:1832:58: warning: unused parameter ‘mode’ [-Wunused-parameter]
+ 1832 | static int op_bcc(cpu_t *cpu, uint16_t addr, addr_mode_t mode) {
+      |                                              ~~~~~~~~~~~~^~~~
+agnes.c: In function ‘int op_bcs(cpu_t*, uint16_t, addr_mode_t)’:
+agnes.c:1836:58: warning: unused parameter ‘mode’ [-Wunused-parameter]
+ 1836 | static int op_bcs(cpu_t *cpu, uint16_t addr, addr_mode_t mode) {
+      |                                              ~~~~~~~~~~~~^~~~
+agnes.c: In function ‘int op_beq(cpu_t*, uint16_t, addr_mode_t)’:
+agnes.c:1840:58: warning: unused parameter ‘mode’ [-Wunused-parameter]
+ 1840 | static int op_beq(cpu_t *cpu, uint16_t addr, addr_mode_t mode) {
+      |                                              ~~~~~~~~~~~~^~~~
+agnes.c: In function ‘int op_bit(cpu_t*, uint16_t, addr_mode_t)’:
+agnes.c:1844:58: warning: unused parameter ‘mode’ [-Wunused-parameter]
+ 1844 | static int op_bit(cpu_t *cpu, uint16_t addr, addr_mode_t mode) {
+      |                                              ~~~~~~~~~~~~^~~~
+agnes.c: In function ‘int op_bmi(cpu_t*, uint16_t, addr_mode_t)’:
+agnes.c:1853:58: warning: unused parameter ‘mode’ [-Wunused-parameter]
+ 1853 | static int op_bmi(cpu_t *cpu, uint16_t addr, addr_mode_t mode) {
+      |                                              ~~~~~~~~~~~~^~~~
+agnes.c: In function ‘int op_bne(cpu_t*, uint16_t, addr_mode_t)’:
+agnes.c:1857:58: warning: unused parameter ‘mode’ [-Wunused-parameter]
+ 1857 | static int op_bne(cpu_t *cpu, uint16_t addr, addr_mode_t mode) {
+      |                                              ~~~~~~~~~~~~^~~~
+agnes.c: In function ‘int op_bpl(cpu_t*, uint16_t, addr_mode_t)’:
+agnes.c:1861:58: warning: unused parameter ‘mode’ [-Wunused-parameter]
+ 1861 | static int op_bpl(cpu_t *cpu, uint16_t addr, addr_mode_t mode) {
+      |                                              ~~~~~~~~~~~~^~~~
+agnes.c: In function ‘int op_brk(cpu_t*, uint16_t, addr_mode_t)’:
+agnes.c:1865:40: warning: unused parameter ‘addr’ [-Wunused-parameter]
+ 1865 | static int op_brk(cpu_t *cpu, uint16_t addr, addr_mode_t mode) {
+      |                               ~~~~~~~~~^~~~
+agnes.c:1865:58: warning: unused parameter ‘mode’ [-Wunused-parameter]
+ 1865 | static int op_brk(cpu_t *cpu, uint16_t addr, addr_mode_t mode) {
+      |                                              ~~~~~~~~~~~~^~~~
+agnes.c: In function ‘int op_bvc(cpu_t*, uint16_t, addr_mode_t)’:
+agnes.c:1874:58: warning: unused parameter ‘mode’ [-Wunused-parameter]
+ 1874 | static int op_bvc(cpu_t *cpu, uint16_t addr, addr_mode_t mode) {
+      |                                              ~~~~~~~~~~~~^~~~
+agnes.c: In function ‘int op_bvs(cpu_t*, uint16_t, addr_mode_t)’:
+agnes.c:1878:58: warning: unused parameter ‘mode’ [-Wunused-parameter]
+ 1878 | static int op_bvs(cpu_t *cpu, uint16_t addr, addr_mode_t mode) {
+      |                                              ~~~~~~~~~~~~^~~~
+agnes.c: In function ‘int op_clc(cpu_t*, uint16_t, addr_mode_t)’:
+agnes.c:1882:40: warning: unused parameter ‘addr’ [-Wunused-parameter]
+ 1882 | static int op_clc(cpu_t *cpu, uint16_t addr, addr_mode_t mode) {
+      |                               ~~~~~~~~~^~~~
+agnes.c:1882:58: warning: unused parameter ‘mode’ [-Wunused-parameter]
+ 1882 | static int op_clc(cpu_t *cpu, uint16_t addr, addr_mode_t mode) {
+      |                                              ~~~~~~~~~~~~^~~~
+agnes.c: In function ‘int op_cld(cpu_t*, uint16_t, addr_mode_t)’:
+agnes.c:1887:40: warning: unused parameter ‘addr’ [-Wunused-parameter]
+ 1887 | static int op_cld(cpu_t *cpu, uint16_t addr, addr_mode_t mode) {
+      |                               ~~~~~~~~~^~~~
+agnes.c:1887:58: warning: unused parameter ‘mode’ [-Wunused-parameter]
+ 1887 | static int op_cld(cpu_t *cpu, uint16_t addr, addr_mode_t mode) {
+      |                                              ~~~~~~~~~~~~^~~~
+agnes.c: In function ‘int op_cli(cpu_t*, uint16_t, addr_mode_t)’:
+agnes.c:1892:40: warning: unused parameter ‘addr’ [-Wunused-parameter]
+ 1892 | static int op_cli(cpu_t *cpu, uint16_t addr, addr_mode_t mode) {
+      |                               ~~~~~~~~~^~~~
+agnes.c:1892:58: warning: unused parameter ‘mode’ [-Wunused-parameter]
+ 1892 | static int op_cli(cpu_t *cpu, uint16_t addr, addr_mode_t mode) {
+      |                                              ~~~~~~~~~~~~^~~~
+agnes.c: In function ‘int op_clv(cpu_t*, uint16_t, addr_mode_t)’:
+agnes.c:1897:40: warning: unused parameter ‘addr’ [-Wunused-parameter]
+ 1897 | static int op_clv(cpu_t *cpu, uint16_t addr, addr_mode_t mode) {
+      |                               ~~~~~~~~~^~~~
+agnes.c:1897:58: warning: unused parameter ‘mode’ [-Wunused-parameter]
+ 1897 | static int op_clv(cpu_t *cpu, uint16_t addr, addr_mode_t mode) {
+      |                                              ~~~~~~~~~~~~^~~~
+agnes.c: In function ‘int op_cmp(cpu_t*, uint16_t, addr_mode_t)’:
+agnes.c:1902:58: warning: unused parameter ‘mode’ [-Wunused-parameter]
+ 1902 | static int op_cmp(cpu_t *cpu, uint16_t addr, addr_mode_t mode) {
+      |                                              ~~~~~~~~~~~~^~~~
+agnes.c: In function ‘int op_cpx(cpu_t*, uint16_t, addr_mode_t)’:
+agnes.c:1909:58: warning: unused parameter ‘mode’ [-Wunused-parameter]
+ 1909 | static int op_cpx(cpu_t *cpu, uint16_t addr, addr_mode_t mode) {
+      |                                              ~~~~~~~~~~~~^~~~
+agnes.c: In function ‘int op_cpy(cpu_t*, uint16_t, addr_mode_t)’:
+agnes.c:1916:58: warning: unused parameter ‘mode’ [-Wunused-parameter]
+ 1916 | static int op_cpy(cpu_t *cpu, uint16_t addr, addr_mode_t mode) {
+      |                                              ~~~~~~~~~~~~^~~~
+agnes.c: In function ‘int op_dec(cpu_t*, uint16_t, addr_mode_t)’:
+agnes.c:1923:58: warning: unused parameter ‘mode’ [-Wunused-parameter]
+ 1923 | static int op_dec(cpu_t *cpu, uint16_t addr, addr_mode_t mode) {
+      |                                              ~~~~~~~~~~~~^~~~
+agnes.c: In function ‘int op_dex(cpu_t*, uint16_t, addr_mode_t)’:
+agnes.c:1930:40: warning: unused parameter ‘addr’ [-Wunused-parameter]
+ 1930 | static int op_dex(cpu_t *cpu, uint16_t addr, addr_mode_t mode) {
+      |                               ~~~~~~~~~^~~~
+agnes.c:1930:58: warning: unused parameter ‘mode’ [-Wunused-parameter]
+ 1930 | static int op_dex(cpu_t *cpu, uint16_t addr, addr_mode_t mode) {
+      |                                              ~~~~~~~~~~~~^~~~
+agnes.c: In function ‘int op_dey(cpu_t*, uint16_t, addr_mode_t)’:
+agnes.c:1936:40: warning: unused parameter ‘addr’ [-Wunused-parameter]
+ 1936 | static int op_dey(cpu_t *cpu, uint16_t addr, addr_mode_t mode) {
+      |                               ~~~~~~~~~^~~~
+agnes.c:1936:58: warning: unused parameter ‘mode’ [-Wunused-parameter]
+ 1936 | static int op_dey(cpu_t *cpu, uint16_t addr, addr_mode_t mode) {
+      |                                              ~~~~~~~~~~~~^~~~
+agnes.c: In function ‘int op_eor(cpu_t*, uint16_t, addr_mode_t)’:
+agnes.c:1942:58: warning: unused parameter ‘mode’ [-Wunused-parameter]
+ 1942 | static int op_eor(cpu_t *cpu, uint16_t addr, addr_mode_t mode) {
+      |                                              ~~~~~~~~~~~~^~~~
+agnes.c: In function ‘int op_inc(cpu_t*, uint16_t, addr_mode_t)’:
+agnes.c:1949:58: warning: unused parameter ‘mode’ [-Wunused-parameter]
+ 1949 | static int op_inc(cpu_t *cpu, uint16_t addr, addr_mode_t mode) {
+      |                                              ~~~~~~~~~~~~^~~~
+agnes.c: In function ‘int op_inx(cpu_t*, uint16_t, addr_mode_t)’:
+agnes.c:1956:40: warning: unused parameter ‘addr’ [-Wunused-parameter]
+ 1956 | static int op_inx(cpu_t *cpu, uint16_t addr, addr_mode_t mode) {
+      |                               ~~~~~~~~~^~~~
+agnes.c:1956:58: warning: unused parameter ‘mode’ [-Wunused-parameter]
+ 1956 | static int op_inx(cpu_t *cpu, uint16_t addr, addr_mode_t mode) {
+      |                                              ~~~~~~~~~~~~^~~~
+agnes.c: In function ‘int op_iny(cpu_t*, uint16_t, addr_mode_t)’:
+agnes.c:1962:40: warning: unused parameter ‘addr’ [-Wunused-parameter]
+ 1962 | static int op_iny(cpu_t *cpu, uint16_t addr, addr_mode_t mode) {
+      |                               ~~~~~~~~~^~~~
+agnes.c:1962:58: warning: unused parameter ‘mode’ [-Wunused-parameter]
+ 1962 | static int op_iny(cpu_t *cpu, uint16_t addr, addr_mode_t mode) {
+      |                                              ~~~~~~~~~~~~^~~~
+agnes.c: In function ‘int op_jmp(cpu_t*, uint16_t, addr_mode_t)’:
+agnes.c:1968:58: warning: unused parameter ‘mode’ [-Wunused-parameter]
+ 1968 | static int op_jmp(cpu_t *cpu, uint16_t addr, addr_mode_t mode) {
+      |                                              ~~~~~~~~~~~~^~~~
+agnes.c: In function ‘int op_jsr(cpu_t*, uint16_t, addr_mode_t)’:
+agnes.c:1973:58: warning: unused parameter ‘mode’ [-Wunused-parameter]
+ 1973 | static int op_jsr(cpu_t *cpu, uint16_t addr, addr_mode_t mode) {
+      |                                              ~~~~~~~~~~~~^~~~
+agnes.c: In function ‘int op_lda(cpu_t*, uint16_t, addr_mode_t)’:
+agnes.c:1979:58: warning: unused parameter ‘mode’ [-Wunused-parameter]
+ 1979 | static int op_lda(cpu_t *cpu, uint16_t addr, addr_mode_t mode) {
+      |                                              ~~~~~~~~~~~~^~~~
+agnes.c: In function ‘int op_ldx(cpu_t*, uint16_t, addr_mode_t)’:
+agnes.c:1986:58: warning: unused parameter ‘mode’ [-Wunused-parameter]
+ 1986 | static int op_ldx(cpu_t *cpu, uint16_t addr, addr_mode_t mode) {
+      |                                              ~~~~~~~~~~~~^~~~
+agnes.c: In function ‘int op_ldy(cpu_t*, uint16_t, addr_mode_t)’:
+agnes.c:1993:58: warning: unused parameter ‘mode’ [-Wunused-parameter]
+ 1993 | static int op_ldy(cpu_t *cpu, uint16_t addr, addr_mode_t mode) {
+      |                                              ~~~~~~~~~~~~^~~~
+agnes.c: In function ‘int op_nop(cpu_t*, uint16_t, addr_mode_t)’:
+agnes.c:2015:26: warning: unused parameter ‘cpu’ [-Wunused-parameter]
+ 2015 | static int op_nop(cpu_t *cpu, uint16_t addr, addr_mode_t mode) {
+      |                   ~~~~~~~^~~
+agnes.c:2015:40: warning: unused parameter ‘addr’ [-Wunused-parameter]
+ 2015 | static int op_nop(cpu_t *cpu, uint16_t addr, addr_mode_t mode) {
+      |                               ~~~~~~~~~^~~~
+agnes.c:2015:58: warning: unused parameter ‘mode’ [-Wunused-parameter]
+ 2015 | static int op_nop(cpu_t *cpu, uint16_t addr, addr_mode_t mode) {
+      |                                              ~~~~~~~~~~~~^~~~
+agnes.c: In function ‘int op_ora(cpu_t*, uint16_t, addr_mode_t)’:
+agnes.c:2019:58: warning: unused parameter ‘mode’ [-Wunused-parameter]
+ 2019 | static int op_ora(cpu_t *cpu, uint16_t addr, addr_mode_t mode) {
+      |                                              ~~~~~~~~~~~~^~~~
+agnes.c: In function ‘int op_pha(cpu_t*, uint16_t, addr_mode_t)’:
+agnes.c:2026:40: warning: unused parameter ‘addr’ [-Wunused-parameter]
+ 2026 | static int op_pha(cpu_t *cpu, uint16_t addr, addr_mode_t mode) {
+      |                               ~~~~~~~~~^~~~
+agnes.c:2026:58: warning: unused parameter ‘mode’ [-Wunused-parameter]
+ 2026 | static int op_pha(cpu_t *cpu, uint16_t addr, addr_mode_t mode) {
+      |                                              ~~~~~~~~~~~~^~~~
+agnes.c: In function ‘int op_php(cpu_t*, uint16_t, addr_mode_t)’:
+agnes.c:2031:40: warning: unused parameter ‘addr’ [-Wunused-parameter]
+ 2031 | static int op_php(cpu_t *cpu, uint16_t addr, addr_mode_t mode) {
+      |                               ~~~~~~~~~^~~~
+agnes.c:2031:58: warning: unused parameter ‘mode’ [-Wunused-parameter]
+ 2031 | static int op_php(cpu_t *cpu, uint16_t addr, addr_mode_t mode) {
+      |                                              ~~~~~~~~~~~~^~~~
+agnes.c: In function ‘int op_pla(cpu_t*, uint16_t, addr_mode_t)’:
+agnes.c:2037:40: warning: unused parameter ‘addr’ [-Wunused-parameter]
+ 2037 | static int op_pla(cpu_t *cpu, uint16_t addr, addr_mode_t mode) {
+      |                               ~~~~~~~~~^~~~
+agnes.c:2037:58: warning: unused parameter ‘mode’ [-Wunused-parameter]
+ 2037 | static int op_pla(cpu_t *cpu, uint16_t addr, addr_mode_t mode) {
+      |                                              ~~~~~~~~~~~~^~~~
+agnes.c: In function ‘int op_plp(cpu_t*, uint16_t, addr_mode_t)’:
+agnes.c:2043:40: warning: unused parameter ‘addr’ [-Wunused-parameter]
+ 2043 | static int op_plp(cpu_t *cpu, uint16_t addr, addr_mode_t mode) {
+      |                               ~~~~~~~~~^~~~
+agnes.c:2043:58: warning: unused parameter ‘mode’ [-Wunused-parameter]
+ 2043 | static int op_plp(cpu_t *cpu, uint16_t addr, addr_mode_t mode) {
+      |                                              ~~~~~~~~~~~~^~~~
+agnes.c: In function ‘int op_rti(cpu_t*, uint16_t, addr_mode_t)’:
+agnes.c:2081:40: warning: unused parameter ‘addr’ [-Wunused-parameter]
+ 2081 | static int op_rti(cpu_t *cpu, uint16_t addr, addr_mode_t mode) {
+      |                               ~~~~~~~~~^~~~
+agnes.c:2081:58: warning: unused parameter ‘mode’ [-Wunused-parameter]
+ 2081 | static int op_rti(cpu_t *cpu, uint16_t addr, addr_mode_t mode) {
+      |                                              ~~~~~~~~~~~~^~~~
+agnes.c: In function ‘int op_rts(cpu_t*, uint16_t, addr_mode_t)’:
+agnes.c:2088:40: warning: unused parameter ‘addr’ [-Wunused-parameter]
+ 2088 | static int op_rts(cpu_t *cpu, uint16_t addr, addr_mode_t mode) {
+      |                               ~~~~~~~~~^~~~
+agnes.c:2088:58: warning: unused parameter ‘mode’ [-Wunused-parameter]
+ 2088 | static int op_rts(cpu_t *cpu, uint16_t addr, addr_mode_t mode) {
+      |                                              ~~~~~~~~~~~~^~~~
+agnes.c: In function ‘int op_sbc(cpu_t*, uint16_t, addr_mode_t)’:
+agnes.c:2093:58: warning: unused parameter ‘mode’ [-Wunused-parameter]
+ 2093 | static int op_sbc(cpu_t *cpu, uint16_t addr, addr_mode_t mode) {
+      |                                              ~~~~~~~~~~~~^~~~
+agnes.c: In function ‘int op_sec(cpu_t*, uint16_t, addr_mode_t)’:
+agnes.c:2104:40: warning: unused parameter ‘addr’ [-Wunused-parameter]
+ 2104 | static int op_sec(cpu_t *cpu, uint16_t addr, addr_mode_t mode) {
+      |                               ~~~~~~~~~^~~~
+agnes.c:2104:58: warning: unused parameter ‘mode’ [-Wunused-parameter]
+ 2104 | static int op_sec(cpu_t *cpu, uint16_t addr, addr_mode_t mode) {
+      |                                              ~~~~~~~~~~~~^~~~
+agnes.c: In function ‘int op_sed(cpu_t*, uint16_t, addr_mode_t)’:
+agnes.c:2109:40: warning: unused parameter ‘addr’ [-Wunused-parameter]
+ 2109 | static int op_sed(cpu_t *cpu, uint16_t addr, addr_mode_t mode) {
+      |                               ~~~~~~~~~^~~~
+agnes.c:2109:58: warning: unused parameter ‘mode’ [-Wunused-parameter]
+ 2109 | static int op_sed(cpu_t *cpu, uint16_t addr, addr_mode_t mode) {
+      |                                              ~~~~~~~~~~~~^~~~
+agnes.c: In function ‘int op_sei(cpu_t*, uint16_t, addr_mode_t)’:
+agnes.c:2114:40: warning: unused parameter ‘addr’ [-Wunused-parameter]
+ 2114 | static int op_sei(cpu_t *cpu, uint16_t addr, addr_mode_t mode) {
+      |                               ~~~~~~~~~^~~~
+agnes.c:2114:58: warning: unused parameter ‘mode’ [-Wunused-parameter]
+ 2114 | static int op_sei(cpu_t *cpu, uint16_t addr, addr_mode_t mode) {
+      |                                              ~~~~~~~~~~~~^~~~
+agnes.c: In function ‘int op_sta(cpu_t*, uint16_t, addr_mode_t)’:
+agnes.c:2119:58: warning: unused parameter ‘mode’ [-Wunused-parameter]
+ 2119 | static int op_sta(cpu_t *cpu, uint16_t addr, addr_mode_t mode) {
+      |                                              ~~~~~~~~~~~~^~~~
+agnes.c: In function ‘int op_stx(cpu_t*, uint16_t, addr_mode_t)’:
+agnes.c:2124:58: warning: unused parameter ‘mode’ [-Wunused-parameter]
+ 2124 | static int op_stx(cpu_t *cpu, uint16_t addr, addr_mode_t mode) {
+      |                                              ~~~~~~~~~~~~^~~~
+agnes.c: In function ‘int op_sty(cpu_t*, uint16_t, addr_mode_t)’:
+agnes.c:2129:58: warning: unused parameter ‘mode’ [-Wunused-parameter]
+ 2129 | static int op_sty(cpu_t *cpu, uint16_t addr, addr_mode_t mode) {
+      |                                              ~~~~~~~~~~~~^~~~
+agnes.c: In function ‘int op_tax(cpu_t*, uint16_t, addr_mode_t)’:
+agnes.c:2134:40: warning: unused parameter ‘addr’ [-Wunused-parameter]
+ 2134 | static int op_tax(cpu_t *cpu, uint16_t addr, addr_mode_t mode) {
+      |                               ~~~~~~~~~^~~~
+agnes.c:2134:58: warning: unused parameter ‘mode’ [-Wunused-parameter]
+ 2134 | static int op_tax(cpu_t *cpu, uint16_t addr, addr_mode_t mode) {
+      |                                              ~~~~~~~~~~~~^~~~
+agnes.c: In function ‘int op_tay(cpu_t*, uint16_t, addr_mode_t)’:
+agnes.c:2140:40: warning: unused parameter ‘addr’ [-Wunused-parameter]
+ 2140 | static int op_tay(cpu_t *cpu, uint16_t addr, addr_mode_t mode) {
+      |                               ~~~~~~~~~^~~~
+agnes.c:2140:58: warning: unused parameter ‘mode’ [-Wunused-parameter]
+ 2140 | static int op_tay(cpu_t *cpu, uint16_t addr, addr_mode_t mode) {
+      |                                              ~~~~~~~~~~~~^~~~
+agnes.c: In function ‘int op_tsx(cpu_t*, uint16_t, addr_mode_t)’:
+agnes.c:2146:40: warning: unused parameter ‘addr’ [-Wunused-parameter]
+ 2146 | static int op_tsx(cpu_t *cpu, uint16_t addr, addr_mode_t mode) {
+      |                               ~~~~~~~~~^~~~
+agnes.c:2146:58: warning: unused parameter ‘mode’ [-Wunused-parameter]
+ 2146 | static int op_tsx(cpu_t *cpu, uint16_t addr, addr_mode_t mode) {
+      |                                              ~~~~~~~~~~~~^~~~
+agnes.c: In function ‘int op_txa(cpu_t*, uint16_t, addr_mode_t)’:
+agnes.c:2152:40: warning: unused parameter ‘addr’ [-Wunused-parameter]
+ 2152 | static int op_txa(cpu_t *cpu, uint16_t addr, addr_mode_t mode) {
+      |                               ~~~~~~~~~^~~~
+agnes.c:2152:58: warning: unused parameter ‘mode’ [-Wunused-parameter]
+ 2152 | static int op_txa(cpu_t *cpu, uint16_t addr, addr_mode_t mode) {
+      |                                              ~~~~~~~~~~~~^~~~
+agnes.c: In function ‘int op_txs(cpu_t*, uint16_t, addr_mode_t)’:
+agnes.c:2158:40: warning: unused parameter ‘addr’ [-Wunused-parameter]
+ 2158 | static int op_txs(cpu_t *cpu, uint16_t addr, addr_mode_t mode) {
+      |                               ~~~~~~~~~^~~~
+agnes.c:2158:58: warning: unused parameter ‘mode’ [-Wunused-parameter]
+ 2158 | static int op_txs(cpu_t *cpu, uint16_t addr, addr_mode_t mode) {
+      |                                              ~~~~~~~~~~~~^~~~
+agnes.c: In function ‘int op_tya(cpu_t*, uint16_t, addr_mode_t)’:
+agnes.c:2163:40: warning: unused parameter ‘addr’ [-Wunused-parameter]
+ 2163 | static int op_tya(cpu_t *cpu, uint16_t addr, addr_mode_t mode) {
+      |                               ~~~~~~~~~^~~~
+agnes.c:2163:58: warning: unused parameter ‘mode’ [-Wunused-parameter]
+ 2163 | static int op_tya(cpu_t *cpu, uint16_t addr, addr_mode_t mode) {
+      |                                              ~~~~~~~~~~~~^~~~
+agnes.c: In function ‘void mapper4_write_register(mapper4_t*, uint16_t, uint8_t)’:
+agnes.c:2537:21: warning: comparison is always true due to limited range of data type [-Wtype-limits]
+ 2537 |     } else if (addr <= 0xffff && addr_odd) { // IRQ enable ($E001-$FFFF, odd)
+      |                ~~~~~^~~~~~~~~

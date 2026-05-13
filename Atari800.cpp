@@ -66,6 +66,8 @@ public:
     virtual atari800_color_t getPixel(int x, int y) const = 0;
     virtual int getAudioSampleRate() const { return 48000; }
     virtual double getNominalFps() const { return 60.0; }
+    virtual int getFrameWidth() const { return 400; }
+    virtual int getFrameHeight() const { return 300; }
 };
 
 class Atari800UnavailableBackend final : public Atari800Backend {
@@ -173,6 +175,8 @@ public:
     atari800_color_t getPixel(int x, int y) const override;
     int getAudioSampleRate() const override { return audioSampleRate; }
     double getNominalFps() const override { return coreFps; }
+    int getFrameWidth() const override { return frameWidth; }
+    int getFrameHeight() const override { return frameHeight; }
 
     bool onEnvironment(unsigned cmd, void* data);
     void onVideoRefresh(const void* data, unsigned width, unsigned height, size_t pitch);
@@ -788,8 +792,9 @@ Atari800Emulation::ControllerBindings Atari800Emulation::globalControllerBinding
 bool Atari800Emulation::globalInputConfigured = false;
 
 Atari800Emulation::Atari800Emulation()
-    : isRunning(false), window(nullptr), renderer(nullptr), screenTexture(nullptr), controller(nullptr),
-      controllerDeviceIndex(-1), scaleX(2), scaleY(2), workerInput{},
+        : isRunning(false), window(nullptr), renderer(nullptr), screenTexture(nullptr), controller(nullptr),
+            controllerDeviceIndex(-1), scaleX(2), scaleY(2), frameWidth(kDefaultAtari800ScreenWidth),
+            frameHeight(kDefaultAtari800ScreenHeight), workerInput{},
       emulationThreadStopRequested(false), emulationThreadRunning(false),
       emulationThreadFailed(false), frameReady(false), inputMode(InputMode::KeyboardOnly)
 {
@@ -800,8 +805,8 @@ Atari800Emulation::Atari800Emulation()
         backend = std::make_unique<Atari800UnavailableBackend>();
     }
 
-    frameBuffer.resize(kAtari800ScreenWidth * kAtari800ScreenHeight * 4, 0);
-    latestFrame.resize(kAtari800ScreenWidth * kAtari800ScreenHeight * 4, 0);
+    frameBuffer.resize(static_cast<std::size_t>(frameWidth * frameHeight) * 4, 0);
+    latestFrame.resize(static_cast<std::size_t>(frameWidth * frameHeight) * 4, 0);
     setDefaultBindings();
 
     if (globalInputConfigured) {
@@ -862,6 +867,12 @@ bool Atari800Emulation::loadRom(const string& path)
         return false;
     }
 
+    frameWidth = std::max(1, backend->getFrameWidth());
+    frameHeight = std::max(1, backend->getFrameHeight());
+    frameBuffer.assign(static_cast<std::size_t>(frameWidth * frameHeight) * 4, 0);
+    latestFrame.assign(static_cast<std::size_t>(frameWidth * frameHeight) * 4, 0);
+    frameReady = false;
+
     romPath = path;
     isRunning = true;
     std::cout << "Successfully loaded Atari 800 ROM: " << path << "\n";
@@ -887,11 +898,52 @@ bool Atari800Emulation::restoreSaveData(const std::vector<unsigned char>& data)
 
 void Atari800Emulation::calculateScale(int screenWidth, int screenHeight)
 {
-    int maxScaleX = (screenWidth - 50) / kAtari800ScreenWidth;
-    int maxScaleY = (screenHeight - 50) / kAtari800ScreenHeight;
+    int maxScaleX = (screenWidth - 50) / std::max(1, frameWidth);
+    int maxScaleY = (screenHeight - 50) / std::max(1, frameHeight);
     int scale = (maxScaleX < maxScaleY) ? maxScaleX : maxScaleY;
     scaleX = (scale < 1) ? 1 : scale;
     scaleY = scaleX;
+}
+
+void Atari800Emulation::syncFrameGeometry()
+{
+    if (!backend) {
+        return;
+    }
+
+    const int backendFrameWidth = std::max(1, backend->getFrameWidth());
+    const int backendFrameHeight = std::max(1, backend->getFrameHeight());
+    if (backendFrameWidth == frameWidth && backendFrameHeight == frameHeight) {
+        return;
+    }
+
+    frameWidth = backendFrameWidth;
+    frameHeight = backendFrameHeight;
+    frameBuffer.assign(static_cast<std::size_t>(frameWidth * frameHeight) * 4, 0);
+
+    {
+        std::lock_guard<std::mutex> lock(frameMutex);
+        latestFrame.assign(static_cast<std::size_t>(frameWidth * frameHeight) * 4, 0);
+        frameReady = false;
+    }
+
+    if (screenTexture) {
+        SDL_DestroyTexture(screenTexture);
+        screenTexture = nullptr;
+    }
+
+    if (renderer) {
+        screenTexture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC,
+            frameWidth, frameHeight);
+    }
+
+    if (window) {
+        SDL_DisplayMode displayMode;
+        if (SDL_GetCurrentDisplayMode(0, &displayMode) == 0) {
+            calculateScale(displayMode.w, displayMode.h);
+        }
+        SDL_SetWindowSize(window, frameWidth * scaleX, frameHeight * scaleY);
+    }
 }
 
 void Atari800Emulation::initSDL()
@@ -907,8 +959,8 @@ void Atari800Emulation::initSDL()
     SDL_GetCurrentDisplayMode(0, &displayMode);
     calculateScale(displayMode.w, displayMode.h);
 
-    const int windowWidth = kAtari800ScreenWidth * scaleX;
-    const int windowHeight = kAtari800ScreenHeight * scaleY;
+    const int windowWidth = frameWidth * scaleX;
+    const int windowHeight = frameHeight * scaleY;
 
     window = SDL_CreateWindow(
         "Atari 800 Emulator - libretro",
@@ -935,7 +987,7 @@ void Atari800Emulation::initSDL()
     }
 
     screenTexture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC,
-        kAtari800ScreenWidth, kAtari800ScreenHeight);
+        frameWidth, frameHeight);
     if (!screenTexture) {
         std::cerr << "Failed to create SDL texture: " << SDL_GetError() << "\n";
         SDL_DestroyRenderer(renderer);
@@ -1247,14 +1299,14 @@ atari800_color_t Atari800Emulation::getPixel(int x, int y) const
         return {0, 0, 0, 255};
     }
 
-    if (x < 0 || x >= kAtari800ScreenWidth || y < 0 || y >= kAtari800ScreenHeight) {
+    if (x < 0 || x >= frameWidth || y < 0 || y >= frameHeight) {
         return {0, 0, 0, 255};
     }
 
     {
         std::lock_guard<std::mutex> lock(frameMutex);
-        if (frameReady.load() && latestFrame.size() >= static_cast<std::size_t>(kAtari800ScreenWidth * kAtari800ScreenHeight * 4)) {
-            const std::size_t offset = (static_cast<std::size_t>(y) * static_cast<std::size_t>(kAtari800ScreenWidth) + static_cast<std::size_t>(x)) * 4;
+        if (frameReady.load() && latestFrame.size() >= static_cast<std::size_t>(frameWidth * frameHeight * 4)) {
+            const std::size_t offset = (static_cast<std::size_t>(y) * static_cast<std::size_t>(frameWidth) + static_cast<std::size_t>(x)) * 4;
             return {
                 latestFrame[offset],
                 latestFrame[offset + 1],
@@ -1273,6 +1325,8 @@ void Atari800Emulation::renderFrame()
         return;
     }
 
+    syncFrameGeometry();
+
     {
         std::lock_guard<std::mutex> lock(frameMutex);
         if (!frameReady.load()) {
@@ -1281,7 +1335,7 @@ void Atari800Emulation::renderFrame()
         frameBuffer = latestFrame;
     }
 
-    if (SDL_UpdateTexture(screenTexture, nullptr, frameBuffer.data(), kAtari800ScreenWidth * 4) < 0) {
+    if (SDL_UpdateTexture(screenTexture, nullptr, frameBuffer.data(), frameWidth * 4) < 0) {
         std::cerr << "Failed to update texture: " << SDL_GetError() << "\n";
         return;
     }
@@ -1289,7 +1343,7 @@ void Atari800Emulation::renderFrame()
     SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
     SDL_RenderClear(renderer);
 
-    SDL_Rect destRect = {0, 0, kAtari800ScreenWidth * scaleX, kAtari800ScreenHeight * scaleY};
+    SDL_Rect destRect = {0, 0, frameWidth * scaleX, frameHeight * scaleY};
     SDL_RenderCopy(renderer, screenTexture, nullptr, &destRect);
     SDL_RenderPresent(renderer);
 }
@@ -1300,8 +1354,8 @@ void Atari800Emulation::displayFrame() const
         return;
     }
 
-    for (int y = 0; y < kAtari800ScreenHeight; y += 8) {
-        for (int x = 0; x < kAtari800ScreenWidth; x += 12) {
+    for (int y = 0; y < frameHeight; y += 8) {
+        for (int x = 0; x < frameWidth; x += 12) {
             atari800_color_t pixel = getPixel(x, y);
             int gray = (pixel.r + pixel.g + pixel.b) / 3;
             if (gray > 192) {
@@ -1487,16 +1541,12 @@ void Atari800Emulation::emulationWorkerLoop()
 
     if (!backend) {
         std::cerr << "[Atari800] Backend is null in emulation worker loop\n";
-            std::cerr.flush();
         emulationThreadRunning = false;
         emulationThreadFailed = true;
-
-            std::cerr << "[Atari800] Emulation worker starting...\n";
-            std::cerr.flush();
         return;
     }
 
-    std::vector<unsigned char> localFrame(static_cast<std::size_t>(kAtari800ScreenWidth * kAtari800ScreenHeight) * 4, 0);
+    std::vector<unsigned char> localFrame(static_cast<std::size_t>(frameWidth * frameHeight) * 4, 0);
 
     AudioMasterClock clock;
     clock.configure(backend->getAudioSampleRate(), backend->getNominalFps(), 120);
@@ -1516,6 +1566,14 @@ void Atari800Emulation::emulationWorkerLoop()
                 emulationThreadFailed = true;
                 break;
             }
+
+            const int backendFrameWidth = std::max(1, backend->getFrameWidth());
+            const int backendFrameHeight = std::max(1, backend->getFrameHeight());
+            if (backendFrameWidth != frameWidth || backendFrameHeight != frameHeight) {
+                frameWidth = backendFrameWidth;
+                frameHeight = backendFrameHeight;
+                localFrame.assign(static_cast<std::size_t>(frameWidth * frameHeight) * 4, 0);
+            }
         } catch (const std::exception& e) {
             std::cerr << "[Atari800] Exception in emulation worker: " << e.what() << "\n";
             isRunning = false;
@@ -1528,10 +1586,10 @@ void Atari800Emulation::emulationWorkerLoop()
             break;
         }
 
-        for (int y = 0; y < kAtari800ScreenHeight; ++y) {
-            for (int x = 0; x < kAtari800ScreenWidth; ++x) {
+        for (int y = 0; y < frameHeight; ++y) {
+            for (int x = 0; x < frameWidth; ++x) {
                 const atari800_color_t color = backend->getPixel(x, y);
-                const std::size_t offset = (static_cast<std::size_t>(y) * static_cast<std::size_t>(kAtari800ScreenWidth) + static_cast<std::size_t>(x)) * 4;
+                const std::size_t offset = (static_cast<std::size_t>(y) * static_cast<std::size_t>(frameWidth) + static_cast<std::size_t>(x)) * 4;
                 if (offset + 3 < localFrame.size()) {
                     localFrame[offset + 0] = color.r;
                     localFrame[offset + 1] = color.g;

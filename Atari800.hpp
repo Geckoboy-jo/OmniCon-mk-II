@@ -74,6 +74,8 @@ private:
     int controllerDeviceIndex;
     int scaleX;
     int scaleY;
+    int frameWidth;
+    int frameHeight;
     std::vector<unsigned char> frameBuffer;
     std::vector<unsigned char> latestFrame;
     std::thread emulationThread;
@@ -93,12 +95,13 @@ private:
     static ControllerBindings globalControllerBindings;
     static bool globalInputConfigured;
 
-    static constexpr int kAtari800ScreenWidth = 400;
-    static constexpr int kAtari800ScreenHeight = 300;
+    static constexpr int kDefaultAtari800ScreenWidth = 400;
+    static constexpr int kDefaultAtari800ScreenHeight = 300;
 
     void initSDL();
     void cleanupSDL();
     void calculateScale(int screenWidth, int screenHeight);
+    void syncFrameGeometry();
     void renderFrame();
     void setDefaultBindings();
     void saveGlobalInputSettings();

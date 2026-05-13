@@ -5,6 +5,10 @@
 #include <cstring>
 #include <algorithm>
 #include <cctype>
+#include <memory>
+#include <filesystem>
+#include <dlfcn.h>
+#include <cstdlib>
 
 namespace {
 
@@ -55,21 +59,782 @@ const char* controllerButtonName(SDL_GameControllerButton button)
 
 } // namespace
 
+class NesBackend {
+public:
+    virtual ~NesBackend() = default;
+    virtual bool loadRom(const std::string& path) = 0;
+    virtual bool nextFrame() = 0;
+    virtual void setInput(const agnes_input_t& input) = 0;
+    virtual std::vector<unsigned char> dumpSaveData() const = 0;
+    virtual bool restoreSaveData(const std::vector<unsigned char>& data) = 0;
+    virtual agnes_color_t getPixel(int x, int y) const = 0;
+    virtual int getAudioSampleRate() const { return 48000; }
+    virtual double getNominalFps() const { return 60.0988; }
+};
+
+class AgnesBackend final : public NesBackend {
+public:
+    AgnesBackend()
+        : emulator(agnes_make())
+    {
+    }
+
+    ~AgnesBackend() override
+    {
+        if (emulator) {
+            agnes_destroy(emulator);
+            emulator = nullptr;
+        }
+    }
+
+    bool isReady() const
+    {
+        return emulator != nullptr;
+    }
+
+    bool loadRom(const std::string& path) override
+    {
+        if (!emulator) {
+            return false;
+        }
+
+        std::ifstream file(path, std::ios::binary | std::ios::ate);
+        if (!file.is_open()) {
+            return false;
+        }
+
+        const auto size = static_cast<size_t>(file.tellg());
+        file.seekg(0, std::ios::beg);
+        romData.assign(size, 0);
+        if (!file.read(reinterpret_cast<char*>(romData.data()), static_cast<std::streamsize>(size))) {
+            romData.clear();
+            return false;
+        }
+
+        return agnes_load_ines_data(emulator, romData.data(), romData.size());
+    }
+
+    bool nextFrame() override
+    {
+        return emulator && agnes_next_frame(emulator);
+    }
+
+    void setInput(const agnes_input_t& input) override
+    {
+        if (emulator) {
+            agnes_set_input(emulator, &input, nullptr);
+        }
+    }
+
+    std::vector<unsigned char> dumpSaveData() const override
+    {
+        if (!emulator) {
+            return {};
+        }
+
+        const size_t stateSize = agnes_state_size();
+        if (stateSize == 0) {
+            return {};
+        }
+
+        std::vector<unsigned char> state(stateSize, 0);
+        agnes_state_t* statePtr = reinterpret_cast<agnes_state_t*>(state.data());
+        agnes_dump_state(emulator, statePtr);
+        return state;
+    }
+
+    bool restoreSaveData(const std::vector<unsigned char>& data) override
+    {
+        if (!emulator) {
+            return false;
+        }
+
+        const size_t expectedSize = agnes_state_size();
+        if (data.size() != expectedSize || expectedSize == 0) {
+            return false;
+        }
+
+        const agnes_state_t* statePtr = reinterpret_cast<const agnes_state_t*>(data.data());
+        return agnes_restore_state(emulator, statePtr);
+    }
+
+    agnes_color_t getPixel(int x, int y) const override
+    {
+        if (!emulator || x < 0 || x >= AGNES_SCREEN_WIDTH || y < 0 || y >= AGNES_SCREEN_HEIGHT) {
+            return {0, 0, 0, 255};
+        }
+
+        return agnes_get_screen_pixel(emulator, x, y);
+    }
+
+private:
+    agnes_t* emulator = nullptr;
+    std::vector<unsigned char> romData;
+};
+
+namespace libretro {
+    static constexpr unsigned ENV_GET_CAN_DUPE = 3;
+    static constexpr unsigned ENV_SET_PIXEL_FORMAT = 10;
+    static constexpr unsigned ENV_GET_VARIABLE = 15;
+    static constexpr unsigned ENV_SET_VARIABLES = 16;
+    static constexpr unsigned ENV_GET_VARIABLE_UPDATE = 17;
+    static constexpr unsigned ENV_SET_SUPPORT_NO_GAME = 18;
+    static constexpr unsigned ENV_GET_LOG_INTERFACE = 27;
+    static constexpr unsigned ENV_SET_GEOMETRY = 37;
+
+    static constexpr unsigned PIXEL_0RGB1555 = 0;
+    static constexpr unsigned PIXEL_XRGB8888 = 1;
+    static constexpr unsigned PIXEL_RGB565 = 2;
+
+    static constexpr unsigned DEVICE_JOYPAD = 1;
+    static constexpr unsigned JOYPAD_B = 0;
+    static constexpr unsigned JOYPAD_SELECT = 2;
+    static constexpr unsigned JOYPAD_START = 3;
+    static constexpr unsigned JOYPAD_UP = 4;
+    static constexpr unsigned JOYPAD_DOWN = 5;
+    static constexpr unsigned JOYPAD_LEFT = 6;
+    static constexpr unsigned JOYPAD_RIGHT = 7;
+    static constexpr unsigned JOYPAD_A = 8;
+
+    struct game_info {
+        const char* path;
+        const void* data;
+        size_t size;
+        const char* meta;
+    };
+    struct system_info {
+        const char* library_name;
+        const char* library_version;
+        const char* valid_extensions;
+        bool need_fullpath;
+        bool block_extract;
+    };
+    struct game_geometry {
+        unsigned base_width;
+        unsigned base_height;
+        unsigned max_width;
+        unsigned max_height;
+        float aspect_ratio;
+    };
+    struct system_timing {
+        double fps;
+        double sample_rate;
+    };
+    struct av_info {
+        game_geometry geometry;
+        system_timing timing;
+    };
+
+    using environment_t = bool (*)(unsigned cmd, void* data);
+    using video_refresh_t = void (*)(const void* data, unsigned width, unsigned height, size_t pitch);
+    using audio_sample_t = void (*)(int16_t left, int16_t right);
+    using audio_sample_batch_t = size_t (*)(const int16_t* data, size_t frames);
+    using input_poll_t = void (*)(void);
+    using input_state_t = int16_t (*)(unsigned port, unsigned device, unsigned index, unsigned id);
+} // namespace libretro
+
+class LibretroNesBackend final : public NesBackend {
+public:
+    LibretroNesBackend();
+    ~LibretroNesBackend() override;
+
+    bool isAvailable() const
+    {
+        return coreHandle != nullptr;
+    }
+
+    bool loadRom(const std::string& path) override;
+    bool nextFrame() override;
+    void setInput(const agnes_input_t& input) override;
+    std::vector<unsigned char> dumpSaveData() const override;
+    bool restoreSaveData(const std::vector<unsigned char>& data) override;
+    agnes_color_t getPixel(int x, int y) const override;
+    int getAudioSampleRate() const override { return audioSampleRate; }
+    double getNominalFps() const override { return coreFps; }
+
+    bool onEnvironment(unsigned cmd, void* data);
+    void onVideoRefresh(const void* data, unsigned width, unsigned height, size_t pitch);
+
+private:
+    static std::string resolveCorePath();
+    bool loadSymbols();
+    bool ensureAudioDevice(int sampleRate);
+    void closeAudioDevice();
+    void queueAudioFrames(const int16_t* data, size_t frames);
+
+    std::string corePath;
+    void* coreHandle = nullptr;
+    void (*fn_init)() = nullptr;
+    void (*fn_deinit)() = nullptr;
+    void (*fn_get_system_info)(libretro::system_info*) = nullptr;
+    void (*fn_get_system_av_info)(libretro::av_info*) = nullptr;
+    void (*fn_set_environment)(libretro::environment_t) = nullptr;
+    void (*fn_set_video_refresh)(libretro::video_refresh_t) = nullptr;
+    void (*fn_set_audio_sample)(libretro::audio_sample_t) = nullptr;
+    void (*fn_set_audio_sample_batch)(libretro::audio_sample_batch_t) = nullptr;
+    void (*fn_set_input_poll)(libretro::input_poll_t) = nullptr;
+    void (*fn_set_input_state)(libretro::input_state_t) = nullptr;
+    size_t (*fn_serialize_size)() = nullptr;
+    bool (*fn_serialize)(void*, size_t) = nullptr;
+    bool (*fn_unserialize)(const void*, size_t) = nullptr;
+    bool (*fn_load_game)(const libretro::game_info*) = nullptr;
+    void (*fn_unload_game)() = nullptr;
+    void (*fn_run)() = nullptr;
+
+    std::vector<uint8_t> framePixels;
+    int frameWidth = AGNES_SCREEN_WIDTH;
+    int frameHeight = AGNES_SCREEN_HEIGHT;
+    agnes_input_t currentInput = {};
+    unsigned pixelFormat = libretro::PIXEL_0RGB1555;
+    bool gameLoaded = false;
+    std::vector<uint8_t> romData;
+    std::string loadedRomPath;
+
+    SDL_AudioDeviceID audioDevice = 0;
+    SDL_AudioStream* audioStream = nullptr;
+    bool devicePausedUntilFirstSamples = false;
+    int coreSampleRate = 48000;
+    int audioSampleRate = 48000;
+    double coreFps = 60.0;
+    std::vector<uint8_t> audioConvertBuffer;
+    std::mutex audioBufferMutex;
+    std::vector<int16_t> audioBuffer;
+    size_t audioReadPos = 0;
+    size_t maxBufferedSamples = 0;
+
+    static LibretroNesBackend* s_instance;
+    static bool s_envCb(unsigned cmd, void* data);
+    static void s_videoCb(const void* data, unsigned width, unsigned height, size_t pitch);
+    static void s_audioCb(int16_t left, int16_t right);
+    static size_t s_audioBatchCb(const int16_t* data, size_t frames);
+    static void s_inputPollCb();
+    static int16_t s_inputStateCb(unsigned port, unsigned device, unsigned index, unsigned id);
+    static void s_audioCallback(void* userdata, Uint8* stream, int len);
+};
+
+LibretroNesBackend* LibretroNesBackend::s_instance = nullptr;
+
+std::string LibretroNesBackend::resolveCorePath()
+{
+    const char* envPath = std::getenv("OMNICON_NES_CORE");
+    if (envPath && *envPath && std::filesystem::exists(envPath)) {
+        return envPath;
+    }
+
+    const std::array<const char*, 3> workspaceCandidates = {
+        "third_party/libretro/fceumm_libretro.so",
+        "third_party/libretro/nestopia_libretro.so",
+        "third_party/libretro/quicknes_libretro.so"
+    };
+    for (const char* candidate : workspaceCandidates) {
+        if (std::filesystem::exists(candidate)) {
+            return candidate;
+        }
+    }
+
+    const std::array<const char*, 3> systemCandidates = {
+        "/usr/lib/x86_64-linux-gnu/libretro/fceumm_libretro.so",
+        "/usr/lib/x86_64-linux-gnu/libretro/nestopia_libretro.so",
+        "/usr/lib/x86_64-linux-gnu/libretro/quicknes_libretro.so"
+    };
+    for (const char* candidate : systemCandidates) {
+        if (std::filesystem::exists(candidate)) {
+            return candidate;
+        }
+    }
+
+    return std::string();
+}
+
+LibretroNesBackend::LibretroNesBackend()
+{
+    corePath = resolveCorePath();
+    if (corePath.empty()) {
+        std::cerr << "[NES] No libretro NES core found. Set OMNICON_NES_CORE to enable NES audio.\n";
+        return;
+    }
+
+    coreHandle = dlopen(corePath.c_str(), RTLD_LAZY);
+    if (!coreHandle) {
+        std::cerr << "[NES] Failed to load core: " << corePath << ": " << dlerror() << "\n";
+        return;
+    }
+
+    if (!loadSymbols()) {
+        dlclose(coreHandle);
+        coreHandle = nullptr;
+        return;
+    }
+
+    s_instance = this;
+    fn_set_environment(s_envCb);
+    fn_set_video_refresh(s_videoCb);
+    fn_set_audio_sample(s_audioCb);
+    fn_set_audio_sample_batch(s_audioBatchCb);
+    fn_set_input_poll(s_inputPollCb);
+    fn_set_input_state(s_inputStateCb);
+    fn_init();
+    framePixels.resize(static_cast<size_t>(frameWidth * frameHeight) * 4, 0);
+}
+
+LibretroNesBackend::~LibretroNesBackend()
+{
+    closeAudioDevice();
+    if (coreHandle) {
+        if (gameLoaded) {
+            fn_unload_game();
+        }
+        fn_deinit();
+        dlclose(coreHandle);
+        coreHandle = nullptr;
+    }
+    if (s_instance == this) {
+        s_instance = nullptr;
+    }
+}
+
+bool LibretroNesBackend::loadSymbols()
+{
+    auto load = [this](const char* name) -> void* {
+        void* sym = dlsym(coreHandle, name);
+        if (!sym) {
+            std::cerr << "[NES] Missing symbol: " << name << "\n";
+        }
+        return sym;
+    };
+
+    fn_init = reinterpret_cast<void(*)()>(load("retro_init"));
+    fn_deinit = reinterpret_cast<void(*)()>(load("retro_deinit"));
+    fn_get_system_info = reinterpret_cast<void(*)(libretro::system_info*)>(load("retro_get_system_info"));
+    fn_get_system_av_info = reinterpret_cast<void(*)(libretro::av_info*)>(load("retro_get_system_av_info"));
+    fn_set_environment = reinterpret_cast<void(*)(libretro::environment_t)>(load("retro_set_environment"));
+    fn_set_video_refresh = reinterpret_cast<void(*)(libretro::video_refresh_t)>(load("retro_set_video_refresh"));
+    fn_set_audio_sample = reinterpret_cast<void(*)(libretro::audio_sample_t)>(load("retro_set_audio_sample"));
+    fn_set_audio_sample_batch = reinterpret_cast<void(*)(libretro::audio_sample_batch_t)>(load("retro_set_audio_sample_batch"));
+    fn_set_input_poll = reinterpret_cast<void(*)(libretro::input_poll_t)>(load("retro_set_input_poll"));
+    fn_set_input_state = reinterpret_cast<void(*)(libretro::input_state_t)>(load("retro_set_input_state"));
+    fn_serialize_size = reinterpret_cast<size_t(*)()>(load("retro_serialize_size"));
+    fn_serialize = reinterpret_cast<bool(*)(void*, size_t)>(load("retro_serialize"));
+    fn_unserialize = reinterpret_cast<bool(*)(const void*, size_t)>(load("retro_unserialize"));
+    fn_load_game = reinterpret_cast<bool(*)(const libretro::game_info*)>(load("retro_load_game"));
+    fn_unload_game = reinterpret_cast<void(*)()>(load("retro_unload_game"));
+    fn_run = reinterpret_cast<void(*)()>(load("retro_run"));
+
+    return fn_init && fn_deinit && fn_get_system_info && fn_get_system_av_info &&
+           fn_set_environment && fn_set_video_refresh && fn_set_audio_sample &&
+           fn_set_audio_sample_batch && fn_set_input_poll && fn_set_input_state &&
+           fn_serialize_size && fn_serialize && fn_unserialize &&
+           fn_load_game && fn_unload_game && fn_run;
+}
+
+bool LibretroNesBackend::onEnvironment(unsigned cmd, void* data)
+{
+    switch (cmd) {
+        case libretro::ENV_GET_CAN_DUPE:
+            *static_cast<bool*>(data) = true;
+            return true;
+        case libretro::ENV_SET_PIXEL_FORMAT:
+            pixelFormat = *static_cast<unsigned*>(data);
+            return true;
+        case libretro::ENV_GET_VARIABLE:
+            return false;
+        case libretro::ENV_SET_VARIABLES:
+            return true;
+        case libretro::ENV_GET_VARIABLE_UPDATE:
+            *static_cast<bool*>(data) = false;
+            return true;
+        case libretro::ENV_SET_SUPPORT_NO_GAME:
+            return true;
+        case libretro::ENV_GET_LOG_INTERFACE:
+            return false;
+        case libretro::ENV_SET_GEOMETRY: {
+            const auto* geom = static_cast<const libretro::game_geometry*>(data);
+            frameWidth = static_cast<int>(geom->base_width);
+            frameHeight = static_cast<int>(geom->base_height);
+            framePixels.resize(static_cast<size_t>(frameWidth * frameHeight) * 4, 0);
+            return true;
+        }
+        default:
+            return false;
+    }
+}
+
+void LibretroNesBackend::onVideoRefresh(const void* data, unsigned width, unsigned height, size_t pitch)
+{
+    if (!data) {
+        return;
+    }
+
+    if (static_cast<int>(width) != frameWidth || static_cast<int>(height) != frameHeight) {
+        frameWidth = static_cast<int>(width);
+        frameHeight = static_cast<int>(height);
+        framePixels.resize(static_cast<size_t>(frameWidth * frameHeight) * 4, 0);
+    }
+
+    const auto* src = static_cast<const uint8_t*>(data);
+    for (unsigned row = 0; row < height; ++row) {
+        const uint8_t* srcRow = src + row * pitch;
+        uint8_t* dstRow = framePixels.data() + row * static_cast<size_t>(frameWidth) * 4;
+        if (pixelFormat == libretro::PIXEL_XRGB8888) {
+            for (unsigned col = 0; col < width; ++col) {
+                uint32_t px;
+                std::memcpy(&px, srcRow + col * 4, 4);
+                dstRow[col * 4 + 0] = static_cast<uint8_t>((px >> 16) & 0xFF);
+                dstRow[col * 4 + 1] = static_cast<uint8_t>((px >> 8) & 0xFF);
+                dstRow[col * 4 + 2] = static_cast<uint8_t>(px & 0xFF);
+                dstRow[col * 4 + 3] = 255;
+            }
+        } else if (pixelFormat == libretro::PIXEL_RGB565) {
+            for (unsigned col = 0; col < width; ++col) {
+                uint16_t px;
+                std::memcpy(&px, srcRow + col * 2, 2);
+                dstRow[col * 4 + 0] = static_cast<uint8_t>(((px >> 11) & 0x1F) * 255 / 31);
+                dstRow[col * 4 + 1] = static_cast<uint8_t>(((px >> 5) & 0x3F) * 255 / 63);
+                dstRow[col * 4 + 2] = static_cast<uint8_t>((px & 0x1F) * 255 / 31);
+                dstRow[col * 4 + 3] = 255;
+            }
+        } else {
+            for (unsigned col = 0; col < width; ++col) {
+                uint16_t px;
+                std::memcpy(&px, srcRow + col * 2, 2);
+                dstRow[col * 4 + 0] = static_cast<uint8_t>(((px >> 10) & 0x1F) * 255 / 31);
+                dstRow[col * 4 + 1] = static_cast<uint8_t>(((px >> 5) & 0x1F) * 255 / 31);
+                dstRow[col * 4 + 2] = static_cast<uint8_t>((px & 0x1F) * 255 / 31);
+                dstRow[col * 4 + 3] = 255;
+            }
+        }
+    }
+}
+
+bool LibretroNesBackend::loadRom(const std::string& path)
+{
+    if (!coreHandle) {
+        return false;
+    }
+
+    if (gameLoaded) {
+        fn_unload_game();
+        gameLoaded = false;
+        romData.clear();
+        loadedRomPath.clear();
+    }
+
+    libretro::system_info sysInfo = {};
+    fn_get_system_info(&sysInfo);
+
+    loadedRomPath = path;
+    libretro::game_info gameInfo = {};
+    gameInfo.path = loadedRomPath.c_str();
+
+    if (!sysInfo.need_fullpath) {
+        std::ifstream file(path, std::ios::binary | std::ios::ate);
+        if (!file.is_open()) {
+            return false;
+        }
+        const auto size = static_cast<size_t>(file.tellg());
+        file.seekg(0, std::ios::beg);
+        romData.resize(size);
+        if (!file.read(reinterpret_cast<char*>(romData.data()), static_cast<std::streamsize>(size))) {
+            romData.clear();
+            return false;
+        }
+        gameInfo.data = romData.data();
+        gameInfo.size = romData.size();
+    }
+
+    if (!fn_load_game(&gameInfo)) {
+        romData.clear();
+        loadedRomPath.clear();
+        return false;
+    }
+
+    gameLoaded = true;
+    libretro::av_info avInfo = {};
+    fn_get_system_av_info(&avInfo);
+    if (avInfo.timing.fps > 1.0) {
+        coreFps = avInfo.timing.fps;
+    }
+    frameWidth = static_cast<int>(avInfo.geometry.base_width);
+    frameHeight = static_cast<int>(avInfo.geometry.base_height);
+    if (frameWidth <= 0) {
+        frameWidth = AGNES_SCREEN_WIDTH;
+    }
+    if (frameHeight <= 0) {
+        frameHeight = AGNES_SCREEN_HEIGHT;
+    }
+    framePixels.resize(static_cast<size_t>(frameWidth * frameHeight) * 4, 0);
+    ensureAudioDevice(static_cast<int>(avInfo.timing.sample_rate));
+    return true;
+}
+
+bool LibretroNesBackend::nextFrame()
+{
+    if (!coreHandle || !gameLoaded) {
+        return false;
+    }
+    fn_run();
+    return true;
+}
+
+void LibretroNesBackend::setInput(const agnes_input_t& input)
+{
+    currentInput = input;
+}
+
+std::vector<unsigned char> LibretroNesBackend::dumpSaveData() const
+{
+    if (!coreHandle || !gameLoaded || !fn_serialize_size || !fn_serialize) {
+        return {};
+    }
+
+    const size_t stateSize = fn_serialize_size();
+    if (stateSize == 0) {
+        return {};
+    }
+
+    std::vector<unsigned char> state(stateSize, 0);
+    if (!fn_serialize(state.data(), stateSize)) {
+        return {};
+    }
+    return state;
+}
+
+bool LibretroNesBackend::restoreSaveData(const std::vector<unsigned char>& data)
+{
+    if (!coreHandle || !gameLoaded || !fn_unserialize || data.empty()) {
+        return false;
+    }
+    return fn_unserialize(data.data(), data.size());
+}
+
+agnes_color_t LibretroNesBackend::getPixel(int x, int y) const
+{
+    if (x < 0 || y < 0 || x >= frameWidth || y >= frameHeight) {
+        return {0, 0, 0, 255};
+    }
+    const size_t offset = (static_cast<size_t>(y) * static_cast<size_t>(frameWidth) + static_cast<size_t>(x)) * 4;
+    if (offset + 3 >= framePixels.size()) {
+        return {0, 0, 0, 255};
+    }
+    return {framePixels[offset], framePixels[offset + 1], framePixels[offset + 2], framePixels[offset + 3]};
+}
+
+bool LibretroNesBackend::ensureAudioDevice(int sampleRate)
+{
+    if (sampleRate <= 0) {
+        sampleRate = 48000;
+    }
+
+    if (audioDevice != 0 && sampleRate == coreSampleRate) {
+        return true;
+    }
+
+    closeAudioDevice();
+
+    if ((SDL_WasInit(SDL_INIT_AUDIO) & SDL_INIT_AUDIO) == 0) {
+        if (SDL_InitSubSystem(SDL_INIT_AUDIO) < 0) {
+            std::cerr << "[NES] Failed to initialize SDL audio subsystem: " << SDL_GetError() << "\n";
+            return false;
+        }
+    }
+
+    SDL_AudioSpec desired = {};
+    desired.freq = sampleRate;
+    desired.format = AUDIO_S16SYS;
+    desired.channels = 2;
+    desired.samples = 512;
+    desired.callback = s_audioCallback;
+    desired.userdata = this;
+
+    SDL_AudioSpec obtained = {};
+    audioDevice = SDL_OpenAudioDevice(nullptr, 0, &desired, &obtained, 0);
+    if (audioDevice == 0) {
+        std::cerr << "[NES] Failed to open SDL audio device: " << SDL_GetError() << "\n";
+        return false;
+    }
+
+    coreSampleRate = sampleRate;
+    audioSampleRate = obtained.freq > 0 ? obtained.freq : sampleRate;
+
+    {
+        std::lock_guard<std::mutex> lock(audioBufferMutex);
+        audioBuffer.clear();
+        audioBuffer.reserve(static_cast<size_t>(audioSampleRate) * 2 / 4);
+        audioReadPos = 0;
+        // Cap queued audio to ~120ms to avoid runaway AV lag.
+        maxBufferedSamples = static_cast<size_t>(audioSampleRate) * 2 * 120 / 1000;
+    }
+
+    // Keep device PAUSED until first real samples arrive (avoid silence on startup)
+    SDL_PauseAudioDevice(audioDevice, 1);
+    devicePausedUntilFirstSamples = true;
+    return true;
+}
+
+void LibretroNesBackend::closeAudioDevice()
+{
+    if (audioStream) {
+        SDL_FreeAudioStream(audioStream);
+        audioStream = nullptr;
+    }
+
+    if (audioDevice != 0) {
+        SDL_PauseAudioDevice(audioDevice, 1);  // Pause before closing
+        SDL_CloseAudioDevice(audioDevice);
+        audioDevice = 0;
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(audioBufferMutex);
+        audioBuffer.clear();
+        audioReadPos = 0;
+    }
+}
+
+void LibretroNesBackend::queueAudioFrames(const int16_t* data, size_t frames)
+{
+    if (!data || frames == 0 || audioDevice == 0) {
+        return;
+    }
+
+    std::lock_guard<std::mutex> lock(audioBufferMutex);
+    const size_t samples = frames * 2;  // stereo = 2 samples per frame
+    
+    // Unpause device on first real audio samples to avoid silence startup
+    if (devicePausedUntilFirstSamples) {
+        SDL_PauseAudioDevice(audioDevice, 0);
+        devicePausedUntilFirstSamples = false;
+    }
+
+    if (maxBufferedSamples > 0 && audioBuffer.size() > maxBufferedSamples) {
+        const size_t drop = audioBuffer.size() - maxBufferedSamples;
+        audioBuffer.erase(audioBuffer.begin(), audioBuffer.begin() + drop);
+    }
+    
+    audioBuffer.insert(audioBuffer.end(), data, data + samples);
+
+    if (maxBufferedSamples > 0 && audioBuffer.size() > maxBufferedSamples) {
+        const size_t drop = audioBuffer.size() - maxBufferedSamples;
+        audioBuffer.erase(audioBuffer.begin(), audioBuffer.begin() + drop);
+    }
+}
+
+bool LibretroNesBackend::s_envCb(unsigned cmd, void* data)
+{
+    return s_instance ? s_instance->onEnvironment(cmd, data) : false;
+}
+
+void LibretroNesBackend::s_videoCb(const void* data, unsigned width, unsigned height, size_t pitch)
+{
+    if (s_instance) {
+        s_instance->onVideoRefresh(data, width, height, pitch);
+    }
+}
+
+void LibretroNesBackend::s_audioCb(int16_t left, int16_t right)
+{
+    if (!s_instance) {
+        return;
+    }
+    const int16_t frame[2] = {left, right};
+    s_instance->queueAudioFrames(frame, 1);
+}
+
+size_t LibretroNesBackend::s_audioBatchCb(const int16_t* data, size_t frames)
+{
+    if (s_instance && data && frames > 0) {
+        s_instance->queueAudioFrames(data, frames);
+    }
+    return frames;
+}
+
+void LibretroNesBackend::s_inputPollCb()
+{
+}
+
+int16_t LibretroNesBackend::s_inputStateCb(unsigned port, unsigned device, unsigned index, unsigned id)
+{
+    if (!s_instance || port != 0 || device != libretro::DEVICE_JOYPAD || index != 0) {
+        return 0;
+    }
+
+    const agnes_input_t& in = s_instance->currentInput;
+    switch (id) {
+        case libretro::JOYPAD_UP: return in.up ? 1 : 0;
+        case libretro::JOYPAD_DOWN: return in.down ? 1 : 0;
+        case libretro::JOYPAD_LEFT: return in.left ? 1 : 0;
+        case libretro::JOYPAD_RIGHT: return in.right ? 1 : 0;
+        case libretro::JOYPAD_A: return in.a ? 1 : 0;
+        case libretro::JOYPAD_B: return in.b ? 1 : 0;
+        case libretro::JOYPAD_SELECT: return in.select ? 1 : 0;
+        case libretro::JOYPAD_START: return in.start ? 1 : 0;
+        default: return 0;
+    }
+}
+
+void LibretroNesBackend::s_audioCallback(void* userdata, Uint8* stream, int len)
+{
+    LibretroNesBackend* backend = reinterpret_cast<LibretroNesBackend*>(userdata);
+    if (!backend) {
+        std::memset(stream, 0, len);
+        return;
+    }
+
+    int16_t* out = reinterpret_cast<int16_t*>(stream);
+    int samples = len / sizeof(int16_t);  // Number of int16_t samples needed
+    
+    std::lock_guard<std::mutex> lock(backend->audioBufferMutex);
+    
+    for (int i = 0; i < samples; ++i) {
+        if (backend->audioReadPos < backend->audioBuffer.size()) {
+            out[i] = backend->audioBuffer[backend->audioReadPos++];
+        } else {
+            out[i] = 0;  // No more audio, output silence
+        }
+    }
+    
+    // Remove consumed samples from buffer
+    if (backend->audioReadPos > 0) {
+        backend->audioBuffer.erase(
+            backend->audioBuffer.begin(),
+            backend->audioBuffer.begin() + backend->audioReadPos
+        );
+        backend->audioReadPos = 0;
+    }
+    
+
+}
+
+std::unique_ptr<NesBackend> makeNesBackend()
+{
+    auto libretroBackend = std::make_unique<LibretroNesBackend>();
+    if (libretroBackend->isAvailable()) {
+        return libretroBackend;
+    }
+
+    auto agnesBackend = std::make_unique<AgnesBackend>();
+    if (agnesBackend->isReady()) {
+        return agnesBackend;
+    }
+
+    return {};
+}
+
 NESEmulation::InputMode NESEmulation::globalInputMode = NESEmulation::InputMode::KeyboardOnly;
 NESEmulation::KeyBindings NESEmulation::globalKeyBindings = {};
 NESEmulation::ControllerBindings NESEmulation::globalControllerBindings = {};
 bool NESEmulation::globalInputConfigured = false;
 
 NESEmulation::NESEmulation()
-        : emulator(nullptr), isRunning(false), window(nullptr), renderer(nullptr),
+        : isRunning(false), window(nullptr), renderer(nullptr),
           screenTexture(nullptr), controller(nullptr), controllerDeviceIndex(-1),
                     scaleX(2), scaleY(2), workerInput{}, emulationThreadStopRequested(false),
                     emulationThreadRunning(false), emulationThreadFailed(false), frameReady(false),
                     inputMode(InputMode::KeyboardOnly)
 {
+    backend = makeNesBackend();
     frameBuffer.resize(AGNES_SCREEN_WIDTH * AGNES_SCREEN_HEIGHT * 4, 0);
-        latestFrame.resize(AGNES_SCREEN_WIDTH * AGNES_SCREEN_HEIGHT * 4, 0);
-    emulator = agnes_make();
+    latestFrame.resize(AGNES_SCREEN_WIDTH * AGNES_SCREEN_HEIGHT * 4, 0);
     setDefaultBindings();
     if (globalInputConfigured) {
         inputMode = globalInputMode;
@@ -78,8 +843,8 @@ NESEmulation::NESEmulation()
     } else {
         saveGlobalInputSettings();
     }
-    if (!emulator) {
-        std::cerr << "Failed to create Agnes emulator instance.\n";
+    if (!backend) {
+        std::cerr << "Failed to initialize NES backend.\n";
     }
 }
 
@@ -87,15 +852,11 @@ NESEmulation::~NESEmulation()
 {
     unloadRom();
     cleanupSDL();
-    if (emulator) {
-        agnes_destroy(emulator);
-        emulator = nullptr;
-    }
 }
 
 bool NESEmulation::loadRom(const string& path)
 {
-    if (!emulator) {
+    if (!backend) {
         std::cerr << "Emulator not initialized.\n";
         return false;
     }
@@ -114,13 +875,13 @@ bool NESEmulation::loadRom(const string& path)
         return false;
     }
 
-    // Read entire file into memory
+    // Read header bytes to validate iNES format before sending to backend.
     file.seekg(0, std::ios::end);
     size_t fileSize = file.tellg();
     file.seekg(0, std::ios::beg);
 
-    romData.assign(fileSize, 0);
-    file.read(reinterpret_cast<char*>(romData.data()), fileSize);
+    romData.assign(std::min<size_t>(fileSize, 16), 0);
+    file.read(reinterpret_cast<char*>(romData.data()), static_cast<std::streamsize>(romData.size()));
     file.close();
 
     if (!file) {
@@ -129,17 +890,16 @@ bool NESEmulation::loadRom(const string& path)
         return false;
     }
 
-    // Validate iNES header (first 4 bytes should be "NES\x1a")
-    if (fileSize < 16 || romData[0] != 'N' || romData[1] != 'E' || 
+    // Validate iNES header (first 4 bytes should be "NES\x1a").
+    if (fileSize < 16 || romData[0] != 'N' || romData[1] != 'E' ||
         romData[2] != 'S' || romData[3] != 0x1a) {
         std::cerr << "Invalid NES ROM file format (missing or corrupted iNES header).\n";
         romData.clear();
         return false;
     }
 
-    // Try to load into Agnes
-    if (!agnes_load_ines_data(emulator, romData.data(), fileSize)) {
-        std::cerr << "Agnes emulator failed to load ROM.\n";
+    if (!backend->loadRom(path)) {
+        std::cerr << "NES backend failed to load ROM.\n";
         romData.clear();
         return false;
     }
@@ -160,34 +920,20 @@ void NESEmulation::unloadRom()
 
 std::vector<unsigned char> NESEmulation::dumpSaveData() const
 {
-    if (!emulator || !isRunning) {
+    if (!backend || !isRunning) {
         return {};
     }
 
-    const size_t stateSize = agnes_state_size();
-    if (stateSize == 0) {
-        return {};
-    }
-
-    std::vector<unsigned char> state(stateSize, 0);
-    agnes_state_t* statePtr = reinterpret_cast<agnes_state_t*>(state.data());
-    agnes_dump_state(emulator, statePtr);
-    return state;
+    return backend->dumpSaveData();
 }
 
 bool NESEmulation::restoreSaveData(const std::vector<unsigned char>& data)
 {
-    if (!emulator || !isRunning) {
+    if (!backend || !isRunning) {
         return false;
     }
 
-    const size_t expectedSize = agnes_state_size();
-    if (data.size() != expectedSize || expectedSize == 0) {
-        return false;
-    }
-
-    const agnes_state_t* statePtr = reinterpret_cast<const agnes_state_t*>(data.data());
-    return agnes_restore_state(emulator, statePtr);
+    return backend->restoreSaveData(data);
 }
 
 void NESEmulation::calculateScale(int screenWidth, int screenHeight)
@@ -584,19 +1330,19 @@ void NESEmulation::renderFrame()
 
 void NESEmulation::nextFrame()
 {
-    if (!emulator || !isRunning.load()) {
+    if (!backend || !isRunning.load()) {
         return;
     }
 
-    if (!agnes_next_frame(emulator)) {
-        std::cerr << "Emulator failed to advance frame. This ROM may not be supported by Agnes.\n";
+    if (!backend->nextFrame()) {
+        std::cerr << "NES backend failed to advance frame.\n";
         isRunning = false;
     }
 }
 
 void NESEmulation::setInput(const agnes_input_t& input)
 {
-    if (!emulator || !isRunning.load()) {
+    if (!backend || !isRunning.load()) {
         return;
     }
 
@@ -606,7 +1352,7 @@ void NESEmulation::setInput(const agnes_input_t& input)
 
 agnes_color_t NESEmulation::getPixel(int x, int y) const
 {
-    if (!emulator || !isRunning.load()) {
+    if (!backend || !isRunning.load()) {
         return {0, 0, 0, 0};
     }
 
@@ -631,14 +1377,14 @@ agnes_color_t NESEmulation::getPixel(int x, int y) const
 // Helper function to display NES frame as ASCII art (simple visualization)
 void NESEmulation::displayFrame() const
 {
-    if (!emulator || !isRunning) {
+    if (!backend || !isRunning) {
         return;
     }
 
     // Simple ASCII representation - sample every 8th pixel
     for (int y = 0; y < AGNES_SCREEN_HEIGHT; y += 8) {
         for (int x = 0; x < AGNES_SCREEN_WIDTH; x += 8) {
-            agnes_color_t pixel = agnes_get_screen_pixel(emulator, x, y);
+            agnes_color_t pixel = backend->getPixel(x, y);
             
             // Convert RGB to grayscale
             int gray = (pixel.r + pixel.g + pixel.b) / 3;
@@ -685,7 +1431,7 @@ void NESEmulation::configureGlobalControls()
 
 void NESEmulation::runInteractive()
 {
-    if (!emulator || !isRunning.load()) {
+    if (!backend || !isRunning.load()) {
         std::cerr << "No ROM loaded.\n";
         return;
     }
@@ -806,7 +1552,7 @@ void NESEmulation::runInteractive()
 
 bool NESEmulation::startEmulationWorker()
 {
-    if (emulationThreadRunning.load() || !emulator || !isRunning.load()) {
+    if (emulationThreadRunning.load() || !backend || !isRunning.load()) {
         return false;
     }
 
@@ -831,7 +1577,9 @@ void NESEmulation::emulationWorkerLoop()
 
     std::vector<unsigned char> localFrame(static_cast<std::size_t>(AGNES_SCREEN_WIDTH * AGNES_SCREEN_HEIGHT) * 4, 0);
     AudioMasterClock clock;
-    clock.configure(48000, 60.0988, 80);
+    clock.configure(backend ? backend->getAudioSampleRate() : 48000,
+                    backend ? backend->getNominalFps() : 60.0988,
+                    80);
 
     while (!emulationThreadStopRequested.load() && isRunning.load()) {
         agnes_input_t inputSnapshot = {};
@@ -840,9 +1588,9 @@ void NESEmulation::emulationWorkerLoop()
             inputSnapshot = workerInput;
         }
 
-        agnes_set_input(emulator, &inputSnapshot, nullptr);
-        if (!agnes_next_frame(emulator)) {
-            std::cerr << "Emulator failed to advance frame. This ROM may not be supported by Agnes.\n";
+        backend->setInput(inputSnapshot);
+        if (!backend->nextFrame()) {
+            std::cerr << "NES backend failed to advance frame.\n";
             isRunning = false;
             emulationThreadFailed = true;
             break;
@@ -850,7 +1598,7 @@ void NESEmulation::emulationWorkerLoop()
 
         for (int y = 0; y < AGNES_SCREEN_HEIGHT; ++y) {
             for (int x = 0; x < AGNES_SCREEN_WIDTH; ++x) {
-                const agnes_color_t color = agnes_get_screen_pixel(emulator, x, y);
+                const agnes_color_t color = backend->getPixel(x, y);
                 const std::size_t offset = (static_cast<std::size_t>(y) * static_cast<std::size_t>(AGNES_SCREEN_WIDTH) + static_cast<std::size_t>(x)) * 4;
                 localFrame[offset + 0] = color.r;
                 localFrame[offset + 1] = color.g;
