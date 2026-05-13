@@ -74,6 +74,7 @@ private:
     int controllerDeviceIndex;
     int scaleX;
     int scaleY;
+    double displayAspectRatio;
     int frameWidth;
     int frameHeight;
     std::vector<unsigned char> frameBuffer;
