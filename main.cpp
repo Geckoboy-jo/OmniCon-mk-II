@@ -1,17 +1,13 @@
 #include "top.hpp"
 #include "NES.hpp"
-#include "GameBoy.hpp"
 #include "SNES.hpp"
-#include "Atari800.hpp"
-#include "save_tree.hpp"
+#include "Atari2600.hpp"
 
 #include <cstdlib>
 #include <cctype>
 #include <set>
 #include <regex>
 #include <chrono>
-#include <cstdint>
-#include <sstream>
 
 namespace {
 
@@ -102,232 +98,6 @@ std::string hexEncode(const std::vector<unsigned char>& bytes)
     return hex;
 }
 
-bool hexDecode(const std::string& hex, std::vector<unsigned char>& bytes)
-{
-    if (hex.size() % 2 != 0) {
-        return false;
-    }
-
-    auto hexValue = [](char character) -> int {
-        if (character >= '0' && character <= '9') return character - '0';
-        if (character >= 'A' && character <= 'F') return character - 'A' + 10;
-        if (character >= 'a' && character <= 'f') return character - 'a' + 10;
-        return -1;
-    };
-
-    bytes.clear();
-    bytes.reserve(hex.size() / 2);
-
-    for (std::size_t index = 0; index < hex.size(); index += 2) {
-        const int high = hexValue(hex[index]);
-        const int low = hexValue(hex[index + 1]);
-        if (high < 0 || low < 0) {
-            bytes.clear();
-            return false;
-        }
-
-        bytes.push_back(static_cast<unsigned char>((high << 4) | low));
-    }
-
-    return true;
-}
-
-std::uint64_t fnv1a64(const unsigned char* data, std::size_t size, std::uint64_t seed = 1469598103934665603ULL)
-{
-    std::uint64_t hash = seed;
-    for (std::size_t index = 0; index < size; ++index) {
-        hash ^= static_cast<std::uint64_t>(data[index]);
-        hash *= 1099511628211ULL;
-    }
-
-    return hash;
-}
-
-std::uint64_t stableSaveGameId(const std::string& platform, const std::vector<unsigned char>& romBytes)
-{
-    std::uint64_t hash = fnv1a64(reinterpret_cast<const unsigned char*>(platform.data()), platform.size());
-    hash = fnv1a64(romBytes.data(), romBytes.size(), hash);
-    if (hash == 0) {
-        hash = 1;
-    }
-
-    return hash;
-}
-
-std::string buildMysqlCommand(const DatabaseConfig& config)
-{
-    std::string command;
-    command += "mysql --protocol=TCP --batch --raw --skip-column-names --host=" + shellEscape(config.host)
-        + " --port=" + shellEscape(config.port)
-        + " --user=" + shellEscape(config.user)
-        + " --password=" + shellEscape(config.password)
-        + " --database=" + shellEscape(config.database)
-        + " 2>/dev/null";
-    return command;
-}
-
-bool runMysqlQuery(const DatabaseConfig& config, const std::string& query, std::string& output)
-{
-    const std::string command =
-        "mysql --protocol=TCP --batch --raw --skip-column-names --host=" + shellEscape(config.host)
-        + " --port=" + shellEscape(config.port)
-        + " --user=" + shellEscape(config.user)
-        + " --password=" + shellEscape(config.password)
-        + " --database=" + shellEscape(config.database)
-        + " --execute=" + shellEscape(query)
-        + " 2>/dev/null";
-
-    FILE* mysqlPipe = popen(command.c_str(), "r");
-    if (mysqlPipe == nullptr) {
-        return false;
-    }
-
-    char buffer[4096];
-    output.clear();
-    while (true) {
-        const std::size_t readCount = fread(buffer, 1, sizeof(buffer), mysqlPipe);
-        if (readCount > 0) {
-            output.append(buffer, buffer + readCount);
-        }
-
-        if (readCount < sizeof(buffer)) {
-            if (feof(mysqlPipe)) {
-                break;
-            }
-            if (ferror(mysqlPipe)) {
-                pclose(mysqlPipe);
-                return false;
-            }
-        }
-    }
-
-    return pclose(mysqlPipe) == 0;
-}
-
-bool readLocalFileToBytes(const std::filesystem::path& filePath, std::vector<unsigned char>& bytes);
-
-bool loadSaveIndexFromDatabase(const DatabaseConfig& config, SaveBPlusTree& saveIndex)
-{
-    std::string output;
-    if (!runMysqlQuery(config,
-            "SELECT game_id, HEX(save_data) FROM blocks WHERE save_data IS NOT NULL AND OCTET_LENGTH(save_data) > 0;",
-            output)) {
-        return false;
-    }
-
-    std::istringstream stream(output);
-    std::string line;
-    while (std::getline(stream, line)) {
-        if (line.empty()) {
-            continue;
-        }
-
-        const std::size_t tab = line.find('\t');
-        if (tab == std::string::npos) {
-            continue;
-        }
-
-        const std::string keyText = trim(line.substr(0, tab));
-        const std::string hexText = trim(line.substr(tab + 1));
-        if (keyText.empty() || hexText.empty()) {
-            continue;
-        }
-
-        try {
-            const std::uint64_t key = static_cast<std::uint64_t>(std::stoull(keyText));
-            std::vector<unsigned char> saveBytes;
-            if (hexDecode(hexText, saveBytes)) {
-                saveIndex.upsert(key, std::move(saveBytes));
-            }
-        } catch (...) {
-            continue;
-        }
-    }
-
-    return true;
-}
-
-bool persistSaveData(const DatabaseConfig& config,
-    std::uint64_t gameId,
-    const std::string& fileName,
-    const std::vector<unsigned char>& romData,
-    const std::vector<unsigned char>& saveData)
-{
-    if (saveData.empty()) {
-        return false;
-    }
-
-    const std::string romHex = hexEncode(romData);
-    const std::string saveHex = hexEncode(saveData);
-    const std::string sql =
-        "INSERT INTO blocks (game_id, name, game, save_data, image) VALUES ("
-        + std::to_string(gameId) + ", '" + sqlEscape(fileName) + "', X'" + romHex + "', X'" + saveHex + "', X'') "
-        "ON DUPLICATE KEY UPDATE name = VALUES(name), game = VALUES(game), save_data = VALUES(save_data);\n";
-
-    const std::string command = buildMysqlCommand(config);
-    FILE* mysqlPipe = popen(command.c_str(), "w");
-    if (mysqlPipe == nullptr) {
-        return false;
-    }
-
-    const std::size_t writeCount = fwrite(sql.data(), 1, sql.size(), mysqlPipe);
-    if (writeCount != sql.size()) {
-        pclose(mysqlPipe);
-        return false;
-    }
-
-    return pclose(mysqlPipe) == 0;
-}
-
-template <typename Emulator>
-void runGameSession(const DatabaseConfig& config,
-    SaveBPlusTree& saveIndex,
-    const std::string& platform,
-    const std::string& romPath,
-    bool persistToDatabase)
-{
-    std::vector<unsigned char> romBytes;
-    if (!readLocalFileToBytes(romPath, romBytes)) {
-        std::cout << "Failed to read ROM bytes for save lookup.\n";
-        return;
-    }
-
-    const std::uint64_t gameId = stableSaveGameId(platform, romBytes);
-    std::vector<unsigned char> saveBytes;
-    const bool hasSave = saveIndex.find(gameId, saveBytes);
-
-    Emulator emulator;
-    if (!emulator.loadRom(romPath)) {
-        return;
-    }
-
-    if (hasSave && !saveBytes.empty()) {
-        if (emulator.restoreSaveData(saveBytes)) {
-            std::cout << "Loaded save data for this ROM.\n";
-        } else {
-            std::cout << "Found save data, but it could not be restored.\n";
-        }
-    }
-
-    emulator.runInteractive();
-    std::cout << "Returning to REPL.\n";
-
-    const std::vector<unsigned char> newSave = emulator.dumpSaveData();
-    if (newSave.empty()) {
-        return;
-    }
-
-    saveIndex.upsert(gameId, newSave);
-    const std::string fileName = std::filesystem::path(romPath).filename().string();
-    if (persistToDatabase) {
-        if (persistSaveData(config, gameId, fileName, romBytes, newSave)) {
-            std::cout << "Saved emulator state for " << fileName << "\n";
-        } else {
-            std::cout << "Save state updated in memory, but database persistence failed.\n";
-        }
-    }
-}
-
 std::string fileNameFromUrl(const std::string& url)
 {
     std::size_t end = url.find_first_of("?#");
@@ -343,9 +113,9 @@ std::string fileNameFromUrl(const std::string& url)
     return url.substr(slash + 1, end - slash - 1);
 }
 
-std::uint64_t nextGameId()
+int nextGameId()
 {
-    static std::uint64_t gameIdSeed = static_cast<std::uint64_t>(
+    static int gameIdSeed = static_cast<int>(
         std::chrono::duration_cast<std::chrono::seconds>(
             std::chrono::system_clock::now().time_since_epoch())
             .count());
@@ -628,7 +398,7 @@ std::vector<std::string> extractPageFileLinks(const std::string& pageUrl, const 
     return links;
 }
 
-bool insertBlock(const DatabaseConfig& config, std::uint64_t gameId, const std::string& fileName, const std::vector<unsigned char>& gameData)
+bool insertBlock(const DatabaseConfig& config, int gameId, const std::string& fileName, const std::vector<unsigned char>& gameData)
 {
     const std::string gameHex = hexEncode(gameData);
     const std::string sql =
@@ -663,12 +433,13 @@ void printHelp()
               << "  download <url>  Download one file and store it as a block\n"
               << "  download-all <url>  Download file links from a page and store each as a block\n"
               << "  load-folder <path>  Upload every regular file in a local folder\n"
-              << "  play <path>     Load and run a ROM file (.nes for NES, .gb/.gbc/.sgb for Game Boy, .smc/.sfc for SNES, .atr/.xfd/.atx/.xex/.car for Atari 800)\n"
-              << "                  (Supports Windows paths via WSL: C:\\Users\\...\\file.nes)\n"
-              << "  controls-gb     Change global Game Boy controls\n"
+              << "  play <path>     Load and run a ROM by extension (.nes/.smc/.sfc/.a26/.bin/.rom)\n"
+              << "                  (Supports Windows paths via WSL: C:\\Users\\...\\file.a26)\n"
+              << "  play-snes <path>  Load and run a .smc/.sfc ROM file with SuperPy SNES emulator\n"
+              << "  play-atari2600 <path>  Load and run an Atari 2600 ROM (.a26/.bin/.rom)\n"
               << "  controls        Change global NES controls (applies to all ROMs)\n"
               << "  controls-snes   Change global SNES controls\n"
-              << "  controls-atari  Change global Atari 800 controls\n"
+              << "  controls-atari2600   Change global Atari 2600 controls\n"
               << "  config          Re-enter database password\n"
               << "  help            Show this message\n"
               << "  quit            Exit the REPL\n";
@@ -695,14 +466,8 @@ int main()
 
     std::cout << "OmniCon downloader REPL\n";
     DatabaseConfig config{};
-    SaveBPlusTree saveIndex;
     if (mysqlAvailable) {
         config = promptDatabaseConfig();
-        if (loadSaveIndexFromDatabase(config, saveIndex)) {
-            std::cout << "Loaded cached save data index.\n";
-        } else {
-            std::cout << "Save data index could not be loaded; play sessions will still work, but cached save lookup is disabled.\n";
-        }
     }
     printHelp();
 
@@ -723,9 +488,6 @@ int main()
 
         if (input == "config") {
             config = promptDatabaseConfig();
-            if (mysqlAvailable) {
-                loadSaveIndexFromDatabase(config, saveIndex);
-            }
             continue;
         }
 
@@ -739,18 +501,17 @@ int main()
             continue;
         }
 
-        if (input == "controls-gb" || input == "change gb controls" || input == "change-gb-controls") {
-            GameBoyEmulation::configureGlobalControls();
-            continue;
-        }
-
-        if (input == "controls-atari" || input == "change atari controls" || input == "change-atari-controls") {
-            Atari800Emulation::configureGlobalControls();
+        if (input == "controls-atari2600" || input == "change atari2600 controls" || input == "change-atari2600-controls") {
+            Atari2600Emulation::configureGlobalControls();
             continue;
         }
 
         const std::string playCommand = "play ";
+        const std::string playSnesCommand = "play-snes ";
+        const std::string playAtari2600Command = "play-atari2600 ";
         const bool isPlayCommand = input.rfind(playCommand, 0) == 0;
+        const bool isPlaySnesCommand = input.rfind(playSnesCommand, 0) == 0;
+        const bool isPlayAtari2600Command = input.rfind(playAtari2600Command, 0) == 0;
 
         if (isPlayCommand) {
             std::string romPath = trim(input.substr(playCommand.size()));
@@ -767,32 +528,68 @@ int main()
                 continue;
             }
 
-            std::string ext = std::filesystem::path(romPath).extension().string();
-            ext = toLowerCopy(ext);
+            std::filesystem::path romFsPath(romPath);
+            std::string extension = toLowerCopy(romFsPath.extension().string());
 
-            const bool isSnes = (ext == ".smc" || ext == ".sfc");
-            const bool isGameBoy = (ext == ".gb" || ext == ".gbc" || ext == ".sgb");
-            const bool isAtari800 = (ext == ".atr" || ext == ".xfd" || ext == ".atx" || ext == ".xex" || ext == ".car" || ext == ".rom" || ext == ".cas" || ext == ".com");
-            const bool isNes  = (ext == ".nes");
-
-            try {
-                if (isGameBoy) {
-                    runGameSession<GameBoyEmulation>(config, saveIndex, "gb", romPath, mysqlAvailable);
-                } else if (isSnes) {
-                    runGameSession<SNESEmulation>(config, saveIndex, "snes", romPath, mysqlAvailable);
-                } else if (isAtari800) {
-                    runGameSession<Atari800Emulation>(config, saveIndex, "atari800", romPath, mysqlAvailable);
-                } else if (isNes) {
-                    runGameSession<NESEmulation>(config, saveIndex, "nes", romPath, mysqlAvailable);
-                } else {
-                    std::cout << "Unsupported ROM format. Use .nes (NES), .gb/.gbc/.sgb (Game Boy), .smc/.sfc (SNES), or .atr/.xfd/.atx/.xex/.car/.rom/.cas/.com (Atari 800).\n";
+            if (extension == ".smc" || extension == ".sfc") {
+                SNESEmulation snes;
+                if (snes.loadRom(romPath)) {
+                    snes.runInteractive();
                 }
-            } catch (const std::exception& e) {
-                std::cerr << "Error during emulation: " << e.what() << "\n";
-                std::cerr << "Returning to REPL. You can try loading a different ROM.\n";
-            } catch (...) {
-                std::cerr << "Unknown error during emulation.\n";
-                std::cerr << "Returning to REPL. You can try loading a different ROM.\n";
+            } else if (extension == ".a26" || extension == ".bin" || extension == ".rom") {
+                Atari2600Emulation atari2600;
+                if (atari2600.loadRom(romPath)) {
+                    atari2600.runInteractive();
+                }
+            } else {
+                NESEmulation nes;
+                if (nes.loadRom(romPath)) {
+                    nes.runInteractive();
+                }
+            }
+            continue;
+        }
+
+        if (isPlaySnesCommand) {
+            std::string romPath = trim(input.substr(playSnesCommand.size()));
+            romPath = stripOuterQuotes(romPath);
+            romPath = normalizePath(romPath);
+
+            if (romPath.empty()) {
+                std::cout << "ROM path is required.\n";
+                continue;
+            }
+
+            if (!std::filesystem::exists(romPath)) {
+                std::cout << "ROM file does not exist: " << romPath << "\n";
+                continue;
+            }
+
+            SNESEmulation snes;
+            if (snes.loadRom(romPath)) {
+                snes.runInteractive();
+            }
+            continue;
+        }
+
+        if (isPlayAtari2600Command) {
+            std::string romPath = trim(input.substr(playAtari2600Command.size()));
+            romPath = stripOuterQuotes(romPath);
+            romPath = normalizePath(romPath);
+
+            if (romPath.empty()) {
+                std::cout << "ROM path is required.\n";
+                continue;
+            }
+
+            if (!std::filesystem::exists(romPath)) {
+                std::cout << "ROM file does not exist: " << romPath << "\n";
+                continue;
+            }
+
+            Atari2600Emulation atari2600;
+            if (atari2600.loadRom(romPath)) {
+                atari2600.runInteractive();
             }
             continue;
         }
@@ -857,7 +654,7 @@ int main()
                     continue;
                 }
 
-                const std::uint64_t gameId = nextGameId();
+                const int gameId = nextGameId();
                 const std::string fileName = it->path().filename().string();
                 if (insertBlock(config, gameId, fileName, bytes)) {
                     ++successCount;
@@ -888,7 +685,7 @@ int main()
         }
 
         if (isSingleDownload) {
-            const std::uint64_t gameId = nextGameId();
+            const int gameId = nextGameId();
             const std::string fileName = fileNameFromUrl(url);
             std::vector<unsigned char> bytes;
 
@@ -922,7 +719,7 @@ int main()
         int successCount = 0;
         int failureCount = 0;
         for (const std::string& link : links) {
-            const std::uint64_t gameId = nextGameId();
+            const int gameId = nextGameId();
             const std::string fileName = fileNameFromUrl(link);
             std::vector<unsigned char> bytes;
 

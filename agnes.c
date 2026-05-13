@@ -1148,7 +1148,7 @@ static void eval_sprites(ppu_t *ppu) {
     for (int i = 0; i < 64; i++) {
         const sprite_t* sprite = &sprites[i];
 
-        if (sprite->y_pos > 0xef || sprite->x_pos > 0xff) {
+        if (sprite->y_pos > 0xef) {
             continue;
         }
 
@@ -2534,7 +2534,7 @@ static void mapper4_write_register(mapper4_t *mapper, uint16_t addr, uint8_t val
         mapper->counter = 0;
     } else if (addr <= 0xfffe && addr_even) { // IRQ disable ($E000-$FFFE, even)
         mapper->irq_enabled = false;
-    } else if (addr <= 0xffff && addr_odd) { // IRQ enable ($E001-$FFFF, odd)
+    } else if (addr_odd) { // IRQ enable ($E001-$FFFF, odd)
         mapper->irq_enabled = true;
     }
 }

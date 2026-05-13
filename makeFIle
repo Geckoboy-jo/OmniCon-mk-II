@@ -1,9 +1,9 @@
-CXX = main.cpp wrapper.cpp 
-HXX = top.hpp wrapper.hpp block.hpp
+CXX = main.cpp wrapper.cpp Atari2600.cpp
+HXX = top.hpp wrapper.hpp block.hpp Atari2600.hpp
 target = OmniCon
 
 $(target):
-	g++ -o $(target) $(CXX) -I. -std=c++17
+	g++ -o $(target) $(CXX) -I. -std=c++17 -lSDL2 -ldl
 clean:
 	rm -f $(target)
 save:
