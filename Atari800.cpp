@@ -9,7 +9,15 @@
 #include <cstdint>
 #include <memory>
 #include <dlfcn.h>
+#include <signal.h>
+#include <setjmp.h>
 
+static jmp_buf crash_recovery;
+static void segfault_handler(int sig) {
+    std::cerr << "[Atari800] SEGMENTATION FAULT CAUGHT - Aborting emulation\n";
+    std::cerr.flush();
+    longjmp(crash_recovery, 1);
+}
 namespace {
 
 std::string trim(const std::string& value)
@@ -355,45 +363,94 @@ bool LibretroAtari800Backend::onEnvironment(unsigned cmd, void* data)
 void LibretroAtari800Backend::onVideoRefresh(const void* data, unsigned width, unsigned height, size_t pitch)
 {
     if (!data) {
+            std::cerr << "[Atari800] VideoRefresh: " << width << "x" << height << " pitch=" << pitch << "\n";
+            std::cerr.flush();
+
+        return;
+    }
+
+    // Clamp dimensions to reasonable limits to prevent huge allocations
+    if (width == 0 || height == 0 || width > 2048 || height > 2048) {
+        std::cerr << "[Atari800] Rejecting invalid video dimensions: " << width << "x" << height << "\n";
+            std::cerr.flush();
         return;
     }
 
     if (static_cast<int>(width) != frameWidth || static_cast<int>(height) != frameHeight) {
         frameWidth = static_cast<int>(width);
         frameHeight = static_cast<int>(height);
+        framePixels.clear();
         framePixels.resize(static_cast<size_t>(frameWidth * frameHeight) * 4, 0);
+        std::cerr << "[Atari800] Video buffer resized to " << frameWidth << "x" << frameHeight << "\n";
+        std::cerr.flush();
+    }
+
+    if (framePixels.empty()) {
+        std::cerr << "[Atari800] ERROR: framePixels buffer is empty during video refresh\n";
+            std::cerr.flush();
+        return;
+    }
+
+    const size_t expectedBufferSize = static_cast<size_t>(frameWidth * frameHeight) * 4;
+    if (framePixels.size() != expectedBufferSize) {
+        std::cerr << "[Atari800] ERROR: framePixels size mismatch. Got " << framePixels.size() 
+                  << ", expected " << expectedBufferSize << "\n";
+        return;
     }
 
     const auto* src = static_cast<const uint8_t*>(data);
     for (unsigned row = 0; row < height; ++row) {
         const uint8_t* srcRow = src + row * pitch;
-        uint8_t* dstRow = framePixels.data() + row * static_cast<size_t>(frameWidth) * 4;
+        const size_t dstRowOffset = row * static_cast<size_t>(frameWidth) * 4;
+        
+        if (dstRowOffset + static_cast<size_t>(frameWidth) * 4 > framePixels.size()) {
+            std::cerr << "[Atari800] ERROR: Attempting to write beyond framePixels buffer at row " << row << "\n";
+            return;
+        }
+
+        uint8_t* dstRow = framePixels.data() + dstRowOffset;
+
         if (pixelFormat == libretro::PIXEL_XRGB8888) {
             for (unsigned col = 0; col < width; ++col) {
+                const size_t dstIdx = col * 4;
+                if (dstIdx + 3 >= framePixels.size() - dstRowOffset) {
+                    std::cerr << "[Atari800] ERROR: Buffer overflow in XRGB8888 conversion\n";
+                    return;
+                }
                 uint32_t px;
                 std::memcpy(&px, srcRow + col * 4, 4);
-                dstRow[col * 4 + 0] = static_cast<uint8_t>((px >> 16) & 0xFF);
-                dstRow[col * 4 + 1] = static_cast<uint8_t>((px >> 8) & 0xFF);
-                dstRow[col * 4 + 2] = static_cast<uint8_t>(px & 0xFF);
-                dstRow[col * 4 + 3] = 255;
+                dstRow[dstIdx + 0] = static_cast<uint8_t>((px >> 16) & 0xFF);
+                dstRow[dstIdx + 1] = static_cast<uint8_t>((px >> 8) & 0xFF);
+                dstRow[dstIdx + 2] = static_cast<uint8_t>(px & 0xFF);
+                dstRow[dstIdx + 3] = 255;
             }
         } else if (pixelFormat == libretro::PIXEL_RGB565) {
             for (unsigned col = 0; col < width; ++col) {
+                const size_t dstIdx = col * 4;
+                if (dstIdx + 3 >= framePixels.size() - dstRowOffset) {
+                    std::cerr << "[Atari800] ERROR: Buffer overflow in RGB565 conversion\n";
+                    return;
+                }
                 uint16_t px;
                 std::memcpy(&px, srcRow + col * 2, 2);
-                dstRow[col * 4 + 0] = static_cast<uint8_t>(((px >> 11) & 0x1F) * 255 / 31);
-                dstRow[col * 4 + 1] = static_cast<uint8_t>(((px >> 5) & 0x3F) * 255 / 63);
-                dstRow[col * 4 + 2] = static_cast<uint8_t>((px & 0x1F) * 255 / 31);
-                dstRow[col * 4 + 3] = 255;
+                dstRow[dstIdx + 0] = static_cast<uint8_t>(((px >> 11) & 0x1F) * 255 / 31);
+                dstRow[dstIdx + 1] = static_cast<uint8_t>(((px >> 5) & 0x3F) * 255 / 63);
+                dstRow[dstIdx + 2] = static_cast<uint8_t>((px & 0x1F) * 255 / 31);
+                dstRow[dstIdx + 3] = 255;
             }
         } else {
             for (unsigned col = 0; col < width; ++col) {
+                const size_t dstIdx = col * 4;
+                if (dstIdx + 3 >= framePixels.size() - dstRowOffset) {
+                    std::cerr << "[Atari800] ERROR: Buffer overflow in 0RGB1555 conversion\n";
+                    return;
+                }
                 uint16_t px;
                 std::memcpy(&px, srcRow + col * 2, 2);
-                dstRow[col * 4 + 0] = static_cast<uint8_t>(((px >> 10) & 0x1F) * 255 / 31);
-                dstRow[col * 4 + 1] = static_cast<uint8_t>(((px >> 5) & 0x1F) * 255 / 31);
-                dstRow[col * 4 + 2] = static_cast<uint8_t>((px & 0x1F) * 255 / 31);
-                dstRow[col * 4 + 3] = 255;
+                dstRow[dstIdx + 0] = static_cast<uint8_t>(((px >> 10) & 0x1F) * 255 / 31);
+                dstRow[dstIdx + 1] = static_cast<uint8_t>(((px >> 5) & 0x1F) * 255 / 31);
+                dstRow[dstIdx + 2] = static_cast<uint8_t>((px & 0x1F) * 255 / 31);
+                dstRow[dstIdx + 3] = 255;
             }
         }
     }
@@ -483,13 +540,23 @@ bool LibretroAtari800Backend::nextFrame()
     // Verify framePixels is properly sized before running core
     if (framePixels.empty()) {
         std::cerr << "[Atari800] Error: framePixels buffer not initialized before nextFrame()\n";
+        std::cerr.flush();
         return false;
     }
 
+    std::cerr << "[Atari800] Before fn_run: framePixels.size()=" << framePixels.size()
+              << ", format=" << pixelFormat << ", gameLoaded=" << gameLoaded << "\n";
+    std::cerr.flush();
+
     try {
+        std::cerr << "[Atari800] Calling fn_run()...\n";
+        std::cerr.flush();
         fn_run();
+        std::cerr << "[Atari800] After fn_run: success\n";
+        std::cerr.flush();
     } catch (...) {
         std::cerr << "[Atari800] Exception caught during core execution\n";
+        std::cerr.flush();
         return false;
     }
     return true;
@@ -1412,14 +1479,28 @@ void Atari800Emulation::emulationWorkerLoop()
 
     if (!backend) {
         std::cerr << "[Atari800] Backend is null in emulation worker loop\n";
+            std::cerr.flush();
         emulationThreadRunning = false;
         emulationThreadFailed = true;
+
+            std::cerr << "[Atari800] Emulation worker starting...\n";
+            std::cerr.flush();
         return;
     }
 
     std::vector<unsigned char> localFrame(static_cast<std::size_t>(kAtari800ScreenWidth * kAtari800ScreenHeight) * 4, 0);
+
+        std::cerr << "[Atari800] About to configure audio clock...\n";
+        std::cerr.flush();
+
     AudioMasterClock clock;
     clock.configure(backend->getAudioSampleRate(), backend->getNominalFps(), 120);
+
+    std::cerr << "[Atari800] Clock configured successfully. Audio rate: " << backend->getAudioSampleRate()
+              << ", FPS: " << backend->getNominalFps() << "\n";
+    std::cerr.flush();
+    std::cerr << "[Atari800] About to enter emulation loop...\n";
+    std::cerr.flush();
 
     while (!emulationThreadStopRequested.load() && isRunning.load()) {
         try {

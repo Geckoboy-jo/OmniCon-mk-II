@@ -1,0 +1,5 @@
+set pagination off
+set debuginfod enabled off
+run
+play /mnt/c/users/midge/downloads/flappy\ \(1988\)\(doltari\)\(cz\)\[game\]\[k-file\]/flappy\ \(1988\)\(doltari\)\(cz\)\[game\]\[k-file\].atr
+quit
