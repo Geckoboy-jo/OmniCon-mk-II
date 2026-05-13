@@ -149,6 +149,15 @@ void loadNativeSameBoyBootRom(GB_gameboy_t* gb, GB_boot_rom_t type)
         return;
     }
 
+    // Prefer the fast (no-animation) boot ROM for CGB models; fall back to
+    // the standard boot ROM if the fast variant is not available.
+    if (std::strcmp(modelName, "cgb") == 0) {
+        const std::string fastPath = "third_party/SameBoy/build/bin/BootROMs/cgb_boot_fast.bin";
+        if (GB_load_boot_rom(gb, fastPath.c_str()) == 0) {
+            return;
+        }
+    }
+
     const std::string path = std::string("third_party/SameBoy/build/bin/BootROMs/") + modelName + "_boot.bin";
     if (GB_load_boot_rom(gb, path.c_str()) != 0) {
         std::cerr << "[GB] Failed to load SameBoy boot ROM: " << path << "\n";

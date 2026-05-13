@@ -5,6 +5,8 @@
 #include "GameBoyColor.hpp"
 #include "Atari2600.hpp"
 #include "Atari5200.hpp"
+#include "GBA.hpp"
+#include "NDS.hpp"
 
 #include <cstdlib>
 #include <cctype>
@@ -446,12 +448,16 @@ void printHelp()
               << "  play-snes <path>  Load and run a .smc/.sfc ROM file with SuperPy SNES emulator\n"
               << "  play-atari2600 <path>  Load and run an Atari 2600 ROM (.a26/.bin/.rom)\n"
               << "  play-atari5200 <path>  Load and run an Atari 5200 ROM (.a52/.bin/.rom)\n"
+              << "  play-gba <path>  Load and run a GBA ROM (.gba)\n"
+              << "  play-nds <path>  Load and run a Nintendo DS ROM (.nds)\n"
               << "  controls        Change global NES controls (applies to all ROMs)\n"
               << "  controls-gb     Change global Game Boy controls\n"
               << "  controls-gbc    Change global Game Boy Color controls\n"
               << "  controls-snes   Change global SNES controls\n"
               << "  controls-atari2600   Change global Atari 2600 controls\n"
               << "  controls-atari5200   Change global Atari 5200 controls\n"
+              << "  controls-gba    Change global GBA controls\n"
+              << "  controls-nds    Change global Nintendo DS controls\n"
               << "  config          Re-enter database password\n"
               << "  help            Show this message\n"
               << "  quit            Exit the REPL\n";
@@ -533,23 +539,39 @@ int main()
             continue;
         }
 
+        if (input == "controls-gba" || input == "change gba controls" || input == "change-gba-controls") {
+            GBAEmulation::configureGlobalControls();
+            continue;
+        }
+
+        if (input == "controls-nds" || input == "change nds controls" || input == "change-nds-controls") {
+            NDSEmulation::configureGlobalControls();
+            continue;
+        }
+
         const std::string playCommand = "play ";
         const std::string playSnesCommand = "play-snes ";
         const std::string playGbCommand = "play-gb ";
         const std::string playGbcCommand = "play-gbc ";
         const std::string playAtari2600Command = "play-atari2600 ";
         const std::string playAtari5200Command = "play-atari5200 ";
+        const std::string playGbaCommand = "play-gba ";
+        const std::string playNdsCommand = "play-nds ";
         const bool isPlayCommand = input.rfind(playCommand, 0) == 0
             && input.rfind(playSnesCommand, 0) != 0
             && input.rfind(playGbCommand, 0) != 0
             && input.rfind(playGbcCommand, 0) != 0
             && input.rfind(playAtari2600Command, 0) != 0
-            && input.rfind(playAtari5200Command, 0) != 0;
+            && input.rfind(playAtari5200Command, 0) != 0
+            && input.rfind(playGbaCommand, 0) != 0
+            && input.rfind(playNdsCommand, 0) != 0;
         const bool isPlaySnesCommand = input.rfind(playSnesCommand, 0) == 0;
         const bool isPlayGbCommand = input.rfind(playGbCommand, 0) == 0;
         const bool isPlayGbcCommand = input.rfind(playGbcCommand, 0) == 0;
         const bool isPlayAtari2600Command = input.rfind(playAtari2600Command, 0) == 0;
         const bool isPlayAtari5200Command = input.rfind(playAtari5200Command, 0) == 0;
+        const bool isPlayGbaCommand = input.rfind(playGbaCommand, 0) == 0;
+        const bool isPlayNdsCommand = input.rfind(playNdsCommand, 0) == 0;
 
         if (isPlayCommand) {
             std::string romPath = trim(input.substr(playCommand.size()));
@@ -569,7 +591,16 @@ int main()
             std::filesystem::path romFsPath(romPath);
             std::string extension = toLowerCopy(romFsPath.extension().string());
 
-            if (extension == ".gbc" || extension == ".sgb") {
+            if (extension == ".gba") {
+                GBAEmulation gba;
+                try {
+                    if (gba.loadRom(romPath)) {
+                        gba.runInteractive();
+                    }
+                } catch (const std::exception& e) {
+                    std::cerr << "GBA error: " << e.what() << "\n";
+                }
+            } else if (extension == ".gbc" || extension == ".sgb") {
                 GameBoyColorEmulation gbc;
                 if (gbc.loadRom(romPath)) {
                     gbc.runInteractive();
@@ -588,6 +619,15 @@ int main()
                 Atari2600Emulation atari2600;
                 if (atari2600.loadRom(romPath)) {
                     atari2600.runInteractive();
+                }
+            } else if (extension == ".nds") {
+                NDSEmulation nds;
+                try {
+                    if (nds.loadRom(romPath)) {
+                        nds.runInteractive();
+                    }
+                } catch (const std::exception& e) {
+                    std::cerr << "NDS error: " << e.what() << "\n";
                 }
             } else if (extension == ".a52") {
                 Atari5200Emulation atari5200;
@@ -728,6 +768,58 @@ int main()
             Atari5200Emulation atari5200;
             if (atari5200.loadRom(romPath)) {
                 atari5200.runInteractive();
+            }
+            continue;
+        }
+
+        if (isPlayGbaCommand) {
+            std::string romPath = trim(input.substr(playGbaCommand.size()));
+            romPath = stripOuterQuotes(romPath);
+            romPath = normalizePath(romPath);
+
+            if (romPath.empty()) {
+                std::cout << "ROM path is required.\n";
+                continue;
+            }
+
+            if (!std::filesystem::exists(romPath)) {
+                std::cout << "ROM file does not exist: " << romPath << "\n";
+                continue;
+            }
+
+            GBAEmulation gba;
+            try {
+                if (gba.loadRom(romPath)) {
+                    gba.runInteractive();
+                }
+            } catch (const std::exception& e) {
+                std::cerr << "GBA error: " << e.what() << "\n";
+            }
+            continue;
+        }
+
+        if (isPlayNdsCommand) {
+            std::string romPath = trim(input.substr(playNdsCommand.size()));
+            romPath = stripOuterQuotes(romPath);
+            romPath = normalizePath(romPath);
+
+            if (romPath.empty()) {
+                std::cout << "ROM path is required.\n";
+                continue;
+            }
+
+            if (!std::filesystem::exists(romPath)) {
+                std::cout << "ROM file does not exist: " << romPath << "\n";
+                continue;
+            }
+
+            NDSEmulation nds;
+            try {
+                if (nds.loadRom(romPath)) {
+                    nds.runInteractive();
+                }
+            } catch (const std::exception& e) {
+                std::cerr << "NDS error: " << e.what() << "\n";
             }
             continue;
         }
