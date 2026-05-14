@@ -35,7 +35,7 @@ struct nds_color_t {
 
 class NDSEmulation
 {
-private:
+public:
     enum class InputMode {
         KeyboardOnly,
         ControllerOnly,
@@ -72,6 +72,13 @@ private:
         SDL_GameControllerButton r;
     };
 
+    static InputMode         globalInputMode;
+    static KeyBindings       globalKeyBindings;
+    static ControllerBindings globalControllerBindings;
+    static bool              globalInputConfigured;
+
+private:
+
     bool romLoaded;
     std::unique_ptr<class NDSBackend> backendPtr;
     string romPath;
@@ -88,11 +95,6 @@ private:
     InputMode   inputMode;
     KeyBindings keyBindings;
     ControllerBindings controllerBindings;
-
-    static InputMode         globalInputMode;
-    static KeyBindings       globalKeyBindings;
-    static ControllerBindings globalControllerBindings;
-    static bool              globalInputConfigured;
 
     void initSDL();
     void cleanupSDL();

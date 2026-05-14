@@ -26,7 +26,7 @@ struct gba_input_t {
 
 class GBAEmulation
 {
-private:
+public:
     enum class InputMode {
         KeyboardOnly,
         ControllerOnly,
@@ -58,6 +58,13 @@ private:
         SDL_GameControllerButton r;
         SDL_GameControllerButton l;
     };
+
+    static InputMode globalInputMode;
+    static KeyBindings globalKeyBindings;
+    static ControllerBindings globalControllerBindings;
+    static bool globalInputConfigured;
+
+private:
 
     struct mCore* core = nullptr;
     std::vector<uint32_t> mgbaFrameBuffer;  // mGBA writes here each frame
@@ -103,11 +110,6 @@ private:
     InputMode inputMode = InputMode::KeyboardOnly;
     KeyBindings keyBindings{};
     ControllerBindings controllerBindings{};
-
-    static InputMode globalInputMode;
-    static KeyBindings globalKeyBindings;
-    static ControllerBindings globalControllerBindings;
-    static bool globalInputConfigured;
 
     static constexpr int kScreenWidth  = 240;
     static constexpr int kScreenHeight = 160;

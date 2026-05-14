@@ -105,6 +105,8 @@ GBAEmulation::GBAEmulation()
         inputMode = globalInputMode;
         keyBindings = globalKeyBindings;
         controllerBindings = globalControllerBindings;
+    } else {
+        saveGlobalInputSettings();
     }
     pendingAudioSamples.reserve(8192);
 }

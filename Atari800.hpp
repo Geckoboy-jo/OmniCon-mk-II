@@ -32,7 +32,7 @@ struct atari800_color_t {
 
 class Atari800Emulation
 {
-private:
+public:
     enum class InputMode {
         KeyboardOnly,
         ControllerOnly,
@@ -63,6 +63,12 @@ private:
         SDL_GameControllerButton option;
     };
 
+    static InputMode globalInputMode;
+    static KeyBindings globalKeyBindings;
+    static ControllerBindings globalControllerBindings;
+    static bool globalInputConfigured;
+
+private:
     std::unique_ptr<Atari800Backend> backend;
     string romPath;
     std::atomic<bool> isRunning;
@@ -90,11 +96,6 @@ private:
     InputMode inputMode;
     KeyBindings keyBindings;
     ControllerBindings controllerBindings;
-
-    static InputMode globalInputMode;
-    static KeyBindings globalKeyBindings;
-    static ControllerBindings globalControllerBindings;
-    static bool globalInputConfigured;
 
     static constexpr int kDefaultAtari800ScreenWidth = 400;
     static constexpr int kDefaultAtari800ScreenHeight = 300;

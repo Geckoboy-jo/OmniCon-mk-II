@@ -5,8 +5,13 @@
 #include "GameBoyColor.hpp"
 #include "Atari2600.hpp"
 #include "Atari5200.hpp"
+#include "Atari800.hpp"
+#include "Odyssey.hpp"
+#include "SegaGenesis.hpp"
 #include "GBA.hpp"
 #include "NDS.hpp"
+#include "GameLibrary.hpp"
+#include "GameShell.hpp"
 
 #include <cstdlib>
 #include <cctype>
@@ -55,6 +60,37 @@ bool hasCommand(const std::string& command)
 {
     const std::string probe = "command -v " + command + " >/dev/null 2>&1";
     return std::system(probe.c_str()) == 0;
+}
+
+// Run scrape_covers.py for any games currently missing cover art, then
+// re-resolve cover paths so the shell picks up newly downloaded images.
+void scrapeCoversIfNeeded(GameLibrary& lib, const std::string& coversDir)
+{
+    int missing = 0;
+    for (const auto& g : lib.games())
+        if (g.coverPath.empty()) ++missing;
+
+    if (missing == 0) return;
+
+    if (!hasCommand("python3")) {
+        std::cerr << "[covers] python3 not found; skipping auto-scrape.\n";
+        return;
+    }
+    if (!std::filesystem::exists("scrape_covers.py")) {
+        std::cerr << "[covers] scrape_covers.py not found; skipping auto-scrape.\n";
+        return;
+    }
+
+    std::cout << "[covers] " << missing
+              << " game(s) missing cover art — fetching now...\n";
+    std::cout.flush();
+
+    const int ret = std::system("python3 scrape_covers.py");
+    if (ret != 0)
+        std::cerr << "[covers] scraper exited with code " << ret << "\n";
+
+    // Re-resolve so newly downloaded files are reflected in the library.
+    lib.resolveCoverPaths(coversDir);
 }
 
 std::string shellEscape(const std::string& value)
@@ -432,6 +468,369 @@ bool insertBlock(const DatabaseConfig& config, int gameId, const std::string& fi
     return pclose(mysqlPipe) == 0;
 }
 
+// ─── Unified input configuration ─────────────────────────────────────────────
+
+// Helper: parse SDL controller button name (same as per-system helpers)
+static SDL_GameControllerButton parseButtonName(const std::string& raw)
+{
+    std::string name;
+    name.reserve(raw.size());
+    for (unsigned char c : raw) name += static_cast<char>(toupper(c));
+    // strip whitespace
+    name.erase(0, name.find_first_not_of(" \t\r\n"));
+    auto last = name.find_last_not_of(" \t\r\n");
+    if (last != std::string::npos) name.erase(last + 1);
+
+    if (name == "A")            return SDL_CONTROLLER_BUTTON_A;
+    if (name == "B")            return SDL_CONTROLLER_BUTTON_B;
+    if (name == "X")            return SDL_CONTROLLER_BUTTON_X;
+    if (name == "Y")            return SDL_CONTROLLER_BUTTON_Y;
+    if (name == "BACK")         return SDL_CONTROLLER_BUTTON_BACK;
+    if (name == "GUIDE")        return SDL_CONTROLLER_BUTTON_GUIDE;
+    if (name == "START")        return SDL_CONTROLLER_BUTTON_START;
+    if (name == "LEFTSTICK")    return SDL_CONTROLLER_BUTTON_LEFTSTICK;
+    if (name == "RIGHTSTICK")   return SDL_CONTROLLER_BUTTON_RIGHTSTICK;
+    if (name == "LEFTSHOULDER") return SDL_CONTROLLER_BUTTON_LEFTSHOULDER;
+    if (name == "RIGHTSHOULDER")return SDL_CONTROLLER_BUTTON_RIGHTSHOULDER;
+    if (name == "DPAD_UP")      return SDL_CONTROLLER_BUTTON_DPAD_UP;
+    if (name == "DPAD_DOWN")    return SDL_CONTROLLER_BUTTON_DPAD_DOWN;
+    if (name == "DPAD_LEFT")    return SDL_CONTROLLER_BUTTON_DPAD_LEFT;
+    if (name == "DPAD_RIGHT")   return SDL_CONTROLLER_BUTTON_DPAD_RIGHT;
+    return SDL_CONTROLLER_BUTTON_INVALID;
+}
+
+static const char* buttonDisplayName(SDL_GameControllerButton b)
+{
+    const char* n = SDL_GameControllerGetStringForButton(b);
+    return n ? n : "unset";
+}
+
+// Prompt for a keyboard key; returns SDLK_UNKNOWN if user presses Enter (keep).
+static SDL_Keycode promptKey(const char* label, SDL_Keycode current)
+{
+    std::cout << "  " << label << " [" << SDL_GetKeyName(current) << "]: ";
+    std::string raw;
+    std::getline(std::cin, raw);
+    raw = trim(raw);
+    if (raw.empty()) return SDLK_UNKNOWN;
+    SDL_Keycode k = SDL_GetKeyFromName(raw.c_str());
+    if (k == SDLK_UNKNOWN) { std::cout << "    Invalid key name — keeping current.\n"; return SDLK_UNKNOWN; }
+    return k;
+}
+
+// Prompt for a controller button; returns SDL_CONTROLLER_BUTTON_INVALID on Enter.
+static SDL_GameControllerButton promptButton(const char* label, SDL_GameControllerButton current)
+{
+    std::cout << "  " << label << " [" << buttonDisplayName(current) << "]: ";
+    std::string raw;
+    std::getline(std::cin, raw);
+    raw = trim(raw);
+    if (raw.empty()) return SDL_CONTROLLER_BUTTON_INVALID;
+    SDL_GameControllerButton b = parseButtonName(raw);
+    if (b == SDL_CONTROLLER_BUTTON_INVALID) { std::cout << "    Invalid button name — keeping current.\n"; }
+    return b;
+}
+
+// Apply a key to a pointer, only if k != SDLK_UNKNOWN.
+static void applyKey(SDL_Keycode k, SDL_Keycode& target) { if (k != SDLK_UNKNOWN) target = k; }
+static void applyBtn(SDL_GameControllerButton b, SDL_GameControllerButton& target)
+{
+    if (b != SDL_CONTROLLER_BUTTON_INVALID) target = b;
+}
+
+void configureAllControls()
+{
+    // Ensure all systems have defaults in their global statics.
+    // Constructors call setDefaultBindings() + saveGlobalInputSettings() when first created.
+    {
+        NESEmulation          nesInit;
+        GameBoyEmulation      gbInit;
+        SNESEmulation         snesInit;
+        GBAEmulation          gbaInit;
+        NDSEmulation          ndsInit;
+        Atari2600Emulation    a2600Init;
+        Atari5200Emulation    a5200Init;
+        Atari800Emulation     a800Init;
+        SegaGenesisEmulation  genesisInit;
+        (void)nesInit; (void)gbInit; (void)snesInit; (void)gbaInit;
+        (void)ndsInit; (void)a2600Init; (void)a5200Init; (void)a800Init; (void)genesisInit;
+    }
+
+    const bool hadController = (SDL_WasInit(SDL_INIT_GAMECONTROLLER) != 0);
+    if (!hadController) SDL_InitSubSystem(SDL_INIT_GAMECONTROLLER);
+
+    SDL_GameController* ctrl = nullptr;
+    for (int i = 0; i < SDL_NumJoysticks(); ++i) {
+        if (SDL_IsGameController(i)) { ctrl = SDL_GameControllerOpen(i); break; }
+    }
+
+    // Shadow copies we edit, then commit on exit.
+    // D-pad + core face buttons — shared across all systems.
+    SDL_Keycode kUp    = NESEmulation::globalKeyBindings.up;
+    SDL_Keycode kDown  = NESEmulation::globalKeyBindings.down;
+    SDL_Keycode kLeft  = NESEmulation::globalKeyBindings.left;
+    SDL_Keycode kRight = NESEmulation::globalKeyBindings.right;
+    SDL_Keycode kA     = NESEmulation::globalKeyBindings.a;
+    SDL_Keycode kB     = NESEmulation::globalKeyBindings.b;
+    SDL_Keycode kSel   = NESEmulation::globalKeyBindings.select;
+    SDL_Keycode kStart = NESEmulation::globalKeyBindings.start;
+    // Extended face (SNES / NDS)
+    SDL_Keycode kX     = SNESEmulation::globalKeyBindings.x;
+    SDL_Keycode kY     = SNESEmulation::globalKeyBindings.y;
+    // Shoulder (SNES / GBA / NDS)
+    SDL_Keycode kL     = SNESEmulation::globalKeyBindings.l;
+    SDL_Keycode kR     = SNESEmulation::globalKeyBindings.r;
+    // Atari-specific
+    SDL_Keycode kFire  = Atari2600Emulation::globalKeyBindings.fire;
+    SDL_Keycode kSec   = Atari5200Emulation::globalKeyBindings.secondary;
+    SDL_Keycode kReset = Atari2600Emulation::globalKeyBindings.reset;
+    SDL_Keycode kOpt   = Atari800Emulation::globalKeyBindings.option;
+
+    SDL_GameControllerButton bUp    = NESEmulation::globalControllerBindings.up;
+    SDL_GameControllerButton bDown  = NESEmulation::globalControllerBindings.down;
+    SDL_GameControllerButton bLeft  = NESEmulation::globalControllerBindings.left;
+    SDL_GameControllerButton bRight = NESEmulation::globalControllerBindings.right;
+    SDL_GameControllerButton bA     = NESEmulation::globalControllerBindings.a;
+    SDL_GameControllerButton bB     = NESEmulation::globalControllerBindings.b;
+    SDL_GameControllerButton bSel   = NESEmulation::globalControllerBindings.select;
+    SDL_GameControllerButton bStart = NESEmulation::globalControllerBindings.start;
+    SDL_GameControllerButton bX     = SNESEmulation::globalControllerBindings.x;
+    SDL_GameControllerButton bY     = SNESEmulation::globalControllerBindings.y;
+    SDL_GameControllerButton bL     = SNESEmulation::globalControllerBindings.l;
+    SDL_GameControllerButton bR     = SNESEmulation::globalControllerBindings.r;
+    SDL_GameControllerButton bFire  = Atari2600Emulation::globalControllerBindings.fire;
+    SDL_GameControllerButton bSec   = Atari5200Emulation::globalControllerBindings.secondary;
+    SDL_GameControllerButton bReset = Atari2600Emulation::globalControllerBindings.reset;
+    SDL_GameControllerButton bOpt   = Atari800Emulation::globalControllerBindings.option;
+
+    // Use NES input mode as the shared mode (all systems share one mode).
+    NESEmulation::InputMode mode = NESEmulation::globalInputMode;
+
+    auto modeName = [](NESEmulation::InputMode m) -> const char* {
+        switch (m) {
+            case NESEmulation::InputMode::KeyboardOnly:          return "Keyboard only";
+            case NESEmulation::InputMode::ControllerOnly:        return "Controller only";
+            case NESEmulation::InputMode::KeyboardAndController: return "Keyboard + Controller";
+        }
+        return "Unknown";
+    };
+
+    while (true) {
+        std::cout << "\n=== OmniCon Controller Settings ===\n";
+        std::cout << "  Current mode: " << modeName(mode) << "\n\n";
+        std::cout << "  Input Mode:\n";
+        std::cout << "   1) Keyboard only\n";
+        std::cout << "   2) Controller only\n";
+        std::cout << "   3) Keyboard + Controller\n\n";
+        std::cout << "  Remap Keyboard Bindings:\n";
+        std::cout << "   4) D-Pad            Up=" << SDL_GetKeyName(kUp) << "  Down=" << SDL_GetKeyName(kDown) << "  Left=" << SDL_GetKeyName(kLeft) << "  Right=" << SDL_GetKeyName(kRight) << "\n";
+        std::cout << "   5) A / B            A=" << SDL_GetKeyName(kA) << "  B=" << SDL_GetKeyName(kB) << "  (also: Atari Fire=" << SDL_GetKeyName(kFire) << ")\n";
+        std::cout << "   6) X / Y            X=" << SDL_GetKeyName(kX) << "  Y=" << SDL_GetKeyName(kY) << "  (SNES, NDS)\n";
+        std::cout << "   7) L / R Shoulders  L=" << SDL_GetKeyName(kL) << "  R=" << SDL_GetKeyName(kR) << "  (SNES, GBA, NDS)\n";
+        std::cout << "   8) Start / Select   Start=" << SDL_GetKeyName(kStart) << "  Select=" << SDL_GetKeyName(kSel) << "\n";
+        std::cout << "   9) Atari-specific   Secondary=" << SDL_GetKeyName(kSec) << "  Reset=" << SDL_GetKeyName(kReset) << "  Option=" << SDL_GetKeyName(kOpt) << "\n\n";
+        std::cout << "  Remap Controller Bindings:\n";
+        std::cout << "  10) D-Pad            Up=" << buttonDisplayName(bUp) << "  Down=" << buttonDisplayName(bDown) << "  Left=" << buttonDisplayName(bLeft) << "  Right=" << buttonDisplayName(bRight) << "\n";
+        std::cout << "  11) A / B            A=" << buttonDisplayName(bA) << "  B=" << buttonDisplayName(bB) << "  (also: Atari Fire=" << buttonDisplayName(bFire) << ")\n";
+        std::cout << "  12) X / Y            X=" << buttonDisplayName(bX) << "  Y=" << buttonDisplayName(bY) << "  (SNES, NDS)\n";
+        std::cout << "  13) L / R Shoulders  L=" << buttonDisplayName(bL) << "  R=" << buttonDisplayName(bR) << "  (SNES, GBA, NDS)\n";
+        std::cout << "  14) Start / Select   Start=" << buttonDisplayName(bStart) << "  Select=" << buttonDisplayName(bSel) << "\n";
+        std::cout << "  15) Atari-specific   Secondary=" << buttonDisplayName(bSec) << "  Reset=" << buttonDisplayName(bReset) << "  Option=" << buttonDisplayName(bOpt) << "\n\n";
+        std::cout << "  16) Select controller\n";
+        std::cout << "   0) Save and exit\n";
+        std::cout << "Choice: ";
+
+        std::string ch;
+        std::getline(std::cin, ch);
+        ch = trim(ch);
+
+        if (ch == "0") break;
+        if (ch == "1") { mode = NESEmulation::InputMode::KeyboardOnly;          std::cout << "Keyboard only.\n"; continue; }
+        if (ch == "2") { mode = NESEmulation::InputMode::ControllerOnly;         std::cout << "Controller only.\n"; continue; }
+        if (ch == "3") { mode = NESEmulation::InputMode::KeyboardAndController;  std::cout << "Keyboard + Controller.\n"; continue; }
+
+        if (ch == "4") {
+            std::cout << "--- D-Pad keyboard (all systems) ---\n";
+            std::cout << "Enter SDL key name, or press Enter to keep current.\n";
+            applyKey(promptKey("UP",    kUp),    kUp);
+            applyKey(promptKey("DOWN",  kDown),  kDown);
+            applyKey(promptKey("LEFT",  kLeft),  kLeft);
+            applyKey(promptKey("RIGHT", kRight), kRight);
+            continue;
+        }
+        if (ch == "5") {
+            std::cout << "--- A / B keyboard (NES, GB, SNES, GBA, NDS) + Atari Fire ---\n";
+            std::cout << "Enter SDL key name, or press Enter to keep current.\n";
+            applyKey(promptKey("A    (NES/GB/SNES/GBA/NDS)", kA), kA);
+            applyKey(promptKey("B    (NES/GB/SNES/GBA/NDS)", kB), kB);
+            applyKey(promptKey("FIRE (Atari 2600/5200/800)", kFire), kFire);
+            continue;
+        }
+        if (ch == "6") {
+            std::cout << "--- X / Y keyboard (SNES, NDS) ---\n";
+            applyKey(promptKey("X", kX), kX);
+            applyKey(promptKey("Y", kY), kY);
+            continue;
+        }
+        if (ch == "7") {
+            std::cout << "--- L / R shoulder keyboard (SNES, GBA, NDS) ---\n";
+            applyKey(promptKey("L", kL), kL);
+            applyKey(promptKey("R", kR), kR);
+            continue;
+        }
+        if (ch == "8") {
+            std::cout << "--- Start / Select keyboard (all systems) ---\n";
+            applyKey(promptKey("START",  kStart), kStart);
+            applyKey(promptKey("SELECT", kSel),   kSel);
+            continue;
+        }
+        if (ch == "9") {
+            std::cout << "--- Atari-specific keyboard ---\n";
+            applyKey(promptKey("SECONDARY (Atari 5200/800)", kSec),   kSec);
+            applyKey(promptKey("RESET     (Atari 2600/5200)", kReset), kReset);
+            applyKey(promptKey("OPTION    (Atari 800)",       kOpt),   kOpt);
+            continue;
+        }
+        if (ch == "10") {
+            std::cout << "--- D-Pad controller (all systems) ---\n";
+            std::cout << "Valid names: A B X Y BACK START LEFTSHOULDER RIGHTSHOULDER DPAD_UP DPAD_DOWN DPAD_LEFT DPAD_RIGHT\n";
+            applyBtn(promptButton("UP",    bUp),    bUp);
+            applyBtn(promptButton("DOWN",  bDown),  bDown);
+            applyBtn(promptButton("LEFT",  bLeft),  bLeft);
+            applyBtn(promptButton("RIGHT", bRight), bRight);
+            continue;
+        }
+        if (ch == "11") {
+            std::cout << "--- A / B controller + Atari Fire ---\n";
+            applyBtn(promptButton("A    (NES/GB/SNES/GBA/NDS)", bA), bA);
+            applyBtn(promptButton("B    (NES/GB/SNES/GBA/NDS)", bB), bB);
+            applyBtn(promptButton("FIRE (Atari 2600/5200/800)", bFire), bFire);
+            continue;
+        }
+        if (ch == "12") {
+            std::cout << "--- X / Y controller (SNES, NDS) ---\n";
+            applyBtn(promptButton("X", bX), bX);
+            applyBtn(promptButton("Y", bY), bY);
+            continue;
+        }
+        if (ch == "13") {
+            std::cout << "--- L / R shoulder controller (SNES, GBA, NDS) ---\n";
+            applyBtn(promptButton("L", bL), bL);
+            applyBtn(promptButton("R", bR), bR);
+            continue;
+        }
+        if (ch == "14") {
+            std::cout << "--- Start / Select controller (all systems) ---\n";
+            applyBtn(promptButton("START",  bStart), bStart);
+            applyBtn(promptButton("SELECT", bSel),   bSel);
+            continue;
+        }
+        if (ch == "15") {
+            std::cout << "--- Atari-specific controller ---\n";
+            applyBtn(promptButton("SECONDARY (Atari 5200/800)", bSec),   bSec);
+            applyBtn(promptButton("RESET     (Atari 2600/5200)", bReset), bReset);
+            applyBtn(promptButton("OPTION    (Atari 800)",        bOpt),  bOpt);
+            continue;
+        }
+        if (ch == "16") {
+            int count = SDL_NumJoysticks();
+            if (count == 0) { std::cout << "No controllers detected.\n"; continue; }
+            std::cout << "Controllers:\n";
+            for (int i = 0; i < count; ++i)
+                if (SDL_IsGameController(i))
+                    std::cout << "  [" << i << "] " << SDL_GameControllerNameForIndex(i) << "\n";
+            std::cout << "Enter index: ";
+            std::string idx; std::getline(std::cin, idx); idx = trim(idx);
+            if (!idx.empty()) {
+                try {
+                    int i = std::stoi(idx);
+                    if (ctrl) SDL_GameControllerClose(ctrl);
+                    ctrl = nullptr;
+                    if (i >= 0 && i < count && SDL_IsGameController(i))
+                        ctrl = SDL_GameControllerOpen(i);
+                } catch (...) { std::cout << "Invalid index.\n"; }
+            }
+            continue;
+        }
+        std::cout << "Unknown option.\n";
+    }
+
+    // ── Commit to all systems ──────────────────────────────────────────────
+    // Map our shared InputMode enum value to each system's equivalent.
+    // (All InputMode enums have the same underlying values 0/1/2.)
+    auto toNesMode   = [&]() { return static_cast<NESEmulation::InputMode>(static_cast<int>(mode)); };
+    auto toGbMode    = [&]() { return static_cast<GameBoyEmulation::InputMode>(static_cast<int>(mode)); };
+    auto toSnesMode  = [&]() { return static_cast<SNESEmulation::InputMode>(static_cast<int>(mode)); };
+    auto toGbaMode   = [&]() { return static_cast<GBAEmulation::InputMode>(static_cast<int>(mode)); };
+    auto toNdsMode   = [&]() { return static_cast<NDSEmulation::InputMode>(static_cast<int>(mode)); };
+    auto toA2600Mode = [&]() { return static_cast<Atari2600Emulation::InputMode>(static_cast<int>(mode)); };
+    auto toA5200Mode = [&]() { return static_cast<Atari5200Emulation::InputMode>(static_cast<int>(mode)); };
+    auto toA800Mode  = [&]() { return static_cast<Atari800Emulation::InputMode>(static_cast<int>(mode)); };
+
+    // NES
+    NESEmulation::globalInputMode = toNesMode();
+    NESEmulation::globalKeyBindings        = {kUp, kDown, kLeft, kRight, kA, kB, kSel, kStart};
+    NESEmulation::globalControllerBindings = {bUp, bDown, bLeft, bRight, bA, bB, bSel, bStart};
+    NESEmulation::globalInputConfigured    = true;
+
+    // Game Boy (and Game Boy Color, which shares GameBoyEmulation statics)
+    GameBoyEmulation::globalInputMode = toGbMode();
+    GameBoyEmulation::globalKeyBindings        = {kUp, kDown, kLeft, kRight, kA, kB, kSel, kStart};
+    GameBoyEmulation::globalControllerBindings = {bUp, bDown, bLeft, bRight, bA, bB, bSel, bStart};
+    GameBoyEmulation::globalInputConfigured    = true;
+
+    // SNES
+    SNESEmulation::globalInputMode = toSnesMode();
+    SNESEmulation::globalKeyBindings        = {kUp, kDown, kLeft, kRight, kA, kB, kX, kY, kL, kR, kSel, kStart};
+    SNESEmulation::globalControllerBindings = {bUp, bDown, bLeft, bRight, bA, bB, bX, bY, bL, bR, bSel, bStart};
+    SNESEmulation::globalInputConfigured    = true;
+
+    // GBA (note: GBA KeyBindings struct is in order: a,b,select,start,right,left,up,down,r,l)
+    GBAEmulation::globalInputMode = toGbaMode();
+    GBAEmulation::globalKeyBindings        = {kA, kB, kSel, kStart, kRight, kLeft, kUp, kDown, kR, kL};
+    GBAEmulation::globalControllerBindings = {bA, bB, bSel, bStart, bRight, bLeft, bUp, bDown, bR, bL};
+    GBAEmulation::globalInputConfigured    = true;
+
+    // NDS
+    NDSEmulation::globalInputMode = toNdsMode();
+    NDSEmulation::globalKeyBindings        = {kUp, kDown, kLeft, kRight, kA, kB, kX, kY, kStart, kSel, kL, kR};
+    NDSEmulation::globalControllerBindings = {bUp, bDown, bLeft, bRight, bA, bB, bX, bY, bStart, bSel, bL, bR};
+    NDSEmulation::globalInputConfigured    = true;
+
+    // Atari 2600
+    Atari2600Emulation::globalInputMode = toA2600Mode();
+    Atari2600Emulation::globalKeyBindings        = {kUp, kDown, kLeft, kRight, kFire, kSel, kStart, kReset};
+    Atari2600Emulation::globalControllerBindings = {bUp, bDown, bLeft, bRight, bFire, bSel, bStart, bReset};
+    Atari2600Emulation::globalInputConfigured    = true;
+
+    // Atari 5200
+    Atari5200Emulation::globalInputMode = toA5200Mode();
+    Atari5200Emulation::globalKeyBindings        = {kUp, kDown, kLeft, kRight, kFire, kSec, kSel, kStart, kReset};
+    Atari5200Emulation::globalControllerBindings = {bUp, bDown, bLeft, bRight, bFire, bSec, bSel, bStart, bReset};
+    Atari5200Emulation::globalInputConfigured    = true;
+
+    // Atari 800
+    Atari800Emulation::globalInputMode = toA800Mode();
+    Atari800Emulation::globalKeyBindings        = {kUp, kDown, kLeft, kRight, kFire, kSec, kSel, kStart, kOpt};
+    Atari800Emulation::globalControllerBindings = {bUp, bDown, bLeft, bRight, bFire, bSec, bSel, bStart, bOpt};
+    Atari800Emulation::globalInputConfigured    = true;
+
+    // Magnavox Odyssey (P1 uses primary up/down; P2 uses arrow keys / right stick)
+    OdysseyEmulation::globalInputMode         = OdysseyEmulation::InputMode::KeyboardAndController;
+    OdysseyEmulation::globalKeyBindings       = {kUp, kDown, SDLK_UP, SDLK_DOWN, SDLK_SPACE};
+    OdysseyEmulation::globalControllerBindings = {
+        bUp, bDown,
+        SDL_CONTROLLER_BUTTON_Y, SDL_CONTROLLER_BUTTON_A,
+        SDL_CONTROLLER_BUTTON_START
+    };
+    OdysseyEmulation::globalInputConfigured   = true;
+
+    if (ctrl) SDL_GameControllerClose(ctrl);
+    if (!hadController) SDL_QuitSubSystem(SDL_INIT_GAMECONTROLLER);
+
+    std::cout << "Controls saved for all systems.\n";
+}
+
 void printHelp()
 {
     std::cout << "Commands:\n"
@@ -442,22 +841,18 @@ void printHelp()
               << "                  .nes -> NES, .smc/.sfc -> SNES, .gb -> Game Boy\n"
               << "                  .gbc -> Game Boy Color, .a26 -> Atari 2600\n"
               << "                  .a52/.bin/.rom -> Atari 5200/2600\n"
+              << "                  .md/.gen/.smd -> Sega Genesis\n"
               << "                  (Supports Windows paths: C:\\Users\\...\\file.gbc)\n"
               << "  play-gb <path>  Load and run a Game Boy ROM (.gb/.gbc/.sgb)\n"
               << "  play-gbc <path> Load and run a Game Boy Color ROM (.gbc/.gb/.sgb)\n"
-              << "  play-snes <path>  Load and run a .smc/.sfc ROM file with SuperPy SNES emulator\n"
+              << "  play-snes <path>  Load and run a .smc/.sfc ROM file\n"
               << "  play-atari2600 <path>  Load and run an Atari 2600 ROM (.a26/.bin/.rom)\n"
               << "  play-atari5200 <path>  Load and run an Atari 5200 ROM (.a52/.bin/.rom)\n"
               << "  play-gba <path>  Load and run a GBA ROM (.gba)\n"
               << "  play-nds <path>  Load and run a Nintendo DS ROM (.nds)\n"
-              << "  controls        Change global NES controls (applies to all ROMs)\n"
-              << "  controls-gb     Change global Game Boy controls\n"
-              << "  controls-gbc    Change global Game Boy Color controls\n"
-              << "  controls-snes   Change global SNES controls\n"
-              << "  controls-atari2600   Change global Atari 2600 controls\n"
-              << "  controls-atari5200   Change global Atari 5200 controls\n"
-              << "  controls-gba    Change global GBA controls\n"
-              << "  controls-nds    Change global Nintendo DS controls\n"
+              << "  play-genesis <path>  Load and run a Sega Genesis ROM (.md/.gen/.smd)\n"
+              << "  shell           Open the graphical game library launcher\n"
+              << "  controls        Configure controls for all systems (keyboard + controller)\n"
               << "  config          Re-enter database password\n"
               << "  help            Show this message\n"
               << "  quit            Exit the REPL\n";
@@ -487,6 +882,21 @@ int main()
     if (mysqlAvailable) {
         config = promptDatabaseConfig();
     }
+
+    // Auto-launch the game library shell on startup
+    {
+        GameLibrary lib;
+        lib.scan("Roms");
+        lib.scanSteam();
+        lib.resolveCoverPaths("saves/covers");
+        scrapeCoversIfNeeded(lib, "saves/covers");
+        GameShell gameShell;
+        if (gameShell.init()) {
+            gameShell.run(lib, "saves/covers");
+            gameShell.cleanup();
+        }
+    }
+
     printHelp();
 
     while (std::cin.good()) {
@@ -509,43 +919,33 @@ int main()
             continue;
         }
 
+        if (input == "shell") {
+            GameLibrary lib;
+            lib.scan("Roms");
+            lib.scanSteam();
+            lib.resolveCoverPaths("saves/covers");
+            scrapeCoversIfNeeded(lib, "saves/covers");
+            GameShell shell;
+            if (shell.init()) {
+                shell.run(lib, "saves/covers");
+                shell.cleanup();
+            } else {
+                std::cerr << "Failed to open game shell.\n";
+            }
+            continue;
+        }
+
         if (input == "controls" || input == "change controls" || input == "change-controls") {
-            NESEmulation::configureGlobalControls();
+            configureAllControls();
             continue;
         }
 
-        if (input == "controls-snes" || input == "change snes controls" || input == "change-snes-controls") {
-            SNESEmulation::configureGlobalControls();
-            continue;
-        }
-
-        if (input == "controls-atari2600" || input == "change atari2600 controls" || input == "change-atari2600-controls") {
-            Atari2600Emulation::configureGlobalControls();
-            continue;
-        }
-
-        if (input == "controls-atari5200" || input == "change atari5200 controls" || input == "change-atari5200-controls") {
-            Atari5200Emulation::configureGlobalControls();
-            continue;
-        }
-
-        if (input == "controls-gb" || input == "change gb controls" || input == "change-gb-controls") {
-            GameBoyEmulation::configureGlobalControls();
-            continue;
-        }
-
-        if (input == "controls-gbc" || input == "change gbc controls" || input == "change-gbc-controls") {
-            GameBoyColorEmulation::configureGlobalControls();
-            continue;
-        }
-
-        if (input == "controls-gba" || input == "change gba controls" || input == "change-gba-controls") {
-            GBAEmulation::configureGlobalControls();
-            continue;
-        }
-
-        if (input == "controls-nds" || input == "change nds controls" || input == "change-nds-controls") {
-            NDSEmulation::configureGlobalControls();
+        // Legacy per-system aliases — redirect to unified menu
+        if (input == "controls-snes" || input == "controls-gb" || input == "controls-gbc" ||
+            input == "controls-gba"  || input == "controls-nds" ||
+            input == "controls-atari2600" || input == "controls-atari5200" || input == "controls-atari800") {
+            std::cout << "Per-system controls have been merged. Opening unified controls menu...\n";
+            configureAllControls();
             continue;
         }
 
@@ -557,6 +957,7 @@ int main()
         const std::string playAtari5200Command = "play-atari5200 ";
         const std::string playGbaCommand = "play-gba ";
         const std::string playNdsCommand = "play-nds ";
+        const std::string playGenesisCommand = "play-genesis ";
         const bool isPlayCommand = input.rfind(playCommand, 0) == 0
             && input.rfind(playSnesCommand, 0) != 0
             && input.rfind(playGbCommand, 0) != 0
@@ -564,14 +965,16 @@ int main()
             && input.rfind(playAtari2600Command, 0) != 0
             && input.rfind(playAtari5200Command, 0) != 0
             && input.rfind(playGbaCommand, 0) != 0
-            && input.rfind(playNdsCommand, 0) != 0;
-        const bool isPlaySnesCommand = input.rfind(playSnesCommand, 0) == 0;
-        const bool isPlayGbCommand = input.rfind(playGbCommand, 0) == 0;
-        const bool isPlayGbcCommand = input.rfind(playGbcCommand, 0) == 0;
+            && input.rfind(playNdsCommand, 0) != 0
+            && input.rfind(playGenesisCommand, 0) != 0;
+        const bool isPlaySnesCommand    = input.rfind(playSnesCommand, 0)    == 0;
+        const bool isPlayGbCommand      = input.rfind(playGbCommand, 0)      == 0;
+        const bool isPlayGbcCommand     = input.rfind(playGbcCommand, 0)     == 0;
         const bool isPlayAtari2600Command = input.rfind(playAtari2600Command, 0) == 0;
         const bool isPlayAtari5200Command = input.rfind(playAtari5200Command, 0) == 0;
-        const bool isPlayGbaCommand = input.rfind(playGbaCommand, 0) == 0;
-        const bool isPlayNdsCommand = input.rfind(playNdsCommand, 0) == 0;
+        const bool isPlayGbaCommand     = input.rfind(playGbaCommand, 0)     == 0;
+        const bool isPlayNdsCommand     = input.rfind(playNdsCommand, 0)     == 0;
+        const bool isPlayGenesisCommand = input.rfind(playGenesisCommand, 0) == 0;
 
         if (isPlayCommand) {
             std::string romPath = trim(input.substr(playCommand.size()));
@@ -633,6 +1036,12 @@ int main()
                 Atari5200Emulation atari5200;
                 if (atari5200.loadRom(romPath)) {
                     atari5200.runInteractive();
+                }
+            } else if (extension == ".md" || extension == ".gen" || extension == ".smd" ||
+                       extension == ".68k" || extension == ".sgd") {
+                SegaGenesisEmulation gen;
+                if (gen.loadRom(romPath)) {
+                    gen.runInteractive();
                 }
             } else if (extension == ".bin" || extension == ".rom") {
                 // Ambiguous extension: try Atari 5200 first, then Atari 2600, then NES
@@ -820,6 +1229,28 @@ int main()
                 }
             } catch (const std::exception& e) {
                 std::cerr << "NDS error: " << e.what() << "\n";
+            }
+            continue;
+        }
+
+        if (isPlayGenesisCommand) {
+            std::string romPath = trim(input.substr(playGenesisCommand.size()));
+            romPath = stripOuterQuotes(romPath);
+            romPath = normalizePath(romPath);
+
+            if (romPath.empty()) {
+                std::cout << "ROM path is required.\n";
+                continue;
+            }
+
+            if (!std::filesystem::exists(romPath)) {
+                std::cout << "ROM file does not exist: " << romPath << "\n";
+                continue;
+            }
+
+            SegaGenesisEmulation gen;
+            if (gen.loadRom(romPath)) {
+                gen.runInteractive();
             }
             continue;
         }

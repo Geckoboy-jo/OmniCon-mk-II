@@ -29,7 +29,7 @@ struct atari5200_color_t {
 
 class Atari5200Emulation
 {
-private:
+public:
     enum class InputMode {
         KeyboardOnly,
         ControllerOnly,
@@ -60,6 +60,13 @@ private:
         SDL_GameControllerButton reset;
     };
 
+    static InputMode globalInputMode;
+    static KeyBindings globalKeyBindings;
+    static ControllerBindings globalControllerBindings;
+    static bool globalInputConfigured;
+
+private:
+
     bool romLoaded;
     std::unique_ptr<class Atari5200Backend> backendPtr;
     string romPath;
@@ -75,11 +82,6 @@ private:
     InputMode inputMode;
     KeyBindings keyBindings;
     ControllerBindings controllerBindings;
-
-    static InputMode globalInputMode;
-    static KeyBindings globalKeyBindings;
-    static ControllerBindings globalControllerBindings;
-    static bool globalInputConfigured;
 
     void initSDL();
     void cleanupSDL();

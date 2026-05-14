@@ -13,7 +13,7 @@ class NesBackend;
 
 class NESEmulation
 {
-private:
+public:
     enum class InputMode {
         KeyboardOnly,
         ControllerOnly,
@@ -42,6 +42,13 @@ private:
         SDL_GameControllerButton start;
     };
 
+    static InputMode globalInputMode;
+    static KeyBindings globalKeyBindings;
+    static ControllerBindings globalControllerBindings;
+    static bool globalInputConfigured;
+
+private:
+
     std::unique_ptr<NesBackend> backend;
     string romPath;
     string savePath;
@@ -69,10 +76,6 @@ private:
     InputMode inputMode;
     KeyBindings keyBindings;
     ControllerBindings controllerBindings;
-    static InputMode globalInputMode;
-    static KeyBindings globalKeyBindings;
-    static ControllerBindings globalControllerBindings;
-    static bool globalInputConfigured;
     
     void initSDL();
     void cleanupSDL();

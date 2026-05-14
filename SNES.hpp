@@ -36,7 +36,7 @@ struct superpy_color_t {
 
 class SNESEmulation
 {
-private:
+public:
     enum class InputMode {
         KeyboardOnly,
         ControllerOnly,
@@ -73,6 +73,13 @@ private:
         SDL_GameControllerButton start;
     };
 
+    static InputMode globalInputMode;
+    static KeyBindings globalKeyBindings;
+    static ControllerBindings globalControllerBindings;
+    static bool globalInputConfigured;
+
+private:
+
     std::unique_ptr<SuperPyBackend> backend;
     string romPath;
     std::atomic<bool> isRunning;
@@ -97,11 +104,6 @@ private:
     InputMode inputMode;
     KeyBindings keyBindings;
     ControllerBindings controllerBindings;
-
-    static InputMode globalInputMode;
-    static KeyBindings globalKeyBindings;
-    static ControllerBindings globalControllerBindings;
-    static bool globalInputConfigured;
 
     static constexpr int kSNESScreenWidth = 256;
     static constexpr int kSNESScreenHeight = 224;
