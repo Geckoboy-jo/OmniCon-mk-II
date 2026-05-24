@@ -1,0 +1,491 @@
+#include "N64.hpp"
+
+#include <dlfcn.h>
+#include <mupen64plus/m64p_types.h>
+#include <mupen64plus/m64p_frontend.h>
+#include <mupen64plus/m64p_common.h>
+#include <mupen64plus/m64p_plugin.h>
+
+#include <filesystem>
+#include <fstream>
+#include <iostream>
+#include <thread>
+#include <vector>
+#include <cstdint>
+#include <cstring>
+
+namespace fs = std::filesystem;
+
+// ─── Callbacks ───────────────────────────────────────────────────────────────
+
+static void n64DebugCb(void*, int level, const char* msg) {
+    if (level <= M64MSG_WARNING)
+        std::cerr << "[N64] " << msg << "\n";
+}
+
+static void n64StateCb(void*, m64p_core_param, int) {}
+
+// ─── Backend ─────────────────────────────────────────────────────────────────
+
+class Mupen64PlusBackend {
+        void logState(const std::string& msg) const {
+            std::cerr << "[N64][VERBOSE] " << msg << std::endl;
+        }
+    static constexpr const char* CORE_SO  = "/usr/lib/x86_64-linux-gnu/libmupen64plus.so.2";
+    static constexpr const char* VIDEO_SO = "/usr/lib/x86_64-linux-gnu/mupen64plus/mupen64plus-video-rice.so";
+    static constexpr const char* AUDIO_SO = "/usr/lib/x86_64-linux-gnu/mupen64plus/mupen64plus-audio-sdl.so";
+    static constexpr const char* INPUT_SO = "/usr/lib/x86_64-linux-gnu/mupen64plus/mupen64plus-input-sdl.so";
+    static constexpr const char* RSP_SO   = "/usr/lib/x86_64-linux-gnu/mupen64plus/mupen64plus-rsp-hle.so";
+    static constexpr const char* DATA_DIR = "/usr/share/games/mupen64plus";
+    static constexpr int          API_VER = 0x020001;
+
+    void* coreHandle  = nullptr;
+    void* videoHandle = nullptr;
+    void* audioHandle = nullptr;
+    void* inputHandle = nullptr;
+    void* rspHandle   = nullptr;
+
+    ptr_CoreStartup      fnCoreStartup      = nullptr;
+    ptr_CoreShutdown     fnCoreShutdown     = nullptr;
+    ptr_CoreAttachPlugin fnCoreAttachPlugin = nullptr;
+    ptr_CoreDetachPlugin fnCoreDetachPlugin = nullptr;
+    ptr_CoreDoCommand    fnCoreDoCommand    = nullptr;
+
+    std::thread       execThread;
+    std::atomic<bool> emulRunning{false};
+    std::string       configDir;
+
+    bool coreInited   = false;
+    bool pluginsReady = false;
+    bool romOpened    = false;
+
+public:
+    ~Mupen64PlusBackend() { teardown(); }
+
+    bool init(const std::string& cfgDir) {
+            logState("init() called with cfgDir: " + cfgDir);
+        configDir = cfgDir;
+        fs::create_directories(configDir);
+
+        coreHandle = dlopen(CORE_SO, RTLD_NOW | RTLD_GLOBAL);
+            logState("dlopen(CORE_SO) returned: " + std::to_string((uintptr_t)coreHandle));
+        if (!coreHandle) {
+                        logState("dlopen failed for CORE_SO");
+            std::cerr << "[N64] Cannot load " << CORE_SO << ": " << dlerror() << "\n";
+            return false;
+        }
+
+
+#define LOAD(sym, type) \
+    fn##sym = reinterpret_cast<type>(dlsym(coreHandle, #sym)); \
+    logState(std::string("Loaded symbol: ") + #sym); \
+    if (!fn##sym) { \
+        std::cerr << "[N64] Missing symbol: " << #sym << "\n"; \
+        return false; \
+    }
+
+        LOAD(CoreStartup,      ptr_CoreStartup)
+        LOAD(CoreShutdown,     ptr_CoreShutdown)
+        LOAD(CoreAttachPlugin, ptr_CoreAttachPlugin)
+        LOAD(CoreDetachPlugin, ptr_CoreDetachPlugin)
+        LOAD(CoreDoCommand,    ptr_CoreDoCommand)
+#undef LOAD
+
+        logState("Calling fnCoreStartup");
+        m64p_error e = fnCoreStartup(API_VER, configDir.c_str(), DATA_DIR,
+                        nullptr, n64DebugCb, nullptr, n64StateCb);
+        if (e != M64ERR_SUCCESS) {
+                        logState("fnCoreStartup failed with error code: " + std::to_string(e));
+            std::cerr << "[N64] CoreStartup failed: " << e << "\n";
+            return false;
+        }
+        coreInited = true;
+            logState("init() complete, coreInited = true");
+        return true;
+    }
+
+    bool loadPlugins() {
+            logState("loadPlugins() called");
+        typedef m64p_error (*PluginStartupFn)(m64p_dynlib_handle, void*,
+                                              void(*)(void*, int, const char*));
+
+        struct { const char* path; void** hdl; m64p_plugin_type type; } entries[] = {
+            {VIDEO_SO, &videoHandle, M64PLUGIN_GFX  },
+            {AUDIO_SO, &audioHandle, M64PLUGIN_AUDIO},
+            {INPUT_SO, &inputHandle, M64PLUGIN_INPUT},
+            {RSP_SO,   &rspHandle,   M64PLUGIN_RSP  },
+        };
+
+        for (auto& p : entries) {
+                        logState(std::string("dlopen(") + p.path + ")");
+            *p.hdl = dlopen(p.path, RTLD_NOW | RTLD_LOCAL);
+            if (!*p.hdl) {
+                                logState(std::string("dlopen failed for ") + p.path);
+                std::cerr << "[N64] Cannot load plugin " << p.path << ": " << dlerror() << "\n";
+                return false;
+            }
+            auto startup = reinterpret_cast<PluginStartupFn>(dlsym(*p.hdl, "PluginStartup"));
+                        logState(std::string("dlsym(PluginStartup) for ") + p.path);
+            if (!startup) {
+                                logState(std::string("No PluginStartup symbol in ") + p.path);
+                std::cerr << "[N64] No PluginStartup in " << p.path << "\n";
+                return false;
+            }
+            if (startup(coreHandle, nullptr, n64DebugCb) != M64ERR_SUCCESS) {
+                                logState(std::string("PluginStartup failed for ") + p.path);
+                std::cerr << "[N64] PluginStartup failed: " << p.path << "\n";
+                return false;
+            }
+            if (fnCoreAttachPlugin(p.type, *p.hdl) != M64ERR_SUCCESS) {
+                                logState(std::string("CoreAttachPlugin failed for type ") + std::to_string(p.type));
+                std::cerr << "[N64] CoreAttachPlugin failed, type=" << p.type << "\n";
+                return false;
+            }
+        }
+        pluginsReady = true;
+            logState("loadPlugins() complete, pluginsReady = true");
+        return true;
+    }
+
+    bool openRom(const std::string& path) {
+            logState("openRom() called with path: " + path);
+        std::ifstream f(path, std::ios::binary | std::ios::ate);
+            logState("Attempting to open ROM file");
+        if (!f) {
+                        logState("ROM file open failed");
+            std::cerr << "[N64] Cannot open ROM: " << path << "\n";
+            return false;
+        }
+        std::streamsize sz = f.tellg();
+            logState("ROM file size: " + std::to_string(sz));
+        f.seekg(0);
+        std::vector<uint8_t> buf(static_cast<size_t>(sz));
+        f.read(reinterpret_cast<char*>(buf.data()), sz);
+
+        logState("Calling fnCoreDoCommand(M64CMD_ROM_OPEN)");
+        if (fnCoreDoCommand(M64CMD_ROM_OPEN, static_cast<int>(buf.size()), buf.data())
+                != M64ERR_SUCCESS) {
+            logState("ROM_OPEN failed");
+            std::cerr << "[N64] ROM_OPEN failed\n";
+            return false;
+        }
+        romOpened = true;
+            logState("openRom() complete, romOpened = true");
+        return true;
+    }
+
+    void startExecution() {
+            logState("startExecution() called");
+        emulRunning = true;
+        execThread = std::thread([this]() {
+                        logState("Emulation thread started");
+            fnCoreDoCommand(M64CMD_EXECUTE, 0, nullptr);
+                        logState("fnCoreDoCommand(M64CMD_EXECUTE) returned");
+            emulRunning = false;
+                    logState("Emulation thread finished");
+        });
+    }
+
+    void waitForStop() {
+            logState("waitForStop() called");
+        if (execThread.joinable()) {
+            logState("Joining execThread");
+            execThread.join();
+        } else {
+            logState("execThread not joinable, skipping join");
+        }
+    }
+
+    void requestStop() {
+            logState("requestStop() called");
+        if (emulRunning && fnCoreDoCommand)
+                        logState("Calling fnCoreDoCommand(M64CMD_STOP)");
+            fnCoreDoCommand(M64CMD_STOP, 0, nullptr);
+    }
+
+    void teardown() {
+            logState("teardown() called");
+        std::cerr << "[N64] teardown: begin" << std::endl;
+        requestStop();
+            logState("requestStop() returned");
+        std::cerr << "[N64] teardown: requested stop" << std::endl;
+        waitForStop();
+            logState("waitForStop() returned");
+        std::cerr << "[N64] teardown: waitForStop done" << std::endl;
+
+        if (romOpened && fnCoreDoCommand) {
+                        logState("Closing ROM via fnCoreDoCommand(M64CMD_ROM_CLOSE)");
+            std::cerr << "[N64] teardown: closing ROM" << std::endl;
+            fnCoreDoCommand(M64CMD_ROM_CLOSE, 0, nullptr);
+            romOpened = false;
+        }
+
+        if (pluginsReady && fnCoreDetachPlugin) {
+                        logState("Detaching plugins");
+            std::cerr << "[N64] teardown: detaching plugins" << std::endl;
+            fnCoreDetachPlugin(M64PLUGIN_RSP);
+            fnCoreDetachPlugin(M64PLUGIN_INPUT);
+            fnCoreDetachPlugin(M64PLUGIN_AUDIO);
+            fnCoreDetachPlugin(M64PLUGIN_GFX);
+            pluginsReady = false;
+        }
+
+        typedef m64p_error (*PlugShutFn)(void);
+        void* plugHandles[] = {rspHandle, inputHandle, audioHandle, videoHandle};
+        const char* plugNames[] = {"RSP", "INPUT", "AUDIO", "VIDEO"};
+        for (int i = 0; i < 4; ++i) {
+                            logState(std::string("Detaching plugin index ") + std::to_string(i));
+            void* h = plugHandles[i];
+            if (h) {
+                std::cerr << "[N64] teardown: shutting down plugin " << plugNames[i] << std::endl;
+                auto fn = reinterpret_cast<PlugShutFn>(dlsym(h, "PluginShutdown"));
+                if (fn) {
+                    std::cerr << "[N64] teardown: calling PluginShutdown for " << plugNames[i] << std::endl;
+                    fn();
+                } else {
+                    std::cerr << "[N64] teardown: PluginShutdown not found for " << plugNames[i] << std::endl;
+                }
+                std::cerr << "[N64] teardown: skipping dlclose(" << plugNames[i] << ") for crash test" << std::endl;
+                // dlclose(h); // Disabled for crash test
+            }
+        }
+        rspHandle = inputHandle = audioHandle = videoHandle = nullptr;
+
+        if (coreInited && fnCoreShutdown) {
+                        logState("Shutting down core via fnCoreShutdown");
+            std::cerr << "[N64] teardown: shutting down core" << std::endl;
+            fnCoreShutdown();
+            coreInited = false;
+        }
+        if (coreHandle) {
+                        logState("coreHandle non-null, would dlclose if enabled");
+            std::cerr << "[N64] teardown: skipping dlclose(coreHandle) for crash test" << std::endl;
+            // dlclose(coreHandle); // Disabled for crash test
+            coreHandle = nullptr;
+        }
+        std::cerr << "[N64] teardown: complete" << std::endl;
+        logState("teardown() complete");
+    }
+
+    bool isRomOpen()  const { return romOpened; }
+    bool isRunning()  const { return emulRunning.load(); }
+};
+
+// ─── Static member definitions ───────────────────────────────────────────────
+
+N64Emulation::InputMode N64Emulation::globalInputMode =
+    N64Emulation::InputMode::KeyboardOnly;
+
+N64Emulation::KeyBindings N64Emulation::globalKeyBindings = {
+    /* up      */ SDLK_w,            // Up = W
+    /* down    */ SDLK_s,            // Down = S
+    /* left    */ SDLK_a,            // Left = A
+    /* right   */ SDLK_d,            // Right = D
+    /* a       */ SDLK_n,            // A = N
+    /* b       */ SDLK_m,            // B = M
+    /* c_up    */ SDLK_j,            // C-Up = J
+    /* c_down  */ SDLK_k,            // C-Down = K
+    /* c_left  */ SDLK_q,            // C-Left = Q
+    /* c_right */ SDLK_e,            // C-Right = E
+    /* l       */ SDLK_q,            // L = Q (l1)
+    /* r       */ SDLK_e,            // R = E (r1)
+    /* z       */ SDLK_1,            // Z = 1 (l2)
+    /* start   */ SDLK_z,            // Start = Z
+};
+
+N64Emulation::ControllerBindings N64Emulation::globalControllerBindings = {
+    /* up      */ SDL_CONTROLLER_BUTTON_DPAD_UP,
+    /* down    */ SDL_CONTROLLER_BUTTON_DPAD_DOWN,
+    /* left    */ SDL_CONTROLLER_BUTTON_DPAD_LEFT,
+    /* right   */ SDL_CONTROLLER_BUTTON_DPAD_RIGHT,
+    /* a       */ SDL_CONTROLLER_BUTTON_A,
+    /* b       */ SDL_CONTROLLER_BUTTON_B,
+    /* c_up    */ SDL_CONTROLLER_BUTTON_Y,
+    /* c_down  */ SDL_CONTROLLER_BUTTON_RIGHTSTICK,
+    /* c_left  */ SDL_CONTROLLER_BUTTON_LEFTSTICK,
+    /* c_right */ SDL_CONTROLLER_BUTTON_RIGHTSHOULDER,
+    /* l       */ SDL_CONTROLLER_BUTTON_LEFTSHOULDER,
+    /* r       */ SDL_CONTROLLER_BUTTON_RIGHTSHOULDER,
+    /* z       */ SDL_CONTROLLER_BUTTON_BACK,
+    /* start   */ SDL_CONTROLLER_BUTTON_START,
+};
+
+bool N64Emulation::globalInputConfigured = false;
+
+// ─── N64Emulation ────────────────────────────────────────────────────────────
+
+N64Emulation::N64Emulation()
+    : backend(std::make_unique<Mupen64PlusBackend>()) {
+    std::cerr << "[N64][DEBUG] N64Emulation constructed" << std::endl;
+    std::cerr << "[N64][VERBOSE] N64Emulation::N64Emulation() entry" << std::endl;
+    std::cerr << "[N64][VERBOSE] N64Emulation::~N64Emulation() entry" << std::endl;
+}
+
+N64Emulation::~N64Emulation() {
+    unloadRom();
+}
+
+bool N64Emulation::isLoaded() const {
+        std::cerr << "[N64][VERBOSE] isLoaded() called" << std::endl;
+    return backend && backend->isRomOpen();
+}
+
+bool N64Emulation::loadRom(const std::string& path) {
+        std::cerr << "[N64][VERBOSE] loadRom() entry" << std::endl;
+    std::cerr << "[N64][DEBUG] loadRom called with path: " << path << std::endl;
+    if (!fs::exists(path)) {
+            std::cerr << "[N64][VERBOSE] loadRom() file does not exist" << std::endl;
+        std::cerr << "[N64] File not found: " << path << "\n";
+        return false;
+    }
+
+    fs::create_directories("saves/n64");
+    const std::string cfgDir = fs::absolute("saves/n64/config").string();
+
+    if (!backend->init(cfgDir)) {
+            std::cerr << "[N64][VERBOSE] loadRom() backend->init failed" << std::endl;
+        std::cerr << "[N64][DEBUG] backend->init failed" << std::endl;
+        return false;
+    }
+    if (!backend->openRom(path)) {
+            std::cerr << "[N64][VERBOSE] loadRom() backend->openRom failed" << std::endl;
+        std::cerr << "[N64][DEBUG] backend->openRom failed" << std::endl;
+        return false;
+    }
+    if (!backend->loadPlugins()) {
+            std::cerr << "[N64][VERBOSE] loadRom() backend->loadPlugins failed" << std::endl;
+        std::cerr << "[N64][DEBUG] backend->loadPlugins failed" << std::endl;
+        return false;
+    }
+
+    romPath = path;
+    std::cout << "[N64] Loaded: " << path << "\n";
+        std::cerr << "[N64][VERBOSE] loadRom() success" << std::endl;
+    std::cerr << "[N64][DEBUG] loadRom success for: " << path << std::endl;
+    return true;
+}
+
+void N64Emulation::unloadRom() {
+        std::cerr << "[N64][VERBOSE] unloadRom() entry" << std::endl;
+    if (backend) backend->teardown();
+    romPath.clear();
+    isRunning = false;
+}
+
+void N64Emulation::runInteractive() {
+        std::cerr << "[N64][VERBOSE] runInteractive() entry" << std::endl;
+    std::cerr << "[N64][DEBUG] runInteractive called" << std::endl;
+    if (!isLoaded()) {
+            std::cerr << "[N64][VERBOSE] runInteractive() not loaded" << std::endl;
+        std::cerr << "[N64][DEBUG] runInteractive: not loaded" << std::endl;
+        return;
+    }
+
+    std::cout << "[N64] Press ESC or close the game window to exit.\n";
+    isRunning = true;
+        std::cerr << "[N64][VERBOSE] runInteractive() starting emulation" << std::endl;
+    backend->startExecution();
+        std::cerr << "[N64][VERBOSE] runInteractive() waiting for stop" << std::endl;
+    backend->waitForStop();
+        std::cerr << "[N64][VERBOSE] runInteractive() emulation stopped" << std::endl;
+        std::cerr << "[N64][VERBOSE] runInteractive() exit" << std::endl;
+    isRunning = false;
+    std::cout << "[N64] Emulation stopped.\n";
+    std::cerr << "[N64][DEBUG] runInteractive finished" << std::endl;
+}
+
+void N64Emulation::configureGlobalControls() {
+    std::cout << "\n[N64] Default Key Bindings (mupen64plus-input-sdl):\n"
+              << "  D-Pad:                Arrow Keys\n"
+              << "  Analog Stick:         Arrow Keys / WASD\n"
+              << "  A button:             X\n"
+              << "  B button:             Z\n"
+              << "  Z Trigger:            A\n"
+              << "  L / R Shoulder:       Q / E\n"
+              << "  Start:                Enter\n"
+              << "  C-Up / Down / Left / Right:  I / K / J / L\n"
+              << "\n"
+              << "  To customise bindings edit: saves/n64/config/mupen64plus.cfg\n";
+    globalInputConfigured = true;
+}
+
+// ─── Save data ───────────────────────────────────────────────────────────────
+// Bundle format: [magic "N64S"(4)] [file_count(u32)] then for each file:
+//   [name_len(u16)] [name bytes] [data_len(u64)] [data bytes]
+// Saves live in saves/n64/config/save/ as written by mupen64plus.
+
+static const fs::path kN64SaveDir = "saves/n64/config/save";
+
+std::vector<unsigned char> N64Emulation::dumpSaveData() const
+{
+    std::cerr << "[N64][DEBUG] dumpSaveData called for: " << romPath << std::endl;
+    std::vector<std::pair<std::string, std::vector<unsigned char>>> files;
+    std::error_code ec;
+    if (!fs::exists(kN64SaveDir, ec)) return {};
+
+    for (const auto& entry : fs::directory_iterator(kN64SaveDir, ec)) {
+        if (!entry.is_regular_file()) continue;
+        std::ifstream f(entry.path(), std::ios::binary | std::ios::ate);
+        if (!f) continue;
+        const auto sz = static_cast<std::streamsize>(f.tellg());
+        if (sz <= 0) continue;
+        f.seekg(0);
+        std::vector<unsigned char> buf(static_cast<size_t>(sz));
+        f.read(reinterpret_cast<char*>(buf.data()), sz);
+        if (f.gcount() == sz)
+            files.emplace_back(entry.path().filename().string(), std::move(buf));
+    }
+
+    if (files.empty()) return {};
+
+    std::vector<unsigned char> out;
+    // magic
+    out.insert(out.end(), {'N','6','4','S'});
+    // file count
+    const uint32_t cnt = static_cast<uint32_t>(files.size());
+    out.insert(out.end(), reinterpret_cast<const unsigned char*>(&cnt),
+               reinterpret_cast<const unsigned char*>(&cnt) + 4);
+    for (const auto& [name, data] : files) {
+        const uint16_t nlen = static_cast<uint16_t>(name.size());
+        out.insert(out.end(), reinterpret_cast<const unsigned char*>(&nlen),
+                   reinterpret_cast<const unsigned char*>(&nlen) + 2);
+        out.insert(out.end(), name.begin(), name.end());
+        const uint64_t dlen = static_cast<uint64_t>(data.size());
+        out.insert(out.end(), reinterpret_cast<const unsigned char*>(&dlen),
+                   reinterpret_cast<const unsigned char*>(&dlen) + 8);
+        out.insert(out.end(), data.begin(), data.end());
+    }
+    return out;
+}
+
+bool N64Emulation::restoreSaveData(const std::vector<unsigned char>& blob)
+{
+    if (blob.size() < 8) return false;
+    if (blob[0]!='N'||blob[1]!='6'||blob[2]!='4'||blob[3]!='S') return false;
+
+    uint32_t cnt = 0;
+    std::memcpy(&cnt, blob.data() + 4, 4);
+
+    std::error_code ec;
+    fs::create_directories(kN64SaveDir, ec);
+
+    size_t pos = 8;
+    for (uint32_t i = 0; i < cnt; ++i) {
+        if (pos + 2 > blob.size()) return false;
+        uint16_t nlen = 0;
+        std::memcpy(&nlen, blob.data() + pos, 2); pos += 2;
+        if (pos + nlen > blob.size()) return false;
+        const std::string name(reinterpret_cast<const char*>(blob.data() + pos), nlen);
+        pos += nlen;
+        if (pos + 8 > blob.size()) return false;
+        uint64_t dlen = 0;
+        std::memcpy(&dlen, blob.data() + pos, 8); pos += 8;
+        if (pos + dlen > blob.size()) return false;
+        const fs::path dest = kN64SaveDir / name;
+        std::ofstream f(dest, std::ios::binary | std::ios::trunc);
+        if (f) f.write(reinterpret_cast<const char*>(blob.data() + pos),
+                       static_cast<std::streamsize>(dlen));
+        pos += dlen;
+    }
+    return true;
+}

@@ -34,18 +34,17 @@ public:
     {
         const Node* node = root.get();
         while (node) {
-            const auto it = std::lower_bound(node->keys.begin(), node->keys.end(), key);
-            const std::size_t index = static_cast<std::size_t>(std::distance(node->keys.begin(), it));
-
             if (node->leaf) {
+                const auto it = std::lower_bound(node->keys.begin(), node->keys.end(), key);
+                const std::size_t index = static_cast<std::size_t>(std::distance(node->keys.begin(), it));
                 if (it == node->keys.end() || *it != key) {
                     return false;
                 }
-
                 value = node->values[index];
                 return true;
             }
 
+            const std::size_t index = childIndexForKey(node, key);
             node = node->children[index].get();
         }
 

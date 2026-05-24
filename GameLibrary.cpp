@@ -1,11 +1,15 @@
 #include "GameLibrary.hpp"
+#include "OracleDB.hpp"
 
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
+#include <iostream>
 #include <regex>
+#include <set>
+#include <sstream>
 #include <unistd.h>
 
 namespace fs = std::filesystem;
@@ -18,6 +22,61 @@ static std::string toLower(std::string s) {
 }
 
 // ─── Static lookups ──────────────────────────────────────────────────────────
+
+// Infer system from known URL patterns (e.g. archive.org collection names).
+// Returns Unknown if no pattern matched.
+SystemType GameLibrary::systemFromUrl(const std::string& url) {
+    std::string u = toLower(url);
+    // archive.org collection paths: /roms_nes/, /nes_roms/, etc.
+    auto has = [&](const char* s) { return u.find(s) != std::string::npos; };
+    if (has("/roms_nes") || has("/nes_roms") || has("nintendo_nes") || has("famicom_roms"))
+        return SystemType::NES;
+    if (has("/roms_snes") || has("/snes_roms") || has("super_nintendo"))
+        return SystemType::SNES;
+    if (has("/roms_gba") || has("/gba_roms") || has("gameboy_advance"))
+        return SystemType::GBA;
+    if (has("/roms_gbc") || has("/gbc_roms") || has("gameboy_color"))
+        return SystemType::GameBoyColor;
+    if (has("/roms_gb") || has("/gb_roms") || has("gameboy_roms"))
+        return SystemType::GameBoy;
+    if (has("/roms_nds") || has("/nds_roms") || has("nintendo_ds"))
+        return SystemType::NDS;
+    if (has("/roms_n64") || has("/n64_roms") || has("nintendo_64"))
+        return SystemType::N64;
+    if (has("/roms_genesis") || has("/genesis_roms") || has("/roms_sega") || has("sega_genesis"))
+        return SystemType::SegaGenesis;
+    if (has("/roms_ps1") || has("/ps1_roms") || has("playstation_roms") || has("psx_roms") || has("/roms_psx"))
+        return SystemType::PS1;
+    if (has("/roms_gba") || has("gameboy_advance"))
+        return SystemType::GBA;
+    if (has("atari_2600") || has("roms_2600") || has("atari2600"))
+        return SystemType::Atari2600;
+    if (has("atari_5200") || has("roms_5200") || has("atari5200"))
+        return SystemType::Atari5200;
+    if (has("atari_800") || has("roms_800") || has("atari800"))
+        return SystemType::Atari800;
+    return SystemType::Unknown;
+}
+
+// Return the ROM extension from a filename or URL path, stripping archive wrappers.
+// e.g. "game.nes.zip" → ".nes",  "game.smc.gz" → ".smc",  "game.nes" → ".nes"
+static std::string romExtension(const std::string& path) {
+    // Strip query string / fragment first
+    std::size_t qpos = path.find_first_of("?#");
+    std::string clean = (qpos != std::string::npos) ? path.substr(0, qpos) : path;
+    fs::path p(clean);
+    std::string ext = toLower(p.extension().string());
+    // If the outermost extension is an archive wrapper, peel it off
+    static const char* const kArchive[] = { ".zip", ".7z", ".gz", ".bz2", ".xz", ".rar", nullptr };
+    for (int i = 0; kArchive[i]; ++i) {
+        if (ext == kArchive[i]) {
+            std::string inner = toLower(fs::path(p.stem()).extension().string());
+            if (!inner.empty()) return inner;
+            break;
+        }
+    }
+    return ext;
+}
 
 SystemType GameLibrary::systemFromExtension(const std::string& ext) {
     std::string e = toLower(ext);
@@ -36,7 +95,29 @@ SystemType GameLibrary::systemFromExtension(const std::string& ext) {
                                                                return SystemType::Atari800;
     if (e == ".md" || e == ".gen" || e == ".smd" || e == ".68k" || e == ".sgd")
                                                                return SystemType::SegaGenesis;
+    if (e == ".n64" || e == ".z64" || e == ".v64")            return SystemType::N64;
+    if (e == ".cue" || e == ".iso" || e == ".pbp" || e == ".chd" || e == ".img" || e == ".mdf")
+                                                               return SystemType::PS1;
     if (e == ".odyssey")                                       return SystemType::Odyssey;
+    return SystemType::Unknown;
+}
+
+SystemType GameLibrary::systemFromName(const std::string& name) {
+    if (name == "NES")              return SystemType::NES;
+    if (name == "SNES")             return SystemType::SNES;
+    if (name == "Game Boy")         return SystemType::GameBoy;
+    if (name == "Game Boy Color")   return SystemType::GameBoyColor;
+    if (name == "GBA")              return SystemType::GBA;
+    if (name == "Nintendo DS")      return SystemType::NDS;
+    if (name == "Nintendo 3DS")     return SystemType::ThreeDS;
+    if (name == "Atari 2600")       return SystemType::Atari2600;
+    if (name == "Atari 5200")       return SystemType::Atari5200;
+    if (name == "Atari 800")        return SystemType::Atari800;
+    if (name == "Sega Genesis")     return SystemType::SegaGenesis;
+    if (name == "Nintendo 64")      return SystemType::N64;
+    if (name == "PlayStation")       return SystemType::PS1;
+    if (name == "Magnavox Odyssey") return SystemType::Odyssey;
+    if (name == "Steam")            return SystemType::Steam;
     return SystemType::Unknown;
 }
 
@@ -53,6 +134,8 @@ std::string GameLibrary::systemName(SystemType sys) {
         case SystemType::Atari5200:    return "Atari 5200";
         case SystemType::Atari800:     return "Atari 800";
         case SystemType::SegaGenesis: return "Sega Genesis";
+        case SystemType::N64:          return "Nintendo 64";
+        case SystemType::PS1:          return "PlayStation";
         case SystemType::Odyssey:       return "Magnavox Odyssey";
         case SystemType::Steam:         return "Steam";
         default:                       return "Unknown";
@@ -72,6 +155,8 @@ std::string GameLibrary::systemDirName(SystemType sys) {
         case SystemType::Atari5200:    return "atari5200";
         case SystemType::Atari800:     return "atari800";
         case SystemType::SegaGenesis: return "genesis";
+        case SystemType::N64:          return "n64";
+        case SystemType::PS1:          return "ps1";
         case SystemType::Odyssey:       return "odyssey";
         case SystemType::Steam:         return "steam";
         default:                       return "unknown";
@@ -91,6 +176,8 @@ int GameLibrary::screenscraper_systemId(SystemType sys) {
         case SystemType::Atari5200:    return 40;
         case SystemType::Atari800:     return 43;
         case SystemType::SegaGenesis: return 1;   // Mega Drive / Genesis
+        case SystemType::N64:          return 14;  // Nintendo 64
+        case SystemType::PS1:          return 57;  // PlayStation
         case SystemType::Odyssey:       return 0;   // no ROM dumps exist
         case SystemType::Steam:         return 0;   // not scraped
         default:                        return 0;
@@ -163,6 +250,10 @@ void GameLibrary::scan(const std::string& romsDir) {
         {"atari2600", SystemType::Atari2600},
         {"atari5200", SystemType::Atari5200},
         {"atari800",  SystemType::Atari800},
+        {"genesis",   SystemType::SegaGenesis},
+        {"n64",       SystemType::N64},
+        {"ps1",       SystemType::PS1},
+        {"odyssey",   SystemType::Odyssey},
     };
     for (const auto& sd : subdirs)
         scanDirectory(root / sd.dir, sd.sys);
@@ -314,6 +405,214 @@ void GameLibrary::scanSteam() {
     });
 }
 
+// ─── loadFromDB ──────────────────────────────────────────────────────────────
+
+void GameLibrary::loadFromDB(const OracleDBConfig& cfg) {
+    std::cout << "[DB] loadFromDB: querying GAMES table...\n"; std::cout.flush();
+    std::vector<OracleGameRow> rows;
+    if (!queryGames(cfg, rows)) {
+        // Error already printed inside queryGames
+        return;
+    }
+    std::cout << "[DB] loadFromDB: query returned " << rows.size() << " row(s).\n"; std::cout.flush();
+    if (rows.empty()) {
+        std::cout << "[DB] GAMES table is empty — nothing to add.\n";
+        return;
+    }
+
+    // Build a set of download URLs already present from local scan to avoid duplicates
+    std::cout << "[DB] loadFromDB: building dedup set from " << games_.size() << " existing game(s)...\n"; std::cout.flush();
+    std::set<std::string> existingUrls;
+    for (const auto& g : games_)
+        if (!g.downloadUrl.empty()) existingUrls.insert(g.downloadUrl);
+    std::cout << "[DB] loadFromDB: " << existingUrls.size() << " existing URL(s) to deduplicate against.\n"; std::cout.flush();
+
+    int added = 0, skipped = 0;
+    for (const auto& row : rows) {
+        // Skip if already represented by a local file
+        if (!row.downloadUrl.empty() && existingUrls.count(row.downloadUrl)) { ++skipped; continue; }
+
+        GameEntry ge;
+        ge.dbId        = row.id;
+        ge.downloadUrl = row.downloadUrl;
+        // URL-decode and clean the stored name: "Kid%20Icarus%20%28USA%29.zip" → "Kid Icarus"
+        {
+            // Simple percent-decode
+            std::string decoded;
+            decoded.reserve(row.name.size());
+            for (size_t i = 0; i < row.name.size(); ) {
+                if (row.name[i] == '%' && i + 2 < row.name.size()) {
+                    char hi = row.name[i+1], lo = row.name[i+2];
+                    auto hexVal = [](char c) -> int {
+                        if (c >= '0' && c <= '9') return c - '0';
+                        if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+                        if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+                        return -1;
+                    };
+                    int h = hexVal(hi), l = hexVal(lo);
+                    if (h >= 0 && l >= 0) { decoded += static_cast<char>(h * 16 + l); i += 3; continue; }
+                }
+                if (row.name[i] == '+') { decoded += ' '; ++i; continue; }
+                decoded += row.name[i++];
+            }
+            // Strip archive wrapper then clean: "game.nes.zip" → "game.nes" → "game"
+            fs::path np(decoded);
+            std::string ext = toLower(np.extension().string());
+            static const char* const kArc[] = {".zip",".7z",".gz",".bz2",".xz",".rar",nullptr};
+            bool isArc = false;
+            for (int ai = 0; kArc[ai]; ++ai) if (ext == kArc[ai]) { isArc = true; break; }
+            ge.displayName = cleanFileName(isArc ? np.stem().string() : decoded);
+        }
+
+        // Prefer the stored system name; fall back to extension detection.
+        // romExtension() strips archive wrappers (.zip, .gz, etc.) so that
+        // "game.nes.zip" is correctly identified as NES.
+        ge.system = systemFromName(row.systemName);
+        if (ge.system == SystemType::Unknown) {
+            const std::string& src = row.downloadUrl.empty() ? row.localPath : row.downloadUrl;
+            ge.system = systemFromExtension(romExtension(src));
+        }
+        // Last resort: infer from URL path (e.g. archive.org collection name)
+        if (ge.system == SystemType::Unknown && !row.downloadUrl.empty())
+            ge.system = systemFromUrl(row.downloadUrl);
+
+        // If already downloaded, point at the local file (extension may refine system)
+        if (!row.localPath.empty() && fs::exists(row.localPath)) {
+            ge.romPath = row.localPath;
+            SystemType extSys = systemFromExtension(romExtension(row.localPath));
+            if (extSys != SystemType::Unknown)
+                ge.system = extSys;
+        }
+
+        std::cout << "[DB] + [" << systemName(ge.system) << "] " << ge.displayName
+                  << " (id=" << row.id << ")\n"; std::cout.flush();
+        games_.push_back(std::move(ge));
+        ++added;
+    }
+
+    std::cout << "[DB] loadFromDB: " << added << " added, " << skipped << " skipped (duplicates).\n"; std::cout.flush();
+    if (added > 0) {
+        std::cout << "[DB] loadFromDB: sorting library...\n"; std::cout.flush();
+        std::stable_sort(games_.begin(), games_.end(), [](const GameEntry& a, const GameEntry& b) {
+            if (a.system != b.system)
+                return static_cast<int>(a.system) < static_cast<int>(b.system);
+            return a.displayName < b.displayName;
+        });
+        std::cout << "[DB] Loaded " << added << " game(s) from Oracle.\n"; std::cout.flush();
+    }
+}
+
+// ─── scanSteamOwned (Web API) ────────────────────────────────────────────────
+
+static std::string fetchString(const std::string& url) {
+    std::string q = "'";
+    for (char c : url) { if (c == '\'') q += "'\"'\"'"; else q += c; }
+    q += "'";
+    std::string cmd = "curl --location --fail --silent --show-error " + q;
+    FILE* f = popen(cmd.c_str(), "r");
+    if (!f) return "";
+    char buf[8192];
+    std::ostringstream ss;
+    while (fgets(buf, sizeof(buf), f)) ss << buf;
+    if (pclose(f) != 0) return "";
+    return ss.str();
+}
+
+static std::string readCredFile(const std::string& path, const std::string& key) {
+    std::ifstream f(path);
+    std::string line;
+    while (std::getline(f, line)) {
+        auto eq = line.find('=');
+        if (eq == std::string::npos) continue;
+        std::string k = line.substr(0, eq);
+        // trim
+        while (!k.empty() && (k.front()==' '||k.front()=='\t')) k.erase(k.begin());
+        while (!k.empty() && (k.back()==' '||k.back()=='\t'))  k.pop_back();
+        if (k == key) {
+            std::string v = line.substr(eq + 1);
+            while (!v.empty() && (v.front()==' '||v.front()=='\t')) v.erase(v.begin());
+            while (!v.empty() && (v.back()==' '||v.back()=='\t'||v.back()=='\r'||v.back()=='\n')) v.pop_back();
+            return v;
+        }
+    }
+    return "";
+}
+
+void GameLibrary::scanSteamOwned(const std::string& credFile) {
+    // Load or prompt for API key + SteamID
+    std::string apiKey  = readCredFile(credFile, "steam_api_key");
+    std::string steamId = readCredFile(credFile, "steam_id");
+
+    if (apiKey.empty() || steamId.empty()) {
+        std::cout << "[Steam] Enter Steam Web API credentials (saved to " << credFile << "):\n";
+        if (apiKey.empty()) {
+            std::cout << "  Steam API Key (from https://steamcommunity.com/dev/apikey): ";
+            std::getline(std::cin, apiKey);
+        }
+        if (steamId.empty()) {
+            std::cout << "  SteamID64 (numeric, e.g. 76561198XXXXXXXXX): ";
+            std::getline(std::cin, steamId);
+        }
+        if (!apiKey.empty() && !steamId.empty()) {
+            // Persist
+            fs::create_directories(fs::path(credFile).parent_path());
+            std::ofstream f(credFile, std::ios::app);
+            if (!readCredFile(credFile, "steam_api_key").empty() == false)
+                f << "steam_api_key=" << apiKey << "\n";
+            if (!readCredFile(credFile, "steam_id").empty() == false)
+                f << "steam_id=" << steamId << "\n";
+        }
+    }
+
+    if (apiKey.empty() || steamId.empty()) {
+        std::cerr << "[Steam] API key or SteamID missing. Skipping Web API scan.\n";
+        return;
+    }
+
+    // Fetch owned games
+    std::string url = "http://api.steampowered.com/IPlayerService/GetOwnedGames/v0001/"
+                      "?key=" + apiKey
+                    + "&steamid=" + steamId
+                    + "&include_appinfo=1&format=json";
+    std::string json = fetchString(url);
+    if (json.empty()) {
+        std::cerr << "[Steam] Failed to fetch owned games from Steam Web API.\n";
+        return;
+    }
+
+    // Build set of AppIDs already in games_ (local scan + prior API call)
+    std::set<std::string> existing;
+    for (const auto& g : games_)
+        if (g.system == SystemType::Steam) existing.insert(g.romPath);
+
+    // Parse JSON with regex: "appid":N,"name":"GameName"
+    std::regex appRe(R"x("appid"\s*:\s*(\d+)[^}]*?"name"\s*:\s*"([^"]+)")x");
+    int added = 0;
+    for (auto it = std::sregex_iterator(json.begin(), json.end(), appRe);
+         it != std::sregex_iterator(); ++it) {
+        std::string appId = (*it)[1].str();
+        std::string name  = (*it)[2].str();
+        if (existing.count(appId)) continue; // already in list (installed locally)
+
+        GameEntry ge;
+        ge.romPath     = appId;
+        ge.displayName = name;
+        ge.system      = SystemType::Steam;
+        games_.push_back(std::move(ge));
+        existing.insert(appId);
+        ++added;
+    }
+
+    if (added > 0) {
+        std::stable_sort(games_.begin(), games_.end(), [](const GameEntry& a, const GameEntry& b) {
+            if (a.system != b.system)
+                return static_cast<int>(a.system) < static_cast<int>(b.system);
+            return a.displayName < b.displayName;
+        });
+        std::cout << "[Steam] Loaded " << added << " owned game(s) from Web API.\n";
+    }
+}
+
 void GameLibrary::resolveCoverPaths(const std::string& coversBaseDir) {
     for (auto& ge : games_) {
         if (!ge.coverPath.empty()) continue;  // appcache or prior download already set it
@@ -438,4 +737,35 @@ std::string GameLibrary::fetchCoverArt(const GameEntry& game, const std::string&
     if (rc != 0 || !fs::exists(destPath)) return "";
 
     return destPath;
+}
+
+// ─── fetchSteamCovers ────────────────────────────────────────────────────────
+
+void GameLibrary::fetchSteamCovers(const std::string& coversDir) {
+    int fetched = 0;
+    int total   = 0;
+
+    for (auto& ge : games_) {
+        if (ge.system != SystemType::Steam) continue;
+        if (!ge.coverPath.empty() && fs::exists(ge.coverPath)) continue;
+        ++total;
+    }
+
+    if (total == 0) return;
+
+    std::cout << "[Steam] Fetching covers for " << total << " game(s)...\n";
+    std::cout.flush();
+
+    for (auto& ge : games_) {
+        if (ge.system != SystemType::Steam) continue;
+        if (!ge.coverPath.empty() && fs::exists(ge.coverPath)) continue;
+
+        std::string path = fetchCoverArt(ge, coversDir);
+        if (!path.empty()) {
+            ge.coverPath = path;
+            ++fetched;
+        }
+    }
+
+    std::cout << "[Steam] Downloaded " << fetched << "/" << total << " cover(s).\n";
 }

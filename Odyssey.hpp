@@ -73,6 +73,11 @@ public:
                                     SDL_GameControllerButton btn);
     void printCurrentSettings() const;
 
+    // The original Odyssey had no electronic memory; these are no-ops kept
+    // for interface consistency with other emulation classes.
+    std::vector<unsigned char> dumpSaveData() const { return {}; }
+    bool restoreSaveData(const std::vector<unsigned char>&) { return true; }
+
 private:
     // ── Game card ─────────────────────────────────────────────────────────────
     OdysseyCard card_     = OdysseyCard::Tennis;

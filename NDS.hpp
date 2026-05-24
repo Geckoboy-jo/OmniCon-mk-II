@@ -120,6 +120,9 @@ public:
 
     bool   isLoaded()   const { return romLoaded && backendPtr != nullptr; }
     string getRomPath() const { return romPath; }
+
+    std::vector<unsigned char> dumpSaveData() const;
+    bool restoreSaveData(const std::vector<unsigned char>& data);
 };
 
 #endif // NDS_HPP

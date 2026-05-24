@@ -24,6 +24,8 @@ public:
     virtual double getAspectRatio()  const { return 4.0 / 3.0; }
     virtual double getNominalFps()   const { return 60.0; }
     virtual bool initializeAudio() { return true; }
+    virtual std::vector<unsigned char> dumpSaveData() const { return {}; }
+    virtual bool restoreSaveData(const std::vector<unsigned char>&) { return false; }
 };
 
 // ─── Unavailable stub ────────────────────────────────────────────────────────
@@ -99,6 +101,8 @@ public:
 
     bool onEnvironment(unsigned cmd, void* data);
     void onVideoRefresh(const void* data, unsigned w, unsigned h, size_t pitch);
+    std::vector<unsigned char> dumpSaveData() const override;
+    bool restoreSaveData(const std::vector<unsigned char>& data) override;
 
 private:
     static std::string resolveCorePath();
@@ -571,7 +575,14 @@ void Atari5200Emulation::initSDL()
     }
     SDL_SetTextureScaleMode(screenTexture, SDL_ScaleModeNearest);
 
-    openControllerByIndex(0);
+    const int joyCount = SDL_NumJoysticks();
+    std::cerr << "[A5200] SDL_NumJoysticks() = " << joyCount << "\n";
+    for (int i = 0; i < joyCount; ++i)
+        std::cerr << "[A5200]   [" << i << "] " << SDL_JoystickNameForIndex(i)
+                  << " isGC=" << SDL_IsGameController(i) << "\n";
+    bool ctrlOk = openControllerByIndex(0);
+    std::cerr << "[A5200] openControllerByIndex(0) = " << ctrlOk
+              << " controller=" << (void*)controller << "\n";
 }
 
 void Atari5200Emulation::cleanupSDL()
@@ -820,6 +831,34 @@ void Atari5200Emulation::listControllers() const
     }
 }
 
+std::vector<unsigned char> LibretroAtari5200Backend::dumpSaveData() const
+{
+    if (!coreHandle || !gameLoaded || !fn_serialize_size || !fn_serialize) return {};
+    const size_t sz = fn_serialize_size();
+    if (sz == 0) return {};
+    std::vector<unsigned char> state(sz, 0);
+    if (!fn_serialize(state.data(), sz)) return {};
+    return state;
+}
+
+bool LibretroAtari5200Backend::restoreSaveData(const std::vector<unsigned char>& data)
+{
+    if (!coreHandle || !gameLoaded || !fn_unserialize || data.empty()) return false;
+    return fn_unserialize(data.data(), data.size());
+}
+
+std::vector<unsigned char> Atari5200Emulation::dumpSaveData() const
+{
+    if (!backendPtr || !isLoaded()) return {};
+    return backendPtr->dumpSaveData();
+}
+
+bool Atari5200Emulation::restoreSaveData(const std::vector<unsigned char>& data)
+{
+    if (!backendPtr || !isLoaded()) return false;
+    return backendPtr->restoreSaveData(data);
+}
+
 bool Atari5200Emulation::loadRom(const string& path)
 {
     unloadRom();
@@ -901,12 +940,15 @@ void Atari5200Emulation::runInteractive()
                 if (inputMode != InputMode::ControllerOnly)
                     handleKeyboardEvent(event.key.keysym.sym, false, input, running);
             } else if (event.type == SDL_CONTROLLERBUTTONDOWN) {
+                std::cerr << "[A5200] CTRL BTN DOWN button=" << (int)event.cbutton.button
+                          << " inputMode=" << (int)inputMode << "\n";
                 if (inputMode != InputMode::KeyboardOnly)
                     handleControllerButtonEvent(event.cbutton.button, true, input, running);
             } else if (event.type == SDL_CONTROLLERBUTTONUP) {
                 if (inputMode != InputMode::KeyboardOnly)
                     handleControllerButtonEvent(event.cbutton.button, false, input, running);
             } else if (event.type == SDL_CONTROLLERDEVICEADDED && controller == nullptr) {
+                std::cerr << "[A5200] CONTROLLERDEVICEADDED index=" << event.cdevice.which << "\n";
                 openControllerByIndex(event.cdevice.which);
             } else if (event.type == SDL_CONTROLLERDEVICEREMOVED && controller != nullptr) {
                 if (SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(controller)) == event.cdevice.which) {

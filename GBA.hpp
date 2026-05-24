@@ -150,6 +150,9 @@ public:
     bool isLoaded() const { return core != nullptr; }
     std::string getRomPath() const { return romPath; }
     void setWindowTitle(const std::string& title) { windowTitle = title; }
+
+    std::vector<unsigned char> dumpSaveData() const;
+    bool restoreSaveData(const std::vector<unsigned char>& data);
 };
 
 #endif

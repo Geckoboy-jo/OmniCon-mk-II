@@ -1,6 +1,7 @@
 #pragma once
 
 #include "GameLibrary.hpp"
+#include "OracleDB.hpp"
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_ttf.h>
 #include <SDL2/SDL_image.h>
@@ -17,11 +18,12 @@ public:
     bool init();
     void cleanup();
     void run(GameLibrary& library, const std::string& coversDir);
+    void setDBConfig(const OracleDBConfig& cfg) { dbCfg_ = cfg; }
 
     // Public so free functions in the .cpp can access them
-    static const SystemType  kSystems[13];
-    static const char* const kSysAbbrev[13];
-    static constexpr int     kNumSystems = 13;
+    static const SystemType  kSystems[15];
+    static const char* const kSysAbbrev[15];
+    static constexpr int     kNumSystems = 15;
 
 private:
     // SDL resources
@@ -50,6 +52,7 @@ private:
     // ── State ─────────────────────────────────────────────────────────────────
     GameLibrary*                  library_       = nullptr;
     std::string                   coversDir_;
+    OracleDBConfig                dbCfg_;
 
     // -1 = All games shown, 0-8 = index into kSystems[]
     int                           currentFilter_ = -1;
@@ -59,12 +62,20 @@ private:
     int                           hoverIdx_      = -1;   // game slot under mouse
     int                           scrollRow_     = 0;
 
+    // Controller
+    SDL_GameController* ctrl_         = nullptr;
+    std::string         ctrlName_;          // name of connected controller, or empty
+
     // Double-click tracking
     int    lastClickIdx_ = -1;
     Uint32 lastClickMs_  = 0;
 
-    // Hit rects for filter buttons: [0]=All, [1..kNumSystems]=system 0..kNumSystems-1
-    SDL_Rect filterBtnRects_[kNumSystems + 1];
+    // Search
+    bool        searchActive_ = false;
+    std::string searchQuery_;
+
+    // Hit rects for filter buttons: [0]=All, [1..kNumSystems]=system 0..kNumSystems-1, [kNumSystems+1]=Downloaded
+    SDL_Rect filterBtnRects_[kNumSystems + 2];
 
     // ── Logic helpers ─────────────────────────────────────────────────────────
     void rebuildFilter();
@@ -85,6 +96,7 @@ private:
                     SDL_Color col, TTF_Font* font, int maxW = 0);
     void renderCenteredText(const std::string& text,
                             int x, int y, int w, SDL_Color col, TTF_Font* font);
+    void renderSearchBox();
 
     // ── Cover art ─────────────────────────────────────────────────────────────
     SDL_Texture* getCoverTexture(const GameEntry& game);

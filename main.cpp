@@ -8,17 +8,25 @@
 #include "Atari800.hpp"
 #include "Odyssey.hpp"
 #include "SegaGenesis.hpp"
+#include "N64.hpp"
 #include "GBA.hpp"
 #include "NDS.hpp"
+#include "PS1.hpp"
 #include "GameLibrary.hpp"
 #include "GameShell.hpp"
+#include "OracleDB.hpp"
+#include "DownloadManager.hpp"
 
 #include <cstdlib>
 #include <cctype>
+#include <filesystem>
+#include <fstream>
 #include <set>
 #include <regex>
 #include <chrono>
 
+
+//./controller_bridge/start_bridge.sh
 namespace {
 
 struct DatabaseConfig {
@@ -64,6 +72,10 @@ bool hasCommand(const std::string& command)
 
 // Run scrape_covers.py for any games currently missing cover art, then
 // re-resolve cover paths so the shell picks up newly downloaded images.
+// Forward-declared here because scrapeCoversIfNeeded needs it before
+// the full definition below.
+static std::string shellEscape(const std::string& value);
+
 void scrapeCoversIfNeeded(GameLibrary& lib, const std::string& coversDir)
 {
     int missing = 0;
@@ -85,7 +97,11 @@ void scrapeCoversIfNeeded(GameLibrary& lib, const std::string& coversDir)
               << " game(s) missing cover art — fetching now...\n";
     std::cout.flush();
 
-    const int ret = std::system("python3 scrape_covers.py");
+    // Pass --db so DB-only entries (no local ROM) are also scraped.
+    // Pass --covers-dir matching whatever the caller uses.
+    const std::string cmd = "python3 scrape_covers.py --db --covers-dir "
+                            + shellEscape(coversDir);
+    const int ret = std::system(cmd.c_str());
     if (ret != 0)
         std::cerr << "[covers] scraper exited with code " << ret << "\n";
 
@@ -93,7 +109,7 @@ void scrapeCoversIfNeeded(GameLibrary& lib, const std::string& coversDir)
     lib.resolveCoverPaths(coversDir);
 }
 
-std::string shellEscape(const std::string& value)
+static std::string shellEscape(const std::string& value)
 {
     std::string escaped = "'";
     for (const char character : value) {
@@ -152,6 +168,25 @@ std::string fileNameFromUrl(const std::string& url)
     }
 
     return url.substr(slash + 1, end - slash - 1);
+}
+
+// Percent-decode a URL-encoded string (e.g. "10-Yard%20Fight" -> "10-Yard Fight").
+std::string urlDecode(const std::string& s)
+{
+    std::string r;
+    for (std::size_t i = 0; i < s.size(); ++i) {
+        if (s[i] == '%' && i + 2 < s.size() &&
+            std::isxdigit(static_cast<unsigned char>(s[i+1])) &&
+            std::isxdigit(static_cast<unsigned char>(s[i+2]))) {
+            r += static_cast<char>(std::stoi(s.substr(i+1, 2), nullptr, 16));
+            i += 2;
+        } else if (s[i] == '+') {
+            r += ' ';
+        } else {
+            r += s[i];
+        }
+    }
+    return r;
 }
 
 int nextGameId()
@@ -416,6 +451,23 @@ std::vector<std::string> extractPageFileLinks(const std::string& pageUrl, const 
     std::vector<std::string> links;
     std::set<std::string> unique;
 
+    // If the page is an archive.org download/details URL, build the canonical
+    // base so relative hrefs resolve to download/IDENTIFIER/FILENAME rather
+    // than losing the identifier (e.g. archive.org/download/roms_nes/game.zip).
+    std::string archiveBase;
+    {
+        static const std::regex arcRe(
+            R"(https?://archive\.org/(?:download|details)/([^/?#]+))");
+        std::smatch arcM;
+        if (std::regex_search(pageUrl, arcM, arcRe))
+            archiveBase = "https://archive.org/download/" + arcM[1].str() + "/";
+    }
+
+    // Matches a malformed archive.org URL that is missing the collection
+    // identifier: https://archive.org/download/FILENAME.ext  (no sub-path).
+    static const std::regex malformedArcRe(
+        R"(https?://archive\.org/download/[^/?#]+\.[a-zA-Z0-9]+$)");
+
     static const std::regex hrefRegex(R"(href\s*=\s*[\"']([^\"']+)[\"'])", std::regex::icase);
     std::sregex_iterator iter(html.begin(), html.end(), hrefRegex);
     std::sregex_iterator end;
@@ -426,7 +478,13 @@ std::vector<std::string> extractPageFileLinks(const std::string& pageUrl, const 
             continue;
         }
 
-        const std::string resolved = resolveUrl(pageUrl, href);
+        std::string resolved = resolveUrl(pageUrl, href);
+
+        // Fix identifier-stripped URL caused by urlDirectory() treating the
+        // collection name as a file when pageUrl has no trailing slash.
+        if (!archiveBase.empty() && std::regex_match(resolved, malformedArcRe))
+            resolved = archiveBase + fileNameFromUrl(resolved);
+
         if (!isSupportedUrl(resolved) || !looksLikeDownloadableFileLink(resolved)) {
             continue;
         }
@@ -552,8 +610,9 @@ void configureAllControls()
         Atari5200Emulation    a5200Init;
         Atari800Emulation     a800Init;
         SegaGenesisEmulation  genesisInit;
+        PS1Emulation          ps1Init;
         (void)nesInit; (void)gbInit; (void)snesInit; (void)gbaInit;
-        (void)ndsInit; (void)a2600Init; (void)a5200Init; (void)a800Init; (void)genesisInit;
+        (void)ndsInit; (void)a2600Init; (void)a5200Init; (void)a800Init; (void)genesisInit; (void)ps1Init;
     }
 
     const bool hadController = (SDL_WasInit(SDL_INIT_GAMECONTROLLER) != 0);
@@ -625,15 +684,15 @@ void configureAllControls()
         std::cout << "  Remap Keyboard Bindings:\n";
         std::cout << "   4) D-Pad            Up=" << SDL_GetKeyName(kUp) << "  Down=" << SDL_GetKeyName(kDown) << "  Left=" << SDL_GetKeyName(kLeft) << "  Right=" << SDL_GetKeyName(kRight) << "\n";
         std::cout << "   5) A / B            A=" << SDL_GetKeyName(kA) << "  B=" << SDL_GetKeyName(kB) << "  (also: Atari Fire=" << SDL_GetKeyName(kFire) << ")\n";
-        std::cout << "   6) X / Y            X=" << SDL_GetKeyName(kX) << "  Y=" << SDL_GetKeyName(kY) << "  (SNES, NDS)\n";
-        std::cout << "   7) L / R Shoulders  L=" << SDL_GetKeyName(kL) << "  R=" << SDL_GetKeyName(kR) << "  (SNES, GBA, NDS)\n";
+        std::cout << "   6) X / Y            X=" << SDL_GetKeyName(kX) << "  Y=" << SDL_GetKeyName(kY) << "  (SNES, NDS, PS1 Square/Triangle)\n";
+        std::cout << "   7) L / R Shoulders  L=" << SDL_GetKeyName(kL) << "  R=" << SDL_GetKeyName(kR) << "  (SNES, GBA, NDS, PS1 L1/R1)\n";
         std::cout << "   8) Start / Select   Start=" << SDL_GetKeyName(kStart) << "  Select=" << SDL_GetKeyName(kSel) << "\n";
         std::cout << "   9) Atari-specific   Secondary=" << SDL_GetKeyName(kSec) << "  Reset=" << SDL_GetKeyName(kReset) << "  Option=" << SDL_GetKeyName(kOpt) << "\n\n";
         std::cout << "  Remap Controller Bindings:\n";
         std::cout << "  10) D-Pad            Up=" << buttonDisplayName(bUp) << "  Down=" << buttonDisplayName(bDown) << "  Left=" << buttonDisplayName(bLeft) << "  Right=" << buttonDisplayName(bRight) << "\n";
         std::cout << "  11) A / B            A=" << buttonDisplayName(bA) << "  B=" << buttonDisplayName(bB) << "  (also: Atari Fire=" << buttonDisplayName(bFire) << ")\n";
-        std::cout << "  12) X / Y            X=" << buttonDisplayName(bX) << "  Y=" << buttonDisplayName(bY) << "  (SNES, NDS)\n";
-        std::cout << "  13) L / R Shoulders  L=" << buttonDisplayName(bL) << "  R=" << buttonDisplayName(bR) << "  (SNES, GBA, NDS)\n";
+        std::cout << "  12) X / Y            X=" << buttonDisplayName(bX) << "  Y=" << buttonDisplayName(bY) << "  (SNES, NDS, PS1 Square/Triangle)\n";
+        std::cout << "  13) L / R Shoulders  L=" << buttonDisplayName(bL) << "  R=" << buttonDisplayName(bR) << "  (SNES, GBA, NDS, PS1 L1/R1)\n";
         std::cout << "  14) Start / Select   Start=" << buttonDisplayName(bStart) << "  Select=" << buttonDisplayName(bSel) << "\n";
         std::cout << "  15) Atari-specific   Secondary=" << buttonDisplayName(bSec) << "  Reset=" << buttonDisplayName(bReset) << "  Option=" << buttonDisplayName(bOpt) << "\n\n";
         std::cout << "  16) Select controller\n";
@@ -766,6 +825,7 @@ void configureAllControls()
     auto toA2600Mode = [&]() { return static_cast<Atari2600Emulation::InputMode>(static_cast<int>(mode)); };
     auto toA5200Mode = [&]() { return static_cast<Atari5200Emulation::InputMode>(static_cast<int>(mode)); };
     auto toA800Mode  = [&]() { return static_cast<Atari800Emulation::InputMode>(static_cast<int>(mode)); };
+    auto toPS1Mode   = [&]() { return static_cast<PS1Emulation::InputMode>(static_cast<int>(mode)); };
 
     // NES
     NESEmulation::globalInputMode = toNesMode();
@@ -825,6 +885,24 @@ void configureAllControls()
     };
     OdysseyEmulation::globalInputConfigured   = true;
 
+    // PlayStation
+    // Cross=B, Circle=A, Square=X, Triangle=Y; L1=L, R1=R; L2/R2 keep defaults
+    PS1Emulation::globalInputMode = toPS1Mode();
+    PS1Emulation::globalKeyBindings = {
+        kUp, kDown, kLeft, kRight,
+        kB,  kA,    kX,    kY,     // cross, circle, square, triangle
+        kStart, kSel,
+        kL, kR,                    // l1, r1
+        PS1Emulation::globalKeyBindings.l2, PS1Emulation::globalKeyBindings.r2  // keep defaults
+    };
+    PS1Emulation::globalControllerBindings = {
+        bUp, bDown, bLeft, bRight,
+        bB,  bA,    bX,    bY,     // cross, circle, square, triangle
+        bStart, bSel,
+        bL, bR                     // l1, r1
+    };
+    PS1Emulation::globalInputConfigured = true;
+
     if (ctrl) SDL_GameControllerClose(ctrl);
     if (!hadController) SDL_QuitSubSystem(SDL_INIT_GAMECONTROLLER);
 
@@ -834,6 +912,7 @@ void configureAllControls()
 void printHelp()
 {
     std::cout << "Commands:\n"
+              << "  load url <url>  Fetch a page, parse ROM links, and add them to the Oracle DB\n"
               << "  download <url>  Download one file and store it as a block\n"
               << "  download-all <url>  Download file links from a page and store each as a block\n"
               << "  load-folder <path>  Upload every regular file in a local folder\n"
@@ -850,12 +929,247 @@ void printHelp()
               << "  play-atari5200 <path>  Load and run an Atari 5200 ROM (.a52/.bin/.rom)\n"
               << "  play-gba <path>  Load and run a GBA ROM (.gba)\n"
               << "  play-nds <path>  Load and run a Nintendo DS ROM (.nds)\n"
+              << "  play-ps1 <path>  Load and run a PlayStation ROM (.cue/.bin/.iso/.pbp/.chd)\n"
               << "  play-genesis <path>  Load and run a Sega Genesis ROM (.md/.gen/.smd)\n"
+              << "  play-n64 <path>  Load and run a Nintendo 64 ROM (.n64/.z64/.v64)\n"
               << "  shell           Open the graphical game library launcher\n"
+              << "  scrape-covers   Download missing box art for all games in the library\n"
               << "  controls        Configure controls for all systems (keyboard + controller)\n"
+              << "  controls-csv    Parse Controls.csv and set controls for all systems\n"
               << "  config          Re-enter database password\n"
               << "  help            Show this message\n"
               << "  quit            Exit the REPL\n";
+}
+// Parse Controls.csv and set controls for all systems
+
+void setControlsFromCSV() {
+    const std::string csvPath = "Controls.csv";
+    std::ifstream file(csvPath);
+    if (!file) {
+        std::cerr << "Could not open " << csvPath << "\n";
+        return;
+    }
+
+    std::string header, values;
+    if (!std::getline(file, header) || !std::getline(file, values)) {
+        std::cerr << "Controls.csv is missing header or values row\n";
+        return;
+    }
+
+    // Remove quotes and split header and values
+    auto split = [](const std::string& line) {
+        std::vector<std::string> out;
+        std::string cur;
+        bool inQuotes = false;
+        for (char c : line) {
+            if (c == '"') { inQuotes = !inQuotes; continue; }
+            if (c == ',' && !inQuotes) {
+                out.push_back(trim(cur));
+                cur.clear();
+            } else {
+                cur += c;
+            }
+        }
+        if (!cur.empty()) out.push_back(trim(cur));
+        return out;
+    };
+
+    std::vector<std::string> keys = split(header);
+    std::vector<std::string> vals = split(values);
+    if (keys.size() != vals.size()) {
+        std::cerr << "Controls.csv: header and value count mismatch\n";
+        return;
+    }
+
+    // Map from key to value
+    std::map<std::string, std::string> mapping;
+    for (size_t i = 0; i < keys.size(); ++i) {
+        mapping[trim(keys[i])] = trim(vals[i]);
+    }
+
+    // Helper to get keycode from string
+    auto keycodeFromString = [](const std::string& s) -> SDL_Keycode {
+        SDL_Keycode k = SDL_GetKeyFromName(s.c_str());
+        if (k == SDLK_UNKNOWN && s == "Right Shift") return SDLK_RSHIFT;
+        if (k == SDLK_UNKNOWN && s == "Enter") return SDLK_RETURN;
+        if (k == SDLK_UNKNOWN && s == "Tab") return SDLK_TAB;
+        if (k == SDLK_UNKNOWN && s == "Space") return SDLK_SPACE;
+        return k;
+    };
+
+    // NES/GB core
+    NESEmulation::globalKeyBindings = {
+        keycodeFromString(mapping["Up"]),
+        keycodeFromString(mapping["Down"]),
+        keycodeFromString(mapping["Left"]),
+        keycodeFromString(mapping["Right"]),
+        keycodeFromString(mapping["a"]),
+        keycodeFromString(mapping["b"]),
+        keycodeFromString(mapping["select"]),
+        keycodeFromString(mapping["start"])
+    };
+    NESEmulation::globalInputConfigured = true;
+    GameBoyEmulation::globalKeyBindings.up = keycodeFromString(mapping["Up"]);
+    GameBoyEmulation::globalKeyBindings.down = keycodeFromString(mapping["Down"]);
+    GameBoyEmulation::globalKeyBindings.left = keycodeFromString(mapping["Left"]);
+    GameBoyEmulation::globalKeyBindings.right = keycodeFromString(mapping["Right"]);
+    GameBoyEmulation::globalKeyBindings.a = keycodeFromString(mapping["a"]);
+    GameBoyEmulation::globalKeyBindings.b = keycodeFromString(mapping["b"]);
+    GameBoyEmulation::globalKeyBindings.select = keycodeFromString(mapping["select"]);
+    GameBoyEmulation::globalKeyBindings.start = keycodeFromString(mapping["start"]);
+    GameBoyEmulation::globalInputConfigured = true;
+
+    // SNES
+    SNESEmulation::globalKeyBindings = {
+        keycodeFromString(mapping["Up"]),
+        keycodeFromString(mapping["Down"]),
+        keycodeFromString(mapping["Left"]),
+        keycodeFromString(mapping["Right"]),
+        keycodeFromString(mapping["a"]),
+        keycodeFromString(mapping["b"]),
+        keycodeFromString(mapping["x"]),
+        keycodeFromString(mapping["y"]),
+        keycodeFromString(mapping["l1"]),
+        keycodeFromString(mapping["r1"]),
+        keycodeFromString(mapping["select"]),
+        keycodeFromString(mapping["start"])
+    };
+    SNESEmulation::globalInputConfigured = true;
+
+    // GBA
+    GBAEmulation::globalKeyBindings = {
+        keycodeFromString(mapping["a"]),
+        keycodeFromString(mapping["b"]),
+        keycodeFromString(mapping["select"]),
+        keycodeFromString(mapping["start"]),
+        keycodeFromString(mapping["Right"]),
+        keycodeFromString(mapping["Left"]),
+        keycodeFromString(mapping["Up"]),
+        keycodeFromString(mapping["Down"]),
+        keycodeFromString(mapping["r1"]),
+        keycodeFromString(mapping["l1"])
+    };
+    GBAEmulation::globalInputConfigured = true;
+
+    // NDS
+    NDSEmulation::globalKeyBindings = {
+        keycodeFromString(mapping["Up"]),
+        keycodeFromString(mapping["Down"]),
+        keycodeFromString(mapping["Left"]),
+        keycodeFromString(mapping["Right"]),
+        keycodeFromString(mapping["a"]),
+        keycodeFromString(mapping["b"]),
+        keycodeFromString(mapping["x"]),
+        keycodeFromString(mapping["y"]),
+        keycodeFromString(mapping["start"]),
+        keycodeFromString(mapping["select"]),
+        keycodeFromString(mapping["l1"]),
+        keycodeFromString(mapping["r1"])
+    };
+    NDSEmulation::globalInputConfigured = true;
+
+    // Atari 2600
+    Atari2600Emulation::globalKeyBindings = {
+        keycodeFromString(mapping["Up"]),
+        keycodeFromString(mapping["Down"]),
+        keycodeFromString(mapping["Left"]),
+        keycodeFromString(mapping["Right"]),
+        keycodeFromString(mapping["Fire"]),
+        keycodeFromString(mapping["select"]),
+        keycodeFromString(mapping["start"]),
+        keycodeFromString(mapping["l2"])
+    };
+    Atari2600Emulation::globalInputConfigured = true;
+
+    // Atari 5200
+    Atari5200Emulation::globalKeyBindings = {
+        keycodeFromString(mapping["Up"]),
+        keycodeFromString(mapping["Down"]),
+        keycodeFromString(mapping["Left"]),
+        keycodeFromString(mapping["Right"]),
+        keycodeFromString(mapping["Fire"]),
+        keycodeFromString(mapping["r2"]), // secondary
+        keycodeFromString(mapping["select"]),
+        keycodeFromString(mapping["start"]),
+        keycodeFromString(mapping["l2"])
+    };
+    Atari5200Emulation::globalInputConfigured = true;
+
+    // Atari 800
+    Atari800Emulation::globalKeyBindings = {
+        keycodeFromString(mapping["Up"]),
+        keycodeFromString(mapping["Down"]),
+        keycodeFromString(mapping["Left"]),
+        keycodeFromString(mapping["Right"]),
+        keycodeFromString(mapping["Fire"]),
+        keycodeFromString(mapping["r2"]), // secondary
+        keycodeFromString(mapping["select"]),
+        keycodeFromString(mapping["start"]),
+        keycodeFromString(mapping["home"])
+    };
+    Atari800Emulation::globalInputConfigured = true;
+
+    // Sega Genesis (partial, only main 3 buttons and dpad)
+    SegaGenesisEmulation::globalKeyBindings = {
+        keycodeFromString(mapping["Up"]),
+        keycodeFromString(mapping["Down"]),
+        keycodeFromString(mapping["Left"]),
+        keycodeFromString(mapping["Right"]),
+        keycodeFromString(mapping["a"]),
+        keycodeFromString(mapping["b"]),
+        keycodeFromString(mapping["c"]),
+        keycodeFromString(mapping["x"]),
+        keycodeFromString(mapping["y"]),
+        keycodeFromString(mapping["z"]),
+        keycodeFromString(mapping["start"]),
+        keycodeFromString(mapping["mode"])
+    };
+    SegaGenesisEmulation::globalInputConfigured = true;
+
+    // N64 (partial, only dpad and a/b)
+    N64Emulation::globalKeyBindings = {
+        keycodeFromString(mapping["Up"]),
+        keycodeFromString(mapping["Down"]),
+        keycodeFromString(mapping["Left"]),
+        keycodeFromString(mapping["Right"]),
+        keycodeFromString(mapping["a"]),
+        keycodeFromString(mapping["b"]),
+        SDLK_UNKNOWN, SDLK_UNKNOWN, SDLK_UNKNOWN, SDLK_UNKNOWN, // c_up, c_down, c_left, c_right
+        SDLK_UNKNOWN, SDLK_UNKNOWN, SDLK_UNKNOWN, // l, r, z
+        keycodeFromString(mapping["start"])
+    };
+    N64Emulation::globalInputConfigured = true;
+
+    // PS1 (only 14 fields)
+    PS1Emulation::globalKeyBindings = {
+        keycodeFromString(mapping["Up"]),
+        keycodeFromString(mapping["Down"]),
+        keycodeFromString(mapping["Left"]),
+        keycodeFromString(mapping["Right"]),
+        keycodeFromString(mapping["b"]), // cross
+        keycodeFromString(mapping["a"]), // circle
+        keycodeFromString(mapping["x"]), // square
+        keycodeFromString(mapping["y"]), // triangle
+        keycodeFromString(mapping["start"]),
+        keycodeFromString(mapping["select"]),
+        keycodeFromString(mapping["l1"]),
+        keycodeFromString(mapping["r1"]),
+        keycodeFromString(mapping["l2"]),
+        keycodeFromString(mapping["r2"])
+    };
+    PS1Emulation::globalInputConfigured = true;
+
+    // Odyssey (P1 up/down, P2 up/down, serve)
+    OdysseyEmulation::globalKeyBindings = {
+        keycodeFromString(mapping["Up"]),
+        keycodeFromString(mapping["Down"]),
+        keycodeFromString(mapping["l1"]), // P2 up
+        keycodeFromString(mapping["r1"]), // P2 down
+        keycodeFromString(mapping["Fire"])
+    };
+    OdysseyEmulation::globalInputConfigured = true;
+
+    std::cout << "Controls set from " << csvPath << " for all systems.\n";
 }
 
 bool isSupportedUrl(const std::string& url)
@@ -867,6 +1181,10 @@ bool isSupportedUrl(const std::string& url)
 
 int main()
 {
+
+    // Always set controls from Controls.csv at startup
+    setControlsFromCSV();
+
     if (!hasCommand("curl")) {
         std::cerr << "curl is required but was not found in PATH.\n";
         return 1;
@@ -877,21 +1195,29 @@ int main()
         std::cerr << "mysql client was not found in PATH. Download is disabled until it is installed.\n";
     }
 
-    std::cout << "OmniCon downloader REPL\n";
     DatabaseConfig config{};
     if (mysqlAvailable) {
         config = promptDatabaseConfig();
     }
 
+    // Oracle DB config — uses env vars; prompts for any that are missing
+    OracleDBConfig oracleCfg = promptOracleConfig();
+
+    // Persistent download queue
+    DownloadManager::instance().init("saves/download_queue.json", "Roms");
+
     // Auto-launch the game library shell on startup
     {
         GameLibrary lib;
-        lib.scan("Roms");
-        lib.scanSteam();
+        lib.scan("Roms");                    // local ROMs first
+        lib.scanSteam();                     // installed Steam games
+        lib.scanSteamOwned("~/.omnicon/steam.conf"); // all owned Steam games via Web API
+        lib.loadFromDB(oracleCfg);          // append DB entries (deduplicates against local)
+        lib.fetchSteamCovers("saves/covers"); // download missing Steam cover art from CDN
         lib.resolveCoverPaths("saves/covers");
-        scrapeCoversIfNeeded(lib, "saves/covers");
         GameShell gameShell;
         if (gameShell.init()) {
+            gameShell.setDBConfig(oracleCfg);
             gameShell.run(lib, "saves/covers");
             gameShell.cleanup();
         }
@@ -923,10 +1249,13 @@ int main()
             GameLibrary lib;
             lib.scan("Roms");
             lib.scanSteam();
+            lib.scanSteamOwned("~/.omnicon/steam.conf");
+            lib.loadFromDB(oracleCfg);
+            lib.fetchSteamCovers("saves/covers"); // download missing Steam cover art from CDN
             lib.resolveCoverPaths("saves/covers");
-            scrapeCoversIfNeeded(lib, "saves/covers");
             GameShell shell;
             if (shell.init()) {
+                shell.setDBConfig(oracleCfg);
                 shell.run(lib, "saves/covers");
                 shell.cleanup();
             } else {
@@ -935,17 +1264,264 @@ int main()
             continue;
         }
 
+        if (input == "db-status") {
+            std::vector<OracleGameRow> dbRows;
+            if (queryGames(oracleCfg, dbRows)) {
+                std::map<std::string, int> counts;
+                for (const auto& r : dbRows) {
+                    std::string key = r.systemName.empty() ? "(blank)" : r.systemName;
+                    counts[key]++;
+                }
+                std::cout << "DB GAMES table — " << dbRows.size() << " total row(s):\n";
+                for (const auto& [sys, cnt] : counts)
+                    std::cout << "  " << sys << ": " << cnt << "\n";
+            }
+            continue;
+        }
+
+        if (input == "db-clear") {
+            std::cout << "This will DELETE all rows from the GAMES table. Type YES to confirm: ";
+            std::string confirm;
+            std::getline(std::cin, confirm);
+            if (confirm == "YES") {
+                if (oracleExecute(oracleCfg, "DELETE FROM GAMES"))
+                    std::cout << "All rows deleted.\n";
+            } else {
+                std::cout << "Aborted.\n";
+            }
+            continue;
+        }
+
+        // db-fix-systems: re-derive SYSTEM_NAME from download URL for rows stored as
+        // 'Unknown', fixing data inserted before the dot-stripping bug was corrected.
+        if (input == "db-fix-systems") {
+            std::vector<OracleGameRow> dbRows;
+            if (!queryGames(oracleCfg, dbRows)) { continue; }
+            int fixed = 0;
+            for (const auto& r : dbRows) {
+                if (r.systemName != "Unknown" && !r.systemName.empty()) continue;
+                const std::string& src = r.downloadUrl.empty() ? r.localPath : r.downloadUrl;
+                std::size_t qpos = src.find_first_of("?#");
+                std::string clean = (qpos != std::string::npos) ? src.substr(0, qpos) : src;
+                // Strip archive wrappers: "game.nes.zip" -> ".nes"
+                std::filesystem::path cp(clean);
+                std::string ext = cp.extension().string();
+                std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+                static const char* const kArc2[] = {".zip",".7z",".gz",".bz2",".xz",".rar",nullptr};
+                for (int ai = 0; kArc2[ai]; ++ai) {
+                    if (ext == kArc2[ai]) {
+                        std::string inner = cp.stem().extension().string();
+                        if (!inner.empty()) ext = inner;
+                        std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+                        break;
+                    }
+                }
+                std::string sysName = GameLibrary::systemName(
+                    GameLibrary::systemFromExtension(ext));
+                // URL-path fallback: "/roms_nes/" → NES, etc.
+                if (sysName == "Unknown") {
+                    SystemType urlSys = GameLibrary::systemFromUrl(r.downloadUrl);
+                    if (urlSys != SystemType::Unknown)
+                        sysName = GameLibrary::systemName(urlSys);
+                }
+                if (sysName == "Unknown") continue;
+                std::string sql = "UPDATE GAMES SET SYSTEM_NAME='" + sysName
+                                + "' WHERE ID=" + std::to_string(r.id);
+                if (oracleExecute(oracleCfg, sql)) ++fixed;
+            }
+            std::cout << "db-fix-systems: updated " << fixed << " row(s).\n";
+            continue;
+        }
+
+        // db-rename-titles: rename all DB rows' NAME to the file title without .zip/.7z
+        if (input == "db-rename-titles") {
+            std::vector<OracleGameRow> dbRows;
+            if (!queryGames(oracleCfg, dbRows)) { continue; }
+            int renamed = 0;
+            for (const auto& r : dbRows) {
+                // Use downloadUrl if present, else localPath
+                const std::string& src = !r.downloadUrl.empty() ? r.downloadUrl : r.localPath;
+                if (src.empty()) continue;
+                std::size_t qpos = src.find_first_of("?#");
+                std::string clean = (qpos != std::string::npos) ? src.substr(0, qpos) : src;
+                std::filesystem::path cp(clean);
+                std::string base = cp.filename().string();
+                // Remove archive extensions
+                static const char* const kArc[] = {".zip",".7z",nullptr};
+                std::string ext = cp.extension().string();
+                for (int ai = 0; kArc[ai]; ++ai) {
+                    if (ext == kArc[ai]) {
+                        base = cp.stem().filename().string();
+                        break;
+                    }
+                }
+                // Remove extension if still present
+                std::size_t dot = base.rfind('.');
+                if (dot != std::string::npos) base = base.substr(0, dot);
+                // Only update if different
+                if (base != r.name && !base.empty()) {
+                    std::string sql = "UPDATE GAMES SET NAME='" + sqlEscape(base) + "' WHERE ID=" + std::to_string(r.id);
+                    if (oracleExecute(oracleCfg, sql)) ++renamed;
+                }
+            }
+            std::cout << "db-rename-titles: updated " << renamed << " row(s).\n";
+            continue;
+        }
+
+        // scrape-unknown — download cover art for all Unknown-system library entries
+        if (input == "scrape-unknown") {
+            const std::string csvPath = "saves/unknown_games.csv";
+            std::filesystem::create_directories("saves");
+            // Build a fresh library so we have the latest DB state
+            GameLibrary lib;
+            lib.scan("Roms");
+            lib.loadFromDB(oracleCfg);
+            lib.resolveCoverPaths("saves/covers");
+            std::ofstream csv(csvPath);
+            if (!csv) {
+                std::cerr << "scrape-unknown: could not write " << csvPath << "\n";
+            } else {
+                int count = 0;
+                for (const auto& g : lib.games()) {
+                    if (g.system != SystemType::Unknown) continue;
+                    auto csvField = [](const std::string& s) -> std::string {
+                        bool needs = s.find_first_of(",\"\n") != std::string::npos;
+                        if (!needs) return s;
+                        std::string out = "\"";
+                        for (char c : s) { if (c == '"') out += "\"\""; else out += c; }
+                        out += '"'; return out;
+                    };
+                    csv << csvField(g.displayName) << "," << csvField(g.downloadUrl) << "\n";
+                    ++count;
+                }
+                csv.close();
+                if (count == 0) {
+                    std::cout << "scrape-unknown: no Unknown-system games found.\n";
+                } else {
+                    std::cout << "scrape-unknown: exporting " << count << " game(s) and fetching covers...\n";
+                    std::cout.flush();
+                    const int ret = std::system(("python3 scrape_covers.py --unknown-csv " + csvPath).c_str());
+                    if (ret != 0)
+                        std::cerr << "scrape-unknown: scraper exited with code " << ret << "\n";
+                    else
+                        lib.resolveCoverPaths("saves/covers");
+                }
+            }
+            continue;
+        }
+
+        if (input == "scrape-covers" || input == "scrape_covers") {
+            GameLibrary lib;
+            lib.scan("Roms");
+            lib.scanSteam();
+            lib.scanSteamOwned("~/.omnicon/steam.conf");
+            lib.loadFromDB(oracleCfg);
+            lib.resolveCoverPaths("saves/covers");
+            scrapeCoversIfNeeded(lib, "saves/covers");
+            continue;
+        }
+
         if (input == "controls" || input == "change controls" || input == "change-controls") {
             configureAllControls();
             continue;
         }
 
+        if (input == "controls-csv") {
+            setControlsFromCSV();
+            continue;
+        }
+
         // Legacy per-system aliases — redirect to unified menu
         if (input == "controls-snes" || input == "controls-gb" || input == "controls-gbc" ||
-            input == "controls-gba"  || input == "controls-nds" ||
+            input == "controls-gba"  || input == "controls-nds" || input == "controls-ps1" ||
             input == "controls-atari2600" || input == "controls-atari5200" || input == "controls-atari800") {
             std::cout << "Per-system controls have been merged. Opening unified controls menu...\n";
             configureAllControls();
+            continue;
+        }
+
+        // load url <url> — scrape page links and add them to the Oracle DB
+        if (input.rfind("load url ", 0) == 0) {
+            std::string url = input.substr(9);
+            // trim leading/trailing whitespace
+            while (!url.empty() && (url.front() == ' ' || url.front() == '\t')) url.erase(url.begin());
+            while (!url.empty() && (url.back()  == ' ' || url.back()  == '\t' ||
+                                    url.back()  == '\r'|| url.back()  == '\n')) url.pop_back();
+
+            if (!isSupportedUrl(url)) {
+                std::cerr << "Invalid URL: " << url << "\n";
+            } else {
+                std::string pageText;
+                if (!downloadToString(url, pageText)) {
+                    std::cerr << "Failed to fetch page: " << url << "\n";
+                } else {
+                    std::vector<std::string> links = extractPageFileLinks(url, pageText);
+                    if (links.empty()) {
+                        std::cout << "No ROM links found on page.\n";
+                    } else {
+                        createGamesTable(oracleCfg);
+
+                        // Detect system from the page URL once for the whole batch
+                        SystemType batchSys = GameLibrary::systemFromUrl(url);
+                        std::string batchSysName;
+                        if (batchSys != SystemType::Unknown) {
+                            batchSysName = GameLibrary::systemName(batchSys);
+                            std::cout << "Detected system: " << batchSysName << "\n";
+                        } else {
+                            std::cout << "Could not detect system from URL.\n"
+                                      << "Enter system (NES, SNES, GBA, GBC, GameBoy, NDS, N64,\n"
+                                      << "  SegaGenesis, Atari2600, Atari5200, Atari800, 3DS, Odyssey)\n"
+                                      << "or leave blank to skip unknowns: ";
+                            std::cout.flush();
+                            std::getline(std::cin, batchSysName);
+                            while (!batchSysName.empty() && (batchSysName.front()==' '||batchSysName.front()=='\t')) batchSysName.erase(batchSysName.begin());
+                            while (!batchSysName.empty() && (batchSysName.back()==' '||batchSysName.back()=='\t'||batchSysName.back()=='\r'||batchSysName.back()=='\n')) batchSysName.pop_back();
+                        }
+
+                        int inserted = 0;
+                        int total = static_cast<int>(links.size());
+                        std::cout << "Loading " << total << " link(s) into Oracle DB...\n"; std::cout.flush();
+                        for (int li = 0; li < total; ++li) {
+                            const auto& link = links[li];
+                            // Decode the percent-encoded filename, keep all info (region, etc.)
+                            std::string rawFile = fileNameFromUrl(link);
+                            std::string decoded = urlDecode(rawFile);
+                            std::string name = decoded; // Use full filename (minus extension)
+                            auto dotPos = name.rfind('.');
+                            if (dotPos != std::string::npos) name = name.substr(0, dotPos);
+                            std::cout << "[" << (li + 1) << "/" << total << "] " << name << "\n"; std::cout.flush();
+                            // Strip archive wrappers: "game.nes.zip" -> ".nes"
+                            std::filesystem::path namePath(name);
+                            std::string extLower = namePath.extension().string();
+                            std::transform(extLower.begin(), extLower.end(), extLower.begin(), ::tolower);
+                            static const char* const kArc[] = {".zip",".7z",".gz",".bz2",".xz",".rar",nullptr};
+                            for (int ai = 0; kArc[ai]; ++ai) {
+                                if (extLower == kArc[ai]) {
+                                    std::string inner = namePath.stem().extension().string();
+                                    if (!inner.empty()) extLower = inner;
+                                    std::transform(extLower.begin(), extLower.end(), extLower.begin(), ::tolower);
+                                    break;
+                                }
+                            }
+                            std::string sysName = GameLibrary::systemName(
+                                GameLibrary::systemFromExtension(extLower));
+                            // URL-path fallback: "/roms_nes/" → NES, etc.
+                            if (sysName == "Unknown") {
+                                SystemType urlSys = GameLibrary::systemFromUrl(link);
+                                if (urlSys != SystemType::Unknown)
+                                    sysName = GameLibrary::systemName(urlSys);
+                            }
+                            // User-supplied batch fallback
+                            if (sysName == "Unknown" && !batchSysName.empty())
+                                sysName = batchSysName;
+                            if (insertGameEntry(oracleCfg, name, link, "", sysName, 0))
+                                ++inserted;
+                        }
+                        std::cout << "Inserted " << inserted << " of " << links.size()
+                                  << " links into Oracle DB.\n";
+                    }
+                }
+            }
             continue;
         }
 
@@ -957,7 +1533,9 @@ int main()
         const std::string playAtari5200Command = "play-atari5200 ";
         const std::string playGbaCommand = "play-gba ";
         const std::string playNdsCommand = "play-nds ";
+        const std::string playPs1Command = "play-ps1 ";
         const std::string playGenesisCommand = "play-genesis ";
+        const std::string playN64Command = "play-n64 ";
         const bool isPlayCommand = input.rfind(playCommand, 0) == 0
             && input.rfind(playSnesCommand, 0) != 0
             && input.rfind(playGbCommand, 0) != 0
@@ -966,7 +1544,9 @@ int main()
             && input.rfind(playAtari5200Command, 0) != 0
             && input.rfind(playGbaCommand, 0) != 0
             && input.rfind(playNdsCommand, 0) != 0
-            && input.rfind(playGenesisCommand, 0) != 0;
+            && input.rfind(playPs1Command, 0) != 0
+            && input.rfind(playGenesisCommand, 0) != 0
+            && input.rfind(playN64Command, 0) != 0;
         const bool isPlaySnesCommand    = input.rfind(playSnesCommand, 0)    == 0;
         const bool isPlayGbCommand      = input.rfind(playGbCommand, 0)      == 0;
         const bool isPlayGbcCommand     = input.rfind(playGbcCommand, 0)     == 0;
@@ -974,7 +1554,9 @@ int main()
         const bool isPlayAtari5200Command = input.rfind(playAtari5200Command, 0) == 0;
         const bool isPlayGbaCommand     = input.rfind(playGbaCommand, 0)     == 0;
         const bool isPlayNdsCommand     = input.rfind(playNdsCommand, 0)     == 0;
+        const bool isPlayPs1Command     = input.rfind(playPs1Command, 0)     == 0;
         const bool isPlayGenesisCommand = input.rfind(playGenesisCommand, 0) == 0;
+        const bool isPlayN64Command     = input.rfind(playN64Command, 0)     == 0;
 
         if (isPlayCommand) {
             std::string romPath = trim(input.substr(playCommand.size()));
@@ -1042,6 +1624,22 @@ int main()
                 SegaGenesisEmulation gen;
                 if (gen.loadRom(romPath)) {
                     gen.runInteractive();
+                }
+            } else if (extension == ".n64" || extension == ".z64" || extension == ".v64") {
+                N64Emulation n64;
+                if (n64.loadRom(romPath)) {
+                    n64.runInteractive();
+                }
+            } else if (extension == ".cue" || extension == ".iso" ||
+                       extension == ".pbp" || extension == ".chd" ||
+                       extension == ".img" || extension == ".mdf") {
+                PS1Emulation ps1;
+                try {
+                    if (ps1.loadRom(romPath)) {
+                        ps1.runInteractive();
+                    }
+                } catch (const std::exception& e) {
+                    std::cerr << "PS1 error: " << e.what() << "\n";
                 }
             } else if (extension == ".bin" || extension == ".rom") {
                 // Ambiguous extension: try Atari 5200 first, then Atari 2600, then NES
@@ -1233,6 +1831,32 @@ int main()
             continue;
         }
 
+        if (isPlayPs1Command) {
+            std::string romPath = trim(input.substr(playPs1Command.size()));
+            romPath = stripOuterQuotes(romPath);
+            romPath = normalizePath(romPath);
+
+            if (romPath.empty()) {
+                std::cout << "ROM path is required.\n";
+                continue;
+            }
+
+            if (!std::filesystem::exists(romPath)) {
+                std::cout << "ROM file does not exist: " << romPath << "\n";
+                continue;
+            }
+
+            PS1Emulation ps1;
+            try {
+                if (ps1.loadRom(romPath)) {
+                    ps1.runInteractive();
+                }
+            } catch (const std::exception& e) {
+                std::cerr << "PS1 error: " << e.what() << "\n";
+            }
+            continue;
+        }
+
         if (isPlayGenesisCommand) {
             std::string romPath = trim(input.substr(playGenesisCommand.size()));
             romPath = stripOuterQuotes(romPath);
@@ -1251,6 +1875,66 @@ int main()
             SegaGenesisEmulation gen;
             if (gen.loadRom(romPath)) {
                 gen.runInteractive();
+            }
+            continue;
+        }
+
+        if (isPlayN64Command) {
+            std::string romPath = trim(input.substr(playN64Command.size()));
+            romPath = stripOuterQuotes(romPath);
+            romPath = normalizePath(romPath);
+
+            if (romPath.empty()) {
+                std::cout << "ROM path is required.\n";
+                continue;
+            }
+
+            if (!std::filesystem::exists(romPath)) {
+                std::cout << "ROM file does not exist: " << romPath << "\n";
+                continue;
+            }
+
+            N64Emulation n64;
+            if (n64.loadRom(romPath)) {
+                n64.runInteractive();
+                // After session, dump save data and store in DB using full ROM path as key
+                auto saveData = n64.dumpSaveData();
+                if (!saveData.empty()) {
+                    DatabaseConfig config;
+                    config.host = kDatabaseHost;
+                    config.port = kDatabasePort;
+                    config.user = kDatabaseUser;
+                    config.password = ""; // Set or prompt for password if needed
+                    config.database = kDatabaseName;
+                    // Use the full ROM path as the key, sanitize for SQL and shell
+                    std::string romKey = romPath;
+                    std::string romKeySql = sqlEscape(romKey);
+                    std::string romKeyShell = shellEscape(romKey);
+                    const std::string saveHex = hexEncode(saveData);
+                    const std::string sql =
+                        "UPDATE blocks SET save_data = X'" + saveHex + "' WHERE name = '" + romKeySql + "';\n";
+                    std::string command;
+                    command += "mysql --protocol=TCP --host=" + shellEscape(config.host)
+                        + " --port=" + shellEscape(config.port)
+                        + " --user=" + shellEscape(config.user)
+                        + " --password=" + shellEscape(config.password)
+                        + " --database=" + shellEscape(config.database)
+                        + " 2>/dev/null";
+                    std::cerr << "[N64] About to update DB for save: key='" << romKey << "' (sql-escaped: '" << romKeySql << "')\n";
+                    FILE* mysqlPipe = popen(command.c_str(), "w");
+                    if (mysqlPipe) {
+                        size_t written = fwrite(sql.data(), 1, sql.size(), mysqlPipe);
+                        std::cerr << "[N64] Wrote " << written << " bytes to mysql pipe\n";
+                        int rc = pclose(mysqlPipe);
+                        std::cerr << "[N64] mysql pipe closed, rc=" << rc << "\n";
+                        std::cout << "[N64] Save data updated in DB for " << romKey << "\n";
+                    } else {
+                        std::cerr << "[N64] Failed to open mysql pipe for save data update\n";
+                    }
+                    std::cerr << "[N64] DB update for save complete\n";
+                } else {
+                    std::cout << "[N64] No save data to store for " << romPath << "\n";
+                }
             }
             continue;
         }
@@ -1347,7 +2031,11 @@ int main()
 
         if (isSingleDownload) {
             const int gameId = nextGameId();
-            const std::string fileName = fileNameFromUrl(url);
+            std::string rawFile = fileNameFromUrl(url);
+            std::string decoded = urlDecode(rawFile);
+            std::string fileName = decoded;
+            auto dotPos = fileName.rfind('.');
+            if (dotPos != std::string::npos) fileName = fileName.substr(0, dotPos);
             std::vector<unsigned char> bytes;
 
             std::cout << "Downloading " << url << " ...\n";
@@ -1381,7 +2069,11 @@ int main()
         int failureCount = 0;
         for (const std::string& link : links) {
             const int gameId = nextGameId();
-            const std::string fileName = fileNameFromUrl(link);
+            std::string rawFile = fileNameFromUrl(link);
+            std::string decoded = urlDecode(rawFile);
+            std::string fileName = decoded;
+            auto dotPos = fileName.rfind('.');
+            if (dotPos != std::string::npos) fileName = fileName.substr(0, dotPos);
             std::vector<unsigned char> bytes;
 
             std::cout << "Downloading " << link << " ...\n";

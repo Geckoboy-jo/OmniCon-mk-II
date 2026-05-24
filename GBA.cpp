@@ -968,3 +968,21 @@ void GBAEmulation::runInteractive()
     cleanupSDL();
     std::cout << "\nGBA emulation stopped.\n";
 }
+
+std::vector<unsigned char> GBAEmulation::dumpSaveData() const
+{
+    if (!core) return {};
+    void* sram = nullptr;
+    const size_t size = core->savedataClone(core, &sram);
+    if (!sram || size == 0) return {};
+    std::vector<unsigned char> result(static_cast<unsigned char*>(sram),
+                                      static_cast<unsigned char*>(sram) + size);
+    free(sram);
+    return result;
+}
+
+bool GBAEmulation::restoreSaveData(const std::vector<unsigned char>& data)
+{
+    if (!core || data.empty()) return false;
+    return core->savedataRestore(core, data.data(), data.size(), true);
+}

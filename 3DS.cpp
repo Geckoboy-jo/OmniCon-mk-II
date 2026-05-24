@@ -26,6 +26,8 @@ public:
     virtual double getAspectRatio() const { return 400.0 / 480.0; }
     virtual double getNominalFps()  const { return 59.83; }
     virtual bool   initializeAudio() { return true; }
+    virtual std::vector<unsigned char> dumpSaveData() const { return {}; }
+    virtual bool restoreSaveData(const std::vector<unsigned char>&) { return false; }
 };
 
 // ─── Unavailable stub ─────────────────────────────────────────────────────────
@@ -143,6 +145,8 @@ public:
 
     bool onEnvironment(unsigned cmd, void* data);
     void onVideoRefresh(const void* data, unsigned w, unsigned h, size_t pitch);
+    std::vector<unsigned char> dumpSaveData() const override;
+    bool restoreSaveData(const std::vector<unsigned char>& data) override;
 
 private:
     static std::string resolveCorePath();
@@ -168,6 +172,9 @@ private:
     bool   (*fn_load_game)(const libretro3DS::game_info*)          = nullptr;
     void   (*fn_unload_game)()                                     = nullptr;
     void   (*fn_run)()                                             = nullptr;
+    size_t (*fn_serialize_size)()                                  = nullptr;
+    bool   (*fn_serialize)(void*, size_t)                          = nullptr;
+    bool   (*fn_unserialize)(const void*, size_t)                  = nullptr;
 
     std::vector<unsigned char> framePixels;
     std::vector<unsigned char> romData;
@@ -300,6 +307,10 @@ bool Libretro3DSBackend::loadSymbols()
     fn_load_game              = reinterpret_cast<bool(*)(const libretro3DS::game_info*)>(load("retro_load_game"));
     fn_unload_game            = reinterpret_cast<void(*)()>(load("retro_unload_game"));
     fn_run                    = reinterpret_cast<void(*)()>(load("retro_run"));
+    // Optional — not all cores support savestates
+    fn_serialize_size = reinterpret_cast<size_t(*)()>(dlsym(coreHandle, "retro_serialize_size"));
+    fn_serialize      = reinterpret_cast<bool(*)(void*,size_t)>(dlsym(coreHandle, "retro_serialize"));
+    fn_unserialize    = reinterpret_cast<bool(*)(const void*,size_t)>(dlsym(coreHandle, "retro_unserialize"));
     return fn_init && fn_deinit && fn_set_environment && fn_set_video_refresh
         && fn_set_audio_sample && fn_set_audio_sample_batch
         && fn_set_input_poll && fn_set_input_state
@@ -1184,6 +1195,34 @@ void N3DSEmulation::listControllers() const
                   << (SDL_IsGameController(i) ? "game controller" : "joystick")
                   << " - " << SDL_JoystickNameForIndex(i) << "\n";
     }
+}
+
+std::vector<unsigned char> Libretro3DSBackend::dumpSaveData() const
+{
+    if (!coreHandle || !gameLoaded || !fn_serialize_size || !fn_serialize) return {};
+    const size_t sz = fn_serialize_size();
+    if (sz == 0) return {};
+    std::vector<unsigned char> state(sz, 0);
+    if (!fn_serialize(state.data(), sz)) return {};
+    return state;
+}
+
+bool Libretro3DSBackend::restoreSaveData(const std::vector<unsigned char>& data)
+{
+    if (!coreHandle || !gameLoaded || !fn_unserialize || data.empty()) return false;
+    return fn_unserialize(data.data(), data.size());
+}
+
+std::vector<unsigned char> N3DSEmulation::dumpSaveData() const
+{
+    if (!backendPtr || !isLoaded()) return {};
+    return backendPtr->dumpSaveData();
+}
+
+bool N3DSEmulation::restoreSaveData(const std::vector<unsigned char>& data)
+{
+    if (!backendPtr || !isLoaded()) return false;
+    return backendPtr->restoreSaveData(data);
 }
 
 bool N3DSEmulation::loadRom(const string& path)

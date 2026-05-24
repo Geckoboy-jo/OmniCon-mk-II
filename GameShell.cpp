@@ -1,4 +1,5 @@
 #include "GameShell.hpp"
+#include "DownloadManager.hpp"
 #include "NES.hpp"
 #include "SNES.hpp"
 #include "GameBoy.hpp"
@@ -10,7 +11,10 @@
 #include "Atari5200.hpp"
 #include "Atari800.hpp"
 #include "SegaGenesis.hpp"
+#include "N64.hpp"
+#include "PS1.hpp"
 #include "Odyssey.hpp"
+#include "SaveManager.hpp"
 
 #include <algorithm>
 #include <filesystem>
@@ -22,7 +26,7 @@ namespace fs = std::filesystem;
 
 // ─── Static members ───────────────────────────────────────────────────────────
 
-const SystemType GameShell::kSystems[13] = {
+const SystemType GameShell::kSystems[15] = {
     SystemType::NES,
     SystemType::SNES,
     SystemType::GameBoy,
@@ -34,12 +38,14 @@ const SystemType GameShell::kSystems[13] = {
     SystemType::Atari5200,
     SystemType::Atari800,
     SystemType::SegaGenesis,
+    SystemType::N64,
+    SystemType::PS1,
     SystemType::Odyssey,
     SystemType::Steam,
 };
 
-const char* const GameShell::kSysAbbrev[13] = {
-    "NES", "SNES", "GB", "GBC", "GBA", "NDS", "3DS", "2600", "5200", "800", "GEN", "ODY", "STM"
+const char* const GameShell::kSysAbbrev[15] = {
+    "NES", "SNES", "GB", "GBC", "GBA", "NDS", "3DS", "2600", "5200", "800", "GEN", "N64", "PS1", "ODY", "STM"
 };
 
 // ─── Colour palette ───────────────────────────────────────────────────────────
@@ -70,6 +76,8 @@ static SDL_Color sysBadgeColor(SystemType sys) {
         case SystemType::Atari5200:    return {190, 100,  50, 255};
         case SystemType::Atari800:     return {140, 170,  50, 255};
         case SystemType::SegaGenesis:  return { 20,  80, 180, 255};   // Sega blue
+        case SystemType::N64:           return {140,  20,  20, 255};   // N64 red
+        case SystemType::PS1:           return { 10,  50, 140, 255};   // PS1 navy blue
         case SystemType::Odyssey:       return { 45, 160, 160, 255};   // teal
         case SystemType::Steam:         return { 23, 134, 192, 255};   // Steam blue
         default:                       return { 70,  70,  70, 255};
@@ -186,10 +194,11 @@ SDL_Texture* GameShell::loadTexture(const std::string& path) {
 }
 
 SDL_Texture* GameShell::getCoverTexture(const GameEntry& game) {
-    auto it = coverCache_.find(game.romPath);
+    if (game.coverPath.empty()) return nullptr;
+    auto it = coverCache_.find(game.coverPath);
     if (it != coverCache_.end()) return it->second;
-    SDL_Texture* tex = game.coverPath.empty() ? nullptr : loadTexture(game.coverPath);
-    coverCache_[game.romPath] = tex;
+    SDL_Texture* tex = loadTexture(game.coverPath);
+    coverCache_[game.coverPath] = tex;
     return tex;
 }
 
@@ -224,14 +233,46 @@ void GameShell::renderCenteredText(const std::string& text,
 
 void GameShell::rebuildFilter() {
     filteredGames_.clear();
-    for (const auto& ge : library_->games()) {
-        if (currentFilter_ < 0 || ge.system == kSystems[currentFilter_])
+    const auto& dm = DownloadManager::instance();
+
+    // Pre-compute lowercase search query once
+    std::string queryLow = searchQuery_;
+    std::transform(queryLow.begin(), queryLow.end(), queryLow.begin(), ::tolower);
+
+    for (auto& ge : library_->games()) {
+        bool include = false;
+        if (currentFilter_ < 0) {
+            include = true;
+        } else if (currentFilter_ == kNumSystems) {
+            // Downloaded tab: local ROM exists on disk
+            if (!ge.romPath.empty() && fs::exists(ge.romPath)) {
+                include = true;
+            } else if (!ge.downloadUrl.empty() && dm.isDownloaded(ge.downloadUrl)) {
+                // Sync romPath so launch skips re-download
+                ge.romPath = dm.localPath(ge.downloadUrl);
+                include = true;
+            }
+        } else {
+            include = (ge.system == kSystems[currentFilter_]);
+        }
+
+        // Apply case-insensitive search query
+        if (include && !queryLow.empty()) {
+            std::string nameLow = ge.displayName;
+            std::transform(nameLow.begin(), nameLow.end(), nameLow.begin(), ::tolower);
+            include = (nameLow.find(queryLow) != std::string::npos);
+        }
+
+        if (include)
             filteredGames_.push_back(&ge);
     }
     selectedIdx_ = 0;
     scrollRow_   = 0;
     hoverIdx_    = -1;
     clearCoverCache();
+    std::cout << "[Shell] rebuildFilter: " << filteredGames_.size()
+              << " games visible (filter=" << currentFilter_
+              << ", total in library=" << library_->games().size() << ")\n";
 }
 
 void GameShell::ensureVisible() {
@@ -247,12 +288,13 @@ void GameShell::ensureVisible() {
 // ─── Filter button layout ─────────────────────────────────────────────────────
 
 void GameShell::computeFilterRects() {
-    // "All" (50px) + 9 system buttons (68px) separated by 5px gaps
+    // "All" (50px) + 14 system buttons (68px) + "DL'd" (50px) separated by 5px gaps
     const int btnH   = 30;
     const int allW   = 50;
     const int sysW   = 68;
+    const int dlW    = 50;
     const int gapX   = 5;
-    const int totalW = allW + gapX + kNumSystems * sysW + (kNumSystems - 1) * gapX;
+    const int totalW = allW + gapX + kNumSystems * sysW + (kNumSystems - 1) * gapX + gapX + dlW;
     int       x      = (kW - totalW) / 2;
     const int btnY   = (kHeaderH - btnH) / 2;
 
@@ -262,6 +304,8 @@ void GameShell::computeFilterRects() {
         filterBtnRects_[i + 1] = {x, btnY, sysW, btnH};
         x += sysW + gapX;
     }
+    // Downloaded button — last slot
+    filterBtnRects_[kNumSystems + 1] = {x, btnY, dlW, btnH};
 }
 
 // ─── Hit testing ──────────────────────────────────────────────────────────────
@@ -277,10 +321,10 @@ int GameShell::gameAtMouse(int mx, int my) const {
 }
 
 int GameShell::filterBtnAtMouse(int mx, int my) const {
-    for (int i = 0; i < kNumSystems + 1; ++i) {
+    for (int i = 0; i < kNumSystems + 2; ++i) {
         const SDL_Rect& r = filterBtnRects_[i];
         if (mx >= r.x && mx < r.x + r.w && my >= r.y && my < r.y + r.h)
-            return i - 1;   // [0]→-1=All, [1]→0=NES, etc.
+            return i - 1;   // [0]→-1=All, [1..kNumSystems]→0..kNumSystems-1, [kNumSystems+1]→kNumSystems=Downloaded
     }
     return -2;   // no button hit
 }
@@ -296,23 +340,33 @@ void GameShell::renderHeader() {
     SDL_SetRenderDrawColor(renderer_, 30, 30, 65, 255);
     SDL_RenderDrawLine(renderer_, 0, kHeaderH - 1, kW - 1, kHeaderH - 1);
 
-    // Filter buttons
-    for (int i = 0; i < kNumSystems + 1; ++i) {
-        int fi      = i - 1;   // -1=All, 0-8=system
+    // Filter buttons — All + systems + Downloaded
+    for (int i = 0; i < kNumSystems + 2; ++i) {
+        int fi      = i - 1;   // -1=All, 0..kNumSystems-1=system, kNumSystems=Downloaded
         bool active = (fi == currentFilter_);
         const SDL_Rect& r = filterBtnRects_[i];
 
-        SDL_Color bg = active ? kColorFiltAct : kColorFiltInact;
+        SDL_Color bg;
+        if (active && fi == kNumSystems)
+            bg = {25, 110, 65, 255};   // green tint for Downloaded tab
+        else
+            bg = active ? kColorFiltAct : kColorFiltInact;
         SDL_SetRenderDrawColor(renderer_, bg.r, bg.g, bg.b, 255);
         SDL_RenderFillRect(renderer_, &r);
 
         if (active) {
-            SDL_SetRenderDrawColor(renderer_, 100, 180, 255, 255);
-            SDL_Rect ul = {r.x, r.y + r.h - 2, r.w, 2};
-            SDL_RenderFillRect(renderer_, &ul);
+            SDL_Color ul = (fi == kNumSystems)
+                ? SDL_Color{70, 200, 120, 255}
+                : SDL_Color{100, 180, 255, 255};
+            SDL_SetRenderDrawColor(renderer_, ul.r, ul.g, ul.b, 255);
+            SDL_Rect ulr = {r.x, r.y + r.h - 2, r.w, 2};
+            SDL_RenderFillRect(renderer_, &ulr);
         }
 
-        const char* label = (i == 0) ? "All" : kSysAbbrev[fi];
+        const char* label;
+        if (i == 0)                 label = "All";
+        else if (fi == kNumSystems) label = "DL'd";
+        else                        label = kSysAbbrev[fi];
         SDL_Color tc = active ? SDL_Color{230, 240, 255, 255} : kColorTextDim;
         renderCenteredText(label, r.x, r.y + (r.h - 14) / 2, r.w, tc, fontMd_);
     }
@@ -442,8 +496,15 @@ void GameShell::renderInfoBar() {
 
     renderText(
         "\xe2\x86\x90\xe2\x86\x92\xe2\x86\x91\xe2\x86\x93 Navigate    "
-        "Enter / Double-click = Play    Mouse Wheel = Scroll    Esc = Exit",
+        "Enter / Double-click = Play    Mouse Wheel = Scroll    "
+        "Ctrl+F = Search    Esc = Exit",
         20, barY + kInfoH - 16, kColorTextDim, fontSm_);
+
+    // Controller indicator (right-aligned)
+    if (!ctrlName_.empty()) {
+        std::string ctrlLabel = "\xf0\x9f\x8e\xae  " + ctrlName_;
+        renderText(ctrlLabel, kW - 360, barY + 11, {80, 210, 120, 255}, fontMd_, 340);
+    }
 }
 
 void GameShell::render() {
@@ -452,7 +513,45 @@ void GameShell::render() {
     renderHeader();
     renderGrid();
     renderInfoBar();
+    if (searchActive_) renderSearchBox();
     SDL_RenderPresent(renderer_);
+}
+
+void GameShell::renderSearchBox() {
+    constexpr int boxW = 440, boxH = 34;
+    const int boxX = (kW - boxW) / 2;
+    const int boxY = kHeaderH + 8;
+
+    // Semi-transparent backdrop
+    SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+    SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 160);
+    SDL_Rect backdrop = {boxX - 4, boxY - 4, boxW + 8, boxH + 8};
+    SDL_RenderFillRect(renderer_, &backdrop);
+
+    // Box background
+    SDL_SetRenderDrawColor(renderer_, 14, 14, 30, 240);
+    SDL_Rect bg = {boxX, boxY, boxW, boxH};
+    SDL_RenderFillRect(renderer_, &bg);
+
+    // Border
+    SDL_SetRenderDrawColor(renderer_, 80, 150, 255, 255);
+    SDL_RenderDrawRect(renderer_, &bg);
+
+    // "Search: " label + query + blinking cursor
+    bool showCursor = (SDL_GetTicks() % 800) < 420;
+    std::string display = "Search: " + searchQuery_;
+    if (showCursor) display += "|";
+    renderText(display, boxX + 10, boxY + (boxH - 14) / 2,
+               {210, 225, 255, 255}, fontMd_, boxW - 20);
+
+    // Result count (right-aligned inside box)
+    std::string count = std::to_string(filteredGames_.size()) + " result"
+                        + (filteredGames_.size() == 1 ? "" : "s");
+    int tw = 0, th = 0;
+    TTF_SizeUTF8(fontMd_, count.c_str(), &tw, &th);
+    (void)th;
+    renderText(count, boxX + boxW - tw - 10, boxY + (boxH - 14) / 2,
+               kColorTextDim, fontMd_);
 }
 
 // ─── Main loop ────────────────────────────────────────────────────────────────
@@ -464,9 +563,23 @@ void GameShell::run(GameLibrary& library, const std::string& coversDir) {
     rebuildFilter();
     computeFilterRects();
 
-    SDL_GameController* ctrl = nullptr;
-    for (int i = 0; i < SDL_NumJoysticks(); ++i)
-        if (SDL_IsGameController(i)) { ctrl = SDL_GameControllerOpen(i); break; }
+    // Initialize save DB (saves/saves.db)
+    try {
+        const std::string saveDb = (fs::current_path() / "saves" / "saves.db").string();
+        SaveManager::instance().init(saveDb);
+    } catch (...) {
+        // ignore init failures; save operations will be best-effort
+    }
+
+    ctrl_ = nullptr;
+    ctrlName_.clear();
+    for (int i = 0; i < SDL_NumJoysticks(); ++i) {
+        if (SDL_IsGameController(i)) {
+            ctrl_ = SDL_GameControllerOpen(i);
+            if (ctrl_) ctrlName_ = SDL_GameControllerName(ctrl_);
+            break;
+        }
+    }
 
     bool quit = false;
     while (!quit) {
@@ -481,7 +594,35 @@ void GameShell::run(GameLibrary& library, const std::string& coversDir) {
             if (ev.type == SDL_KEYDOWN) {
                 int n = static_cast<int>(filteredGames_.size());
                 switch (ev.key.keysym.sym) {
-                    case SDLK_ESCAPE: quit = true; break;
+                    case SDLK_ESCAPE:
+                        if (searchActive_) {
+                            if (!searchQuery_.empty()) {
+                                searchQuery_.clear();
+                            } else {
+                                searchActive_ = false;
+                                SDL_StopTextInput();
+                            }
+                            rebuildFilter(); computeFilterRects();
+                        } else {
+                            quit = true;
+                        }
+                        break;
+                    case SDLK_BACKSPACE:
+                        if (searchActive_ && !searchQuery_.empty()) {
+                            // Remove last UTF-8 code point
+                            while (searchQuery_.size() > 1 &&
+                                   (static_cast<unsigned char>(searchQuery_.back()) & 0xC0) == 0x80)
+                                searchQuery_.pop_back();
+                            searchQuery_.pop_back();
+                            rebuildFilter(); computeFilterRects();
+                        }
+                        break;
+                    case SDLK_f:
+                        if (ev.key.keysym.mod & KMOD_CTRL) {
+                            searchActive_ = true;
+                            SDL_StartTextInput();
+                        }
+                        break;
                     case SDLK_LEFT:
                         if (selectedIdx_ > 0) { --selectedIdx_; ensureVisible(); }
                         break;
@@ -509,16 +650,19 @@ void GameShell::run(GameLibrary& library, const std::string& coversDir) {
                             pendingLaunch = true;
                         }
                         break;
-                    // 0 = All, 1-9 = system filter
+                    // 0 = All, 1-9 = system filter (disabled while search is active)
                     case SDLK_0:
-                        currentFilter_ = -1; rebuildFilter(); computeFilterRects(); break;
+                        if (!searchActive_) { currentFilter_ = -1; rebuildFilter(); computeFilterRects(); }
+                        break;
                     case SDLK_1: case SDLK_2: case SDLK_3:
                     case SDLK_4: case SDLK_5: case SDLK_6:
                     case SDLK_7: case SDLK_8: case SDLK_9: {
-                        int fi = ev.key.keysym.sym - SDLK_1;
-                        if (fi < kNumSystems) {
-                            currentFilter_ = fi;
-                            rebuildFilter(); computeFilterRects();
+                        if (!searchActive_) {
+                            int fi = ev.key.keysym.sym - SDLK_1;
+                            if (fi < kNumSystems) {
+                                currentFilter_ = fi;
+                                rebuildFilter(); computeFilterRects();
+                            }
                         }
                         break;
                     }
@@ -529,6 +673,13 @@ void GameShell::run(GameLibrary& library, const std::string& coversDir) {
             // ── Mouse motion ─────────────────────────────────────────────────
             if (ev.type == SDL_MOUSEMOTION)
                 hoverIdx_ = gameAtMouse(ev.motion.x, ev.motion.y);
+
+            // ── Text input (search) ───────────────────────────────────────────
+            if (ev.type == SDL_TEXTINPUT && searchActive_) {
+                searchQuery_ += ev.text.text;
+                rebuildFilter();
+                computeFilterRects();
+            }
 
             // ── Mouse button ─────────────────────────────────────────────────
             if (ev.type == SDL_MOUSEBUTTONDOWN && ev.button.button == SDL_BUTTON_LEFT) {
@@ -585,15 +736,15 @@ void GameShell::run(GameLibrary& library, const std::string& coversDir) {
                         if (selectedIdx_ + kCols < n) { selectedIdx_ += kCols; ensureVisible(); }
                         break;
                     case SDL_CONTROLLER_BUTTON_LEFTSHOULDER: {
-                        // Cycle filter backwards
-                        int idx = (currentFilter_ + 1 + kNumSystems) % (kNumSystems + 1);
+                        // Cycle filter backwards (All → systems → Downloaded → All)
+                        int idx = (currentFilter_ + 1 + kNumSystems + 1) % (kNumSystems + 2);
                         currentFilter_ = idx - 1;
                         rebuildFilter(); computeFilterRects();
                         break;
                     }
                     case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER: {
-                        // Cycle filter forwards
-                        int idx = (currentFilter_ + 2) % (kNumSystems + 1);
+                        // Cycle filter forwards (All → systems → Downloaded → All)
+                        int idx = (currentFilter_ + 2) % (kNumSystems + 2);
                         currentFilter_ = idx - 1;
                         rebuildFilter(); computeFilterRects();
                         break;
@@ -608,36 +759,133 @@ void GameShell::run(GameLibrary& library, const std::string& coversDir) {
                 }
             }
 
-            if (ev.type == SDL_CONTROLLERDEVICEADDED && !ctrl)
-                ctrl = SDL_GameControllerOpen(ev.cdevice.which);
-            if (ev.type == SDL_CONTROLLERDEVICEREMOVED && ctrl &&
-                SDL_GameControllerGetJoystick(ctrl) ==
+            if (ev.type == SDL_CONTROLLERDEVICEADDED && !ctrl_) {
+                ctrl_ = SDL_GameControllerOpen(ev.cdevice.which);
+                if (ctrl_) ctrlName_ = SDL_GameControllerName(ctrl_);
+            }
+            if (ev.type == SDL_CONTROLLERDEVICEREMOVED && ctrl_ &&
+                SDL_GameControllerGetJoystick(ctrl_) ==
                 SDL_JoystickFromInstanceID(ev.cdevice.which)) {
-                SDL_GameControllerClose(ctrl);
-                ctrl = nullptr;
+                SDL_GameControllerClose(ctrl_);
+                ctrl_ = nullptr;
+                ctrlName_.clear();
             }
         }
 
         if (pendingLaunch) {
+            // If the ROM is not local but we have a download URL, fetch it first.
+            if (launchTarget.system != SystemType::Steam &&
+                !launchTarget.downloadUrl.empty() &&
+                (launchTarget.romPath.empty() || !std::filesystem::exists(launchTarget.romPath))) {
+
+                // Show "Downloading..." overlay on the existing window
+                auto renderOverlay = [&](const std::string& msg, long long cur, long long tot) {
+                    // Dim the screen
+                    SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+                    SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 180);
+                    SDL_Rect full = {0, 0, kW, kH};
+                    SDL_RenderFillRect(renderer_, &full);
+
+                    // Progress bar background
+                    int barW = kW / 2, barH = 24;
+                    int barX = (kW - barW) / 2, barY = kH / 2 + 20;
+                    SDL_SetRenderDrawColor(renderer_, 60, 60, 90, 255);
+                    SDL_Rect bg = {barX, barY, barW, barH};
+                    SDL_RenderFillRect(renderer_, &bg);
+
+                    if (tot > 0) {
+                        int fill = static_cast<int>((double)cur / (double)tot * barW);
+                        SDL_SetRenderDrawColor(renderer_, 80, 140, 240, 255);
+                        SDL_Rect fg = {barX, barY, fill, barH};
+                        SDL_RenderFillRect(renderer_, &fg);
+                    }
+
+                    // Label
+                    std::string label = msg;
+                    if (tot > 0 && cur > 0) {
+                        int pct = static_cast<int>(100.0 * cur / tot);
+                        label += "  " + std::to_string(pct) + "%";
+                    }
+                    renderText(label, (kW - barW) / 2, kH / 2 - 14, {220, 220, 255, 255}, fontLg_, barW);
+
+                    SDL_RenderPresent(renderer_);
+                };
+
+                // Pump events so the window stays responsive during download
+                SDL_Event ev;
+                while (SDL_PollEvent(&ev)) { if (ev.type == SDL_QUIT) goto done; }
+
+                renderOverlay("Downloading " + launchTarget.displayName + "...", 0, 0);
+
+                QueuedDownload qd;
+                qd.id        = launchTarget.dbId;
+                qd.name      = launchTarget.displayName;
+                qd.url       = launchTarget.downloadUrl;
+                qd.system    = GameLibrary::systemName(launchTarget.system);
+
+                std::string dlError;
+                std::string resolvedUrl;
+                std::string localRom = DownloadManager::instance().downloadBlocking(
+                    qd,
+                    [&](long long cur, long long tot) {
+                        renderOverlay("Downloading " + launchTarget.displayName + "...", cur, tot);
+                        while (SDL_PollEvent(&ev)) {}
+                    },
+                    &dlError,
+                    &resolvedUrl
+                );
+
+                // If fallback resolved a better URL, persist it to DB so future
+                // downloads skip the search entirely.
+                if (!localRom.empty() && !resolvedUrl.empty()
+                        && resolvedUrl != launchTarget.downloadUrl
+                        && launchTarget.dbId > 0) {
+                    updateGameDownloadUrl(dbCfg_, launchTarget.dbId, resolvedUrl);
+                    launchTarget.downloadUrl = resolvedUrl;
+                }
+
+                if (localRom.empty()) {
+                    // Show the error but keep the game in the library so the
+                    // user can retry later once the URL is fixed or connectivity
+                    // is restored.
+                    std::string msg = dlError.find("404") != std::string::npos
+                        ? "File not found (404). Check the game's download URL."
+                        : "Download failed. Check connection and try again.";
+                    renderText(msg, (kW - 500) / 2, kH / 2 + 60,
+                               {240, 80, 80, 255}, fontLg_, 500);
+                    SDL_RenderPresent(renderer_);
+                    SDL_Delay(2000);
+                    pendingLaunch = false;
+                    goto done;
+                }
+                launchTarget.romPath = localRom;
+            }
+
             if (launchTarget.system == SystemType::Steam) {
                 // Steam games launch externally; fire and keep the shell open
                 launchGame(launchTarget);
             } else {
-                if (ctrl) { SDL_GameControllerClose(ctrl); ctrl = nullptr; }
+                if (ctrl_) { SDL_GameControllerClose(ctrl_); ctrl_ = nullptr; ctrlName_.clear(); }
                 cleanup();
                 launchGame(launchTarget);
                 if (!init()) break;
                 rebuildFilter();
                 computeFilterRects();
-                for (int i = 0; i < SDL_NumJoysticks(); ++i)
-                    if (SDL_IsGameController(i)) { ctrl = SDL_GameControllerOpen(i); break; }
+                for (int i = 0; i < SDL_NumJoysticks(); ++i) {
+                    if (SDL_IsGameController(i)) {
+                        ctrl_ = SDL_GameControllerOpen(i);
+                        if (ctrl_) ctrlName_ = SDL_GameControllerName(ctrl_);
+                        break;
+                    }
+                }
             }
+            done:;
         }
 
         if (!quit) render();
     }
 
-    if (ctrl) SDL_GameControllerClose(ctrl);
+    if (ctrl_) { SDL_GameControllerClose(ctrl_); ctrl_ = nullptr; ctrlName_.clear(); }
 }
 
 // ─── Game launch ──────────────────────────────────────────────────────────────
@@ -647,65 +895,154 @@ void GameShell::launchGame(const GameEntry& game) {
     switch (game.system) {
         case SystemType::NES: {
             NESEmulation nes;
-            if (nes.loadRom(path)) nes.runInteractive();
+            if (nes.loadRom(path)) {
+                std::vector<unsigned char> data;
+                if (SaveManager::instance().get(path, data)) nes.restoreSaveData(data);
+                nes.runInteractive();
+                SaveManager::instance().put(path, nes.dumpSaveData());
+            }
             break;
         }
         case SystemType::SNES: {
             SNESEmulation snes;
-            if (snes.loadRom(path)) snes.runInteractive();
+            if (snes.loadRom(path)) {
+                std::vector<unsigned char> data;
+                if (SaveManager::instance().get(path, data)) snes.restoreSaveData(data);
+                snes.runInteractive();
+                SaveManager::instance().put(path, snes.dumpSaveData());
+            }
             break;
         }
         case SystemType::GameBoy: {
             GameBoyEmulation gb;
-            if (gb.loadRom(path)) gb.runInteractive();
+            if (gb.loadRom(path)) {
+                std::vector<unsigned char> data;
+                if (SaveManager::instance().get(path, data)) gb.restoreSaveData(data);
+                gb.runInteractive();
+                SaveManager::instance().put(path, gb.dumpSaveData());
+            }
             break;
         }
         case SystemType::GameBoyColor: {
             GameBoyColorEmulation gbc;
-            if (gbc.loadRom(path)) gbc.runInteractive();
+            if (gbc.loadRom(path)) {
+                std::vector<unsigned char> data;
+                if (SaveManager::instance().get(path, data)) gbc.restoreSaveData(data);
+                gbc.runInteractive();
+                SaveManager::instance().put(path, gbc.dumpSaveData());
+            }
             break;
         }
         case SystemType::GBA: {
             GBAEmulation gba;
-            try { if (gba.loadRom(path)) gba.runInteractive(); }
+            try {
+                if (gba.loadRom(path)) {
+                    std::vector<unsigned char> data;
+                    if (SaveManager::instance().get(path, data)) gba.restoreSaveData(data);
+                    gba.runInteractive();
+                    SaveManager::instance().put(path, gba.dumpSaveData());
+                }
+            }
             catch (const std::exception& e) { std::cerr << "GBA error: " << e.what() << "\n"; }
             break;
         }
         case SystemType::NDS: {
             NDSEmulation nds;
-            try { if (nds.loadRom(path)) nds.runInteractive(); }
+            try {
+                if (nds.loadRom(path)) {
+                    std::vector<unsigned char> data;
+                    if (SaveManager::instance().get(path, data)) nds.restoreSaveData(data);
+                    nds.runInteractive();
+                    SaveManager::instance().put(path, nds.dumpSaveData());
+                }
+            }
             catch (const std::exception& e) { std::cerr << "NDS error: " << e.what() << "\n"; }
             break;
         }
         case SystemType::ThreeDS: {
             N3DSEmulation n3ds;
-            try { if (n3ds.loadRom(path)) n3ds.runInteractive(); }
+            try {
+                if (n3ds.loadRom(path)) {
+                    std::vector<unsigned char> data;
+                    if (SaveManager::instance().get(path, data)) n3ds.restoreSaveData(data);
+                    n3ds.runInteractive();
+                    SaveManager::instance().put(path, n3ds.dumpSaveData());
+                }
+            }
             catch (const std::exception& e) { std::cerr << "3DS error: " << e.what() << "\n"; }
             break;
         }
         case SystemType::Atari2600: {
             Atari2600Emulation a;
-            if (a.loadRom(path)) a.runInteractive();
+            if (a.loadRom(path)) {
+                std::vector<unsigned char> data;
+                if (SaveManager::instance().get(path, data)) a.restoreSaveData(data);
+                a.runInteractive();
+                SaveManager::instance().put(path, a.dumpSaveData());
+            }
             break;
         }
         case SystemType::Atari5200: {
             Atari5200Emulation a;
-            if (a.loadRom(path)) a.runInteractive();
+            if (a.loadRom(path)) {
+                std::vector<unsigned char> data;
+                if (SaveManager::instance().get(path, data)) a.restoreSaveData(data);
+                a.runInteractive();
+                SaveManager::instance().put(path, a.dumpSaveData());
+            }
             break;
         }
         case SystemType::Atari800: {
             Atari800Emulation a;
-            if (a.loadRom(path)) a.runInteractive();
+            if (a.loadRom(path)) {
+                std::vector<unsigned char> data;
+                if (SaveManager::instance().get(path, data)) a.restoreSaveData(data);
+                a.runInteractive();
+                SaveManager::instance().put(path, a.dumpSaveData());
+            }
             break;
         }
         case SystemType::SegaGenesis: {
             SegaGenesisEmulation gen;
-            if (gen.loadRom(path)) gen.runInteractive();
+            if (gen.loadRom(path)) {
+                std::vector<unsigned char> data;
+                if (SaveManager::instance().get(path, data)) gen.restoreSaveData(data);
+                gen.runInteractive();
+                SaveManager::instance().put(path, gen.dumpSaveData());
+            }
+            break;
+        }
+        case SystemType::N64: {
+            N64Emulation n64;
+            if (n64.loadRom(path)) {
+                std::vector<unsigned char> data;
+                if (SaveManager::instance().get(path, data)) n64.restoreSaveData(data);
+                n64.runInteractive();
+                SaveManager::instance().put(path, n64.dumpSaveData());
+            }
+            break;
+        }
+        case SystemType::PS1: {
+            PS1Emulation ps1;
+            try {
+                if (ps1.loadRom(path)) {
+                    std::vector<unsigned char> data;
+                    if (SaveManager::instance().get(path, data)) ps1.restoreSaveData(data);
+                    ps1.runInteractive();
+                    SaveManager::instance().put(path, ps1.dumpSaveData());
+                }
+            }
+            catch (const std::exception& e) { std::cerr << "PS1 error: " << e.what() << "\n"; }
             break;
         }
         case SystemType::Odyssey: {
             OdysseyEmulation ody;
-            if (ody.loadRom(path)) ody.runInteractive();
+            if (ody.loadRom(path)) {
+                std::vector<unsigned char> data;
+                if (SaveManager::instance().get(path, data)) ody.restoreSaveData(data);
+                ody.runInteractive();
+                SaveManager::instance().put(path, ody.dumpSaveData());
+            }
             break;
         }
         case SystemType::Steam: {

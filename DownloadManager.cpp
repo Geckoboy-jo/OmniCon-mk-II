@@ -1,0 +1,838 @@
+#include "DownloadManager.hpp"
+
+#include <algorithm>
+#include <chrono>
+#include <condition_variable>
+#include <cstdio>
+#include <cstdlib>
+#include <ctime>
+#include <fstream>
+#include <future>
+#include <iomanip>
+#include <iostream>
+#include <mutex>
+#include <regex>
+#include <set>
+#include <sstream>
+#include <string>
+#include <thread>
+#include <unistd.h>
+#include <filesystem>
+#include <sys/stat.h>
+
+namespace fs = std::filesystem;
+
+// Allowed ROM extensions (lower-cased, without leading dot)
+static const std::vector<std::string> kRomExts = {
+    "nes","sfc","smc","gb","gbc","gba","nds","3ds","z64","n64","v64",
+    "a26","a52","atr","md","gen","smd","iso","cue","chd"
+};
+
+// ─── URL helpers ─────────────────────────────────────────────────────────────
+static std::string urlDecode(const std::string& s) {
+    std::string r;
+    for (size_t i = 0; i < s.size(); ++i) {
+        if (s[i] == '%' && i + 2 < s.size() &&
+            isxdigit((unsigned char)s[i+1]) && isxdigit((unsigned char)s[i+2])) {
+            r += static_cast<char>(std::stoi(s.substr(i+1, 2), nullptr, 16));
+            i += 2;
+        } else if (s[i] == '+') {
+            r += ' ';
+        } else {
+            r += s[i];
+        }
+    }
+    return r;
+}
+
+static std::string urlEncode(const std::string& s) {
+    std::ostringstream oss;
+    for (unsigned char c : s) {
+        if (isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~')
+            oss << c;
+        else
+            oss << '%' << std::uppercase << std::setw(2) << std::setfill('0')
+                << std::hex << static_cast<int>(c);
+    }
+    return oss.str();
+}
+
+// ─── Archive.org fallback ─────────────────────────────────────────────────────
+// If an archive.org download URL returns 404, attempt to recover a working URL.
+// Case 1 — /download/IDENTIFIER/FILE : file was renamed; query metadata API.
+// Case 2 — /download/FILENAME (no identifier) : use archive.org search to find
+//           an item, then query its metadata for the ROM file.
+// Returns "" if unresolvable.
+static std::string archiveOrgFixUrl(const std::string& url) {
+    static const std::set<std::string> kAllowed(kRomExts.begin(), kRomExts.end());
+    static const std::set<std::string> kArchives = {"zip","7z","gz","bz2","xz","rar"};
+
+    // Run a curl GET and return stdout.
+    auto curlGet = [](const std::string& curlUrl) -> std::string {
+        std::string cmd = "curl --silent --fail --location --max-time 15"
+                          " --user-agent 'Mozilla/5.0' '" + curlUrl + "'";
+        FILE* f = popen(cmd.c_str(), "r");
+        if (!f) return "";
+        std::ostringstream ss;
+        char buf[4096];
+        while (fgets(buf, sizeof(buf), f)) ss << buf;
+        pclose(f);
+        return ss.str();
+    };
+
+    // Scan archive.org metadata JSON for the first ROM or archive filename.
+    auto firstRomFile = [&](const std::string& metaJson) -> std::string {
+        std::regex nameRe(R"x("name"\s*:\s*"([^"]+)")x");
+        for (auto it = std::sregex_iterator(metaJson.begin(), metaJson.end(), nameRe);
+             it != std::sregex_iterator(); ++it) {
+            std::string name = (*it)[1].str();
+            std::string ext = fs::path(name).extension().string();
+            if (ext.size() > 1) ext = ext.substr(1);
+            std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+            if (kAllowed.count(ext) || kArchives.count(ext))
+                return name;
+        }
+        return "";
+    };
+
+    // Build a corrected archive.org download URL from identifier + filename.
+    auto makeUrl = [](const std::string& id, const std::string& file) -> std::string {
+        std::string encoded;
+        for (unsigned char c : file) {
+            if (isalnum(c) || c == '-' || c == '_' || c == '.' ||
+                c == '(' || c == ')' || c == ',' || c == '\'')
+                encoded += static_cast<char>(c);
+            else if (c == ' ')
+                encoded += "%20";
+            else {
+                char buf[4];
+                std::snprintf(buf, sizeof(buf), "%%%02X", c);
+                encoded += buf;
+            }
+        }
+        return "https://archive.org/download/" + id + "/" + encoded;
+    };
+
+    // ── Case 1: /download/IDENTIFIER/FILENAME ─────────────────────────────────
+    {
+        std::regex re(R"(https?://archive\.org/download/([^/?#]+)/(.+))");
+        std::smatch m;
+        if (std::regex_match(url, m, re)) {
+            std::string json = curlGet("https://archive.org/metadata/" + m[1].str());
+            if (json.empty()) return "";
+            std::string file = firstRomFile(json);
+            if (file.empty()) return "";
+            std::string newUrl = makeUrl(m[1].str(), file);
+            std::cout << "[DL] archive.org fallback (renamed): " << newUrl << "\n";
+            return newUrl;
+        }
+    }
+
+    // ── Case 2: /download/FILENAME (no identifier) ────────────────────────────
+    {
+        std::regex re(R"(https?://archive\.org/download/([^/?#]+))");
+        std::smatch m;
+        if (!std::regex_match(url, m, re)) return "";
+
+        // rawSeg is still percent-encoded, e.g. "10-Yard%20Fight%20%28USA%2C%20Europe%29.zip"
+        std::string rawSeg   = m[1].str();
+        std::string filename = urlDecode(rawSeg);                       // "10-Yard Fight (USA, Europe).zip"
+        std::string gameName = fs::path(filename).stem().string();      // "10-Yard Fight (USA, Europe)"
+
+        // Percent-encode a filename for use in the URL path segment.
+        auto encodeFile = [](const std::string& s) -> std::string {
+            std::string enc;
+            for (unsigned char c : s) {
+                if (isalnum(c) || c == '-' || c == '_' || c == '.' ||
+                    c == '(' || c == ')' || c == ',' || c == '\'')
+                    enc += static_cast<char>(c);
+                else if (c == ' ')
+                    enc += "%20";
+                else {
+                    char buf[4];
+                    std::snprintf(buf, sizeof(buf), "%%%02X", c);
+                    enc += buf;
+                }
+            }
+            return enc;
+        };
+
+        // Strip parenthesized tags to get a core title for matching.
+        auto stripTags = [](const std::string& s) -> std::string {
+            std::string r = std::regex_replace(s, std::regex(R"(\s*\([^)]*\))"), "");
+            size_t f = r.find_first_not_of(" \t");
+            if (f == std::string::npos) return "";
+            size_t e = r.find_last_not_of(" \t");
+            return r.substr(f, e - f + 1);
+        };
+        std::string coreTarget = stripTags(gameName);
+        std::string coreTargetLower = coreTarget;
+        std::transform(coreTargetLower.begin(), coreTargetLower.end(),
+                       coreTargetLower.begin(), ::tolower);
+
+        // Collect all ROM/archive files from a metadata JSON blob.
+        auto romFilesIn = [&](const std::string& metaJson) -> std::vector<std::string> {
+            std::regex nameRe(R"x("name"\s*:\s*"([^"]+)")x");
+            std::vector<std::string> out;
+            for (auto it = std::sregex_iterator(metaJson.begin(), metaJson.end(), nameRe);
+                 it != std::sregex_iterator(); ++it) {
+                std::string name = (*it)[1].str();
+                std::string ext = fs::path(name).extension().string();
+                if (ext.size() > 1) ext = ext.substr(1);
+                std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+                if (kAllowed.count(ext) || kArchives.count(ext))
+                    out.push_back(name);
+            }
+            return out;
+        };
+
+        // Pick the candidate whose core name best matches coreTarget.
+        auto bestMatch = [&](const std::vector<std::string>& files) -> std::string {
+            for (const auto& f : files) {
+                std::string core = stripTags(fs::path(f).stem().string());
+                std::transform(core.begin(), core.end(), core.begin(), ::tolower);
+                if (core.find(coreTargetLower) != std::string::npos ||
+                    coreTargetLower.find(core) != std::string::npos)
+                    return f;
+            }
+            return files.empty() ? "" : files.front();
+        };
+
+        // ── Step 1: Direct derivation ─────────────────────────────────────────
+        // Many archive.org items use the No-Intro filename-stem as their
+        // identifier, so try metadata/ENCODED_STEM before touching the search API.
+        {
+            // Strip the extension from the already-encoded segment.
+            std::string encodedStem = rawSeg;
+            auto dotPos = encodedStem.rfind('.');
+            if (dotPos != std::string::npos)
+                encodedStem = encodedStem.substr(0, dotPos);
+
+            std::string metaJson = curlGet("https://archive.org/metadata/" + encodedStem);
+            // archive.org returns {"error":"..."} when the item doesn't exist.
+            if (!metaJson.empty() && metaJson.find("\"error\"") == std::string::npos) {
+                auto candidates = romFilesIn(metaJson);
+                if (!candidates.empty()) {
+                    std::string file = bestMatch(candidates);
+                    if (!file.empty()) {
+                        std::string newUrl = "https://archive.org/download/" +
+                                             encodedStem + "/" + encodeFile(file);
+                        std::cout << "[DL] archive.org fallback (direct): " << newUrl << "\n";
+                        return newUrl;
+                    }
+                }
+            }
+        }
+
+        // ── Step 2: Filename search ───────────────────────────────────────────
+        // Direct derivation failed. The URL already encodes the exact filename
+        // we want, so ask archive.org which item hosts that specific file —
+        // far more precise than a title or keyword search.
+        std::cout << "[DL] archive.org: searching for file: " << filename << "\n";
+        std::string searchJson = curlGet(
+            "https://archive.org/advancedsearch.php?q=" +
+            urlEncode("filename:\"" + filename + "\"") +
+            "&fl[]=identifier&rows=5&output=json");
+        if (searchJson.empty()) return "";
+
+        std::regex idRe(R"x("identifier"\s*:\s*"([^"]+)")x");
+        std::smatch idm;
+        if (!std::regex_search(searchJson, idm, idRe)) return "";
+        std::string identifier = idm[1].str();
+        std::cout << "[DL] archive.org found identifier: " << identifier << "\n";
+
+        // Reconstruct the URL using the original percent-encoded filename.
+        std::string newUrl = "https://archive.org/download/" + identifier + "/" + rawSeg;
+        std::cout << "[DL] archive.org fallback (filename search): " << newUrl << "\n";
+        return newUrl;
+    }
+}
+
+
+static std::string jsonEscape(const std::string& s) {
+    std::string r;
+    for (char c : s) {
+        if (c == '"')  r += "\\\"";
+        else if (c == '\\') r += "\\\\";
+        else if (c == '\n') r += "\\n";
+        else if (c == '\r') r += "\\r";
+        else if (c == '\t') r += "\\t";
+        else r += c;
+    }
+    return r;
+}
+
+// Read a string value for a given key from a flat JSON object
+static std::string jsonGetStr(const std::string& obj, const std::string& key) {
+    std::regex re("\"" + key + "\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"");
+    std::smatch m;
+    if (std::regex_search(obj, m, re)) {
+        std::string v = m[1].str();
+        // unescape basic sequences
+        std::string out;
+        for (size_t i = 0; i < v.size(); ++i) {
+            if (v[i] == '\\' && i+1 < v.size()) {
+                ++i;
+                switch (v[i]) {
+                    case '"':  out += '"';  break;
+                    case '\\': out += '\\'; break;
+                    case 'n':  out += '\n'; break;
+                    case 'r':  out += '\r'; break;
+                    case 't':  out += '\t'; break;
+                    default:   out += v[i]; break;
+                }
+            } else {
+                out += v[i];
+            }
+        }
+        return out;
+    }
+    return "";
+}
+
+static long long jsonGetLL(const std::string& obj, const std::string& key) {
+    std::regex re("\"" + key + "\"\\s*:\\s*(-?\\d+)");
+    std::smatch m;
+    if (std::regex_search(obj, m, re)) {
+        try { return std::stoll(m[1].str()); } catch (...) {}
+    }
+    return 0;
+}
+
+static std::string isoTimestamp() {
+    auto now = std::chrono::system_clock::now();
+    std::time_t t = std::chrono::system_clock::to_time_t(now);
+    std::tm tm{};
+    gmtime_r(&t, &tm);
+    std::ostringstream ss;
+    ss << std::put_time(&tm, "%Y-%m-%dT%H:%M:%SZ");
+    return ss.str();
+}
+// ─── Thread-pool helpers ───────────────────────────────────────────────────────────
+namespace {
+struct Semaphore {
+    explicit Semaphore(int n) : count_(n) {}
+    void acquire() {
+        std::unique_lock<std::mutex> lk(mx_);
+        cv_.wait(lk, [this]{ return count_ > 0; });
+        --count_;
+    }
+    void release() {
+        std::lock_guard<std::mutex> lk(mx_);
+        ++count_;
+        cv_.notify_one();
+    }
+private:
+    std::mutex mx_;
+    std::condition_variable cv_;
+    int count_;
+};
+} // namespace
+// ─── Singleton ───────────────────────────────────────────────────────────────
+
+DownloadManager& DownloadManager::instance() {
+    static DownloadManager inst;
+    return inst;
+}
+
+void DownloadManager::init(const std::string& queuePath, const std::string& romsDir) {
+    queuePath_     = queuePath;
+    romsDir_       = romsDir;
+
+    // downloaded.json lives next to the queue file
+    fs::path qp(queuePath);
+    downloadedPath_ = (qp.parent_path() / "downloaded.json").string();
+
+    loadFromDisk();
+}
+
+// ─── Persistence ─────────────────────────────────────────────────────────────
+
+void DownloadManager::loadFromDisk() {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    // Load queue
+    {
+        std::ifstream f(queuePath_);
+        if (f) {
+            std::ostringstream ss; ss << f.rdbuf();
+            std::string json = ss.str();
+            // Parse array of objects with regex
+            std::regex objRe(R"(\{[^{}]+\})");
+            for (auto it = std::sregex_iterator(json.begin(), json.end(), objRe);
+                 it != std::sregex_iterator(); ++it) {
+                std::string obj = (*it).str();
+                QueuedDownload qd;
+                qd.id        = static_cast<int>(jsonGetLL(obj, "id"));
+                qd.name      = jsonGetStr(obj, "name");
+                qd.url       = jsonGetStr(obj, "url");
+                qd.system    = jsonGetStr(obj, "system");
+                qd.sizeBytes = jsonGetLL(obj, "sizeBytes");
+                qd.queuedAt  = jsonGetStr(obj, "queuedAt");
+                if (!qd.url.empty()) queue_.push_back(std::move(qd));
+            }
+        }
+    }
+
+    // Load downloaded map
+    {
+        std::ifstream f(downloadedPath_);
+        if (f) {
+            std::ostringstream ss; ss << f.rdbuf();
+            std::string json = ss.str();
+            std::regex pairRe(R"x("([^"]+)"\s*:\s*"([^"]*)")x");            for (auto it = std::sregex_iterator(json.begin(), json.end(), pairRe);
+                 it != std::sregex_iterator(); ++it) {
+                std::string url  = (*it)[1].str();
+                std::string path = (*it)[2].str();
+                if (!url.empty()) urlToLocal_[url] = path;
+            }
+        }
+    }
+}
+
+void DownloadManager::saveToDisk() {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (queuePath_.empty()) return;
+    // Save queue
+    {
+        std::ofstream f(queuePath_);
+        f << "[\n";
+        for (size_t i = 0; i < queue_.size(); ++i) {
+            const auto& q = queue_[i];
+            f << "  {\"id\":" << q.id
+              << ",\"name\":\"" << jsonEscape(q.name) << "\""
+              << ",\"url\":\"" << jsonEscape(q.url) << "\""
+              << ",\"system\":\"" << jsonEscape(q.system) << "\""
+              << ",\"sizeBytes\":" << q.sizeBytes
+              << ",\"queuedAt\":\"" << jsonEscape(q.queuedAt) << "\"}";
+            if (i + 1 < queue_.size()) f << ",";
+            f << "\n";
+        }
+        f << "]\n";
+    }
+    // Save downloaded map
+    {
+        std::ofstream f(downloadedPath_);
+        f << "{\n";
+        bool first = true;
+        for (const auto& kv : urlToLocal_) {
+            if (!first) f << ",\n";
+            first = false;
+            f << "  \"" << jsonEscape(kv.first) << "\": \"" << jsonEscape(kv.second) << "\"";
+        }
+        f << "\n}\n";
+    }
+}
+
+void DownloadManager::flush() {
+    saveToDisk();
+}
+
+// ─── Public API ──────────────────────────────────────────────────────────────
+
+std::string DownloadManager::localPath(const std::string& url) const {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    auto it = urlToLocal_.find(url);
+    return (it != urlToLocal_.end()) ? it->second : "";
+}
+
+bool DownloadManager::isDownloaded(const std::string& url) const {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    auto it = urlToLocal_.find(url);
+    if (it == urlToLocal_.end()) return false;
+    return !it->second.empty() && fs::exists(it->second);
+}
+
+void DownloadManager::enqueue(const QueuedDownload& entry) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (entry.url.empty()) return;
+    // Skip if already downloaded
+    if (isDownloaded(entry.url)) return;
+    // Skip if already in queue
+    for (const auto& q : queue_)
+        if (q.url == entry.url) return;
+
+    QueuedDownload qd = entry;
+    if (qd.queuedAt.empty()) qd.queuedAt = isoTimestamp();
+    queue_.push_back(std::move(qd));
+    saveToDisk();
+}
+
+void DownloadManager::dequeue(const std::string& url) {
+    if (url.empty()) return;
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+
+    // Delete the local file if one exists
+    auto it = urlToLocal_.find(url);
+    if (it != urlToLocal_.end() && !it->second.empty()) {
+        std::error_code ec;
+        fs::remove(it->second, ec);
+        if (!ec)
+            std::cout << "[DL] Deleted local file: " << it->second << "\n";
+        urlToLocal_.erase(it);
+    }
+
+    // Remove from the pending queue
+    queue_.erase(std::remove_if(queue_.begin(), queue_.end(),
+        [&](const QueuedDownload& q){ return q.url == url; }), queue_.end());
+
+    saveToDisk();
+}
+
+// ─── Storage management ───────────────────────────────────────────────────────
+
+long long DownloadManager::usedStorageBytes() const {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (romsDir_.empty() || !fs::exists(romsDir_)) return 0;
+    long long total = 0;
+    std::error_code ec;
+    for (const auto& de : fs::recursive_directory_iterator(romsDir_, ec))
+        if (!de.is_directory(ec))
+            total += static_cast<long long>(de.file_size(ec));
+    return total;
+}
+
+bool DownloadManager::ensureSpace(long long neededBytes) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    long long used = usedStorageBytes();
+    if (used + neededBytes <= kMaxStorageBytes) return true;
+
+    // Collect downloaded entries sorted by queuedAt (oldest first)
+    struct CandidateFile {
+        std::string url;
+        std::string path;
+        std::string queuedAt;
+    };
+    std::vector<CandidateFile> candidates;
+    for (const auto& kv : urlToLocal_) {
+        if (kv.second.empty() || !fs::exists(kv.second)) continue;
+        // Find queuedAt in queue_
+        std::string qa;
+        for (const auto& q : queue_)
+            if (q.url == kv.first) { qa = q.queuedAt; break; }
+        candidates.push_back({kv.first, kv.second, qa});
+    }
+    std::sort(candidates.begin(), candidates.end(),
+              [](const CandidateFile& a, const CandidateFile& b){ return a.queuedAt < b.queuedAt; });
+
+    for (const auto& c : candidates) {
+        if (used + neededBytes <= kMaxStorageBytes) break;
+        std::error_code ec;
+        long long fileSize = static_cast<long long>(fs::file_size(c.path, ec));
+        if (!ec) {
+            fs::remove(c.path, ec);
+            if (!ec) {
+                used -= fileSize;
+                urlToLocal_.erase(c.url);
+                // Do NOT remove from queue_ — the game entry stays in the library
+                // and can be re-downloaded when selected again.
+                std::cout << "[DL] Evicted " << c.path << " to free space.\n";
+            }
+        }
+    }
+    saveToDisk();
+    return (used + neededBytes <= kMaxStorageBytes);
+}
+
+// ─── Extraction ──────────────────────────────────────────────────────────────
+
+std::string DownloadManager::extractRom(const std::string& archivePath,
+                                         const std::string& destDir) {
+    std::string arcExt = fs::path(archivePath).extension().string();
+    std::transform(arcExt.begin(), arcExt.end(), arcExt.begin(), ::tolower);
+
+    std::string foundFile;
+
+    if (arcExt == ".7z") {
+        // ── 7z branch ──────────────────────────────────────────────────────
+        // "7z l -ba -slt" emits one block per entry; "Path = <name>" lines
+        // contain the member filename without extra column formatting.
+        std::string listCmd = "7z l -ba -slt '" + archivePath + "' 2>/dev/null";
+        FILE* f = popen(listCmd.c_str(), "r");
+        if (!f) return "";
+        char buf[2048];
+        while (fgets(buf, sizeof(buf), f)) {
+            std::string line(buf);
+            while (!line.empty() && (line.back() == '\n' || line.back() == '\r'))
+                line.pop_back();
+            if (line.rfind("Path = ", 0) != 0) continue;
+            std::string fname = line.substr(7);
+            if (fname.empty() || fname.back() == '/') continue;
+            std::string ext = fs::path(fname).extension().string();
+            if (!ext.empty()) ext = ext.substr(1);
+            std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+            for (const auto& e : kRomExts) {
+                if (ext == e) { foundFile = fname; break; }
+            }
+            if (!foundFile.empty()) break;
+        }
+        pclose(f);
+        if (foundFile.empty()) return "";
+
+        // -aoa = overwrite all without prompt; -o<dir> has no space in 7z syntax
+        std::string extractCmd = "7z e -aoa -o'" + destDir + "' '" +
+                                 archivePath + "' '" + foundFile + "' 2>/dev/null";
+        if (system(extractCmd.c_str()) != 0) return ""; // NOLINT
+    } else {
+        // ── zip branch (default) ────────────────────────────────────────────
+        // Use "unzip -Z1" (zipinfo short format) to get one clean filename per
+        // line, avoiding column-based parsing that breaks on names with spaces.
+        std::string listCmd = "unzip -Z1 '" + archivePath + "' 2>/dev/null";
+        FILE* f = popen(listCmd.c_str(), "r");
+        if (!f) return "";
+        char buf[2048];
+        while (fgets(buf, sizeof(buf), f)) {
+            std::string fname(buf);
+            while (!fname.empty() && (fname.back() == '\n' || fname.back() == '\r'))
+                fname.pop_back();
+            if (fname.empty() || fname.back() == '/') continue;
+            std::string ext = fs::path(fname).extension().string();
+            if (!ext.empty()) ext = ext.substr(1);
+            std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+            for (const auto& e : kRomExts) {
+                if (ext == e) { foundFile = fname; break; }
+            }
+            if (!foundFile.empty()) break;
+        }
+        pclose(f);
+        if (foundFile.empty()) return "";
+
+        std::string extractCmd = "unzip -o '" + archivePath + "' '" + foundFile +
+                                 "' -d '" + destDir + "' 2>/dev/null";
+        if (system(extractCmd.c_str()) != 0) return ""; // NOLINT
+    }
+
+    return (fs::path(destDir) / fs::path(foundFile).filename()).string();
+}
+
+// ─── Download ────────────────────────────────────────────────────────────────
+
+std::string DownloadManager::downloadBlocking(
+        const QueuedDownload& entry,
+        std::function<void(long long, long long)> progress,
+        std::string* errorOut,
+        std::string* resolvedUrlOut) {
+
+    if (entry.url.empty()) return "";
+
+    // ── Locked: check state, reserve space, build temp path ───────────────────
+    std::string tmpPath;
+    long long   spaceNeeded;
+    {
+        std::lock_guard<std::recursive_mutex> lock(mutex_);
+
+        // Already downloaded?
+        if (isDownloaded(entry.url)) return urlToLocal_[entry.url];
+
+        // Ensure destination directory exists
+        if (!fs::exists(romsDir_)) fs::create_directories(romsDir_);
+
+        // Build safe temp file path.
+        // Strip query/fragment before extracting filename so extensions survive.
+        std::string cleanUrl = entry.url;
+        auto qpos = cleanUrl.find_first_of("?#");
+        if (qpos != std::string::npos) cleanUrl.resize(qpos);
+        std::string safeName;
+        for (char c : fs::path(cleanUrl).filename().string()) {
+            safeName += (std::isalnum(static_cast<unsigned char>(c)) || c == '.' || c == '-' || c == '_') ? c : '_';
+        }
+        if (safeName.empty()) safeName = "download";
+        tmpPath = (fs::path(romsDir_) / ("_tmp_" + safeName)).string();
+
+        // Reserve space (use sizeBytes hint if available, else 500 MB estimate)
+        spaceNeeded = (entry.sizeBytes > 0) ? entry.sizeBytes : 500LL * 1024 * 1024;
+        if (!ensureSpace(spaceNeeded)) {
+            std::cerr << "[DL] Not enough disk space for " << entry.name << ".\n";
+            return "";
+        }
+    }
+
+    // ── UNLOCKED: perform network download ───────────────────────────────
+
+    // Build curl command — progress written to a temp file we poll
+    char progressTmp[] = "/tmp/omnicon_curl_prog_XXXXXX";
+    int pfd = mkstemp(progressTmp);
+    if (pfd >= 0) close(pfd);
+
+    // Shell-safe single-quote escaping for both paths and URL
+    auto shellQuote = [](const std::string& s) -> std::string {
+        std::string q = "'";
+        for (char c : s) { if (c == '\'') q += "'\"'\"'"; else q += c; }
+        return q + "'";
+    };
+
+    // Derive the URL origin for use as a Referer (satisfies hotlink-protection checks).
+    std::string referer = entry.url;
+    {
+        auto p = referer.find("://");
+        if (p != std::string::npos) {
+            auto s = referer.find('/', p + 3);
+            referer = (s != std::string::npos) ? referer.substr(0, s + 1) : referer + "/";
+        }
+    }
+
+    std::string curlCmd = "curl --location --fail --silent --show-error"
+                          " --user-agent 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36"
+                          " (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'"
+                          " --referer " + shellQuote(referer) +
+                          " --retry 3 --retry-delay 2"
+                          " -o " + shellQuote(tmpPath) +
+                          " " + shellQuote(entry.url) +
+                          " 2>" + std::string(progressTmp);
+
+    if (progress) {
+        // For simple progress: we just report 0% before and 100% after
+        // (non-trivial polling would require a separate thread)
+        progress(0, spaceNeeded);
+    }
+
+    int rc = system(curlCmd.c_str()); // NOLINT
+
+    // Read curl's error output before deleting the temp file
+    std::string curlError;
+    if (pfd >= 0) {
+        std::ifstream ef(progressTmp);
+        if (ef) {
+            std::ostringstream es; es << ef.rdbuf();
+            curlError = es.str();
+        }
+        unlink(progressTmp);
+    }
+
+    if (rc != 0) {
+        std::cerr << "[DL] curl failed for " << entry.url << " (exit " << rc << ")";
+        if (!curlError.empty()) std::cerr << "\n[DL] curl error: " << curlError;
+        std::cerr << "\n";
+
+        // If it was a 404, try to recover via archive.org metadata fallback.
+        bool is404 = curlError.find("404") != std::string::npos;
+        if (is404) {
+            std::string altUrl = archiveOrgFixUrl(entry.url);
+            if (!altUrl.empty() && altUrl != entry.url) {
+                std::cout << "[DL] Retrying with corrected URL...\n";
+                // Re-use the same tmpPath; rebuild the command with the new URL
+                std::string altReferer = altUrl;
+                {
+                    auto p = altReferer.find("://");
+                    if (p != std::string::npos) {
+                        auto s = altReferer.find('/', p + 3);
+                        altReferer = (s != std::string::npos)
+                                     ? altReferer.substr(0, s + 1) : altReferer + "/";
+                    }
+                }
+                char p2tmp[] = "/tmp/omnicon_curl_prog_XXXXXX";
+                int p2fd = mkstemp(p2tmp); if (p2fd >= 0) close(p2fd);
+                std::string altCmd = "curl --location --fail --silent --show-error"
+                                     " --user-agent 'Mozilla/5.0 (X11; Linux x86_64)"
+                                     " AppleWebKit/537.36 (KHTML, like Gecko)"
+                                     " Chrome/124.0.0.0 Safari/537.36'"
+                                     " --referer " + shellQuote(altReferer) +
+                                     " --retry 2 --retry-delay 2"
+                                     " -o " + shellQuote(tmpPath) +
+                                     " " + shellQuote(altUrl) +
+                                     " 2>" + std::string(p2tmp);
+                int rc2 = system(altCmd.c_str()); // NOLINT
+                std::string altError;
+                if (p2fd >= 0) {
+                    std::ifstream ef2(p2tmp);
+                    if (ef2) { std::ostringstream es; es << ef2.rdbuf(); altError = es.str(); }
+                    unlink(p2tmp);
+                }
+                if (rc2 == 0) {
+                    // Fallback succeeded — clear error state and let the
+                    // extraction logic below handle the downloaded file.
+                    rc = 0;
+                    curlError.clear();
+                    if (resolvedUrlOut) *resolvedUrlOut = altUrl;
+                    goto download_succeeded; // NOLINT
+                } else {
+                    std::cerr << "[DL] Fallback also failed";
+                    if (!altError.empty()) std::cerr << ": " << altError;
+                    std::cerr << "\n";
+                }
+            }
+        }
+
+        if (errorOut) *errorOut = curlError;
+        unlink(tmpPath.c_str());
+        return "";
+    }
+    download_succeeded:
+
+    if (progress) progress(spaceNeeded, spaceNeeded);
+
+    // Determine if it's an archive
+    std::string ext = fs::path(tmpPath).extension().string();
+    std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+
+    std::string finalPath;
+    if (ext == ".zip" || ext == ".7z") {
+        std::cout << "[DL] Extracting " << tmpPath << "...\n";
+        finalPath = extractRom(tmpPath, romsDir_);
+        unlink(tmpPath.c_str());
+        if (finalPath.empty()) {
+            std::cerr << "[DL] No ROM found inside archive.\n";
+            return "";
+        }
+    } else {
+        // Move to romsDir
+        finalPath = (fs::path(romsDir_) / fs::path(tmpPath).filename()).string();
+        // strip "_tmp_" prefix from final name
+        std::string base = fs::path(tmpPath).filename().string();
+        if (base.rfind("_tmp_", 0) == 0) base = base.substr(5);
+        finalPath = (fs::path(romsDir_) / base).string();
+        std::error_code ec;
+        fs::rename(tmpPath, finalPath, ec);
+        if (ec) {
+            std::cerr << "[DL] Failed to move file: " << ec.message() << "\n";
+            return "";
+        }
+    }
+
+    // ── Locked: record result ────────────────────────────────────────────
+    {
+        std::lock_guard<std::recursive_mutex> lock(mutex_);
+        urlToLocal_[entry.url] = finalPath;
+        queue_.erase(std::remove_if(queue_.begin(), queue_.end(),
+            [&](const QueuedDownload& q){ return q.url == entry.url; }), queue_.end());
+        saveToDisk();
+    }
+
+    std::cout << "[DL] Saved: " << finalPath << "\n";
+    return finalPath;
+}
+
+// ─── Batch download ──────────────────────────────────────────────────────────────────
+std::map<std::string, std::string> DownloadManager::downloadBatch(
+        const std::vector<QueuedDownload>& entries,
+        int maxWorkers,
+        std::function<void(const std::string&, long long, long long)> progress) {
+
+    if (entries.empty()) return {};
+
+    int slots = (maxWorkers > 0) ? maxWorkers : static_cast<int>(entries.size());
+    Semaphore sem(slots);
+
+    std::vector<std::future<std::pair<std::string, std::string>>> futures;
+    futures.reserve(entries.size());
+
+    for (const auto& entry : entries) {
+        sem.acquire(); // block until a worker slot is free
+        futures.push_back(std::async(std::launch::async,
+            [this, entry, &sem, progress]() -> std::pair<std::string, std::string> {
+                std::function<void(long long, long long)> prog;
+                if (progress) {
+                    prog = [&](long long r, long long t) { progress(entry.url, r, t); };
+                }
+                std::string path = downloadBlocking(entry, prog);
+                sem.release();
+                return {entry.url, path};
+            }));
+    }
+
+    std::map<std::string, std::string> results;
+    for (auto& f : futures) {
+        auto kv = f.get();
+        results[kv.first] = kv.second;
+    }
+    return results;
+}

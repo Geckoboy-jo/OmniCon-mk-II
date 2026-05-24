@@ -107,6 +107,9 @@ public:
     bool isLoaded() const { return romLoaded && backendPtr != nullptr; }
     bool isEmulatorRunning() const { return isRunning.load(); }
     string getRomPath() const { return romPath; }
+
+    std::vector<unsigned char> dumpSaveData() const;
+    bool restoreSaveData(const std::vector<unsigned char>& data);
 };
 
 #endif // ATARI5200_HPP
