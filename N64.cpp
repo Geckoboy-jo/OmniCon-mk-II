@@ -63,18 +63,17 @@ public:
     ~Mupen64PlusBackend() { teardown(); }
 
     bool init(const std::string& cfgDir) {
-            logState("init() called with cfgDir: " + cfgDir);
+        logState("init() called with cfgDir: " + cfgDir);
         configDir = cfgDir;
         fs::create_directories(configDir);
 
         coreHandle = dlopen(CORE_SO, RTLD_NOW | RTLD_GLOBAL);
-            logState("dlopen(CORE_SO) returned: " + std::to_string((uintptr_t)coreHandle));
+        logState("dlopen(CORE_SO) returned: " + std::to_string((uintptr_t)coreHandle));
         if (!coreHandle) {
-                        logState("dlopen failed for CORE_SO");
+            logState("dlopen failed for CORE_SO");
             std::cerr << "[N64] Cannot load " << CORE_SO << ": " << dlerror() << "\n";
             return false;
         }
-
 
 #define LOAD(sym, type) \
     fn##sym = reinterpret_cast<type>(dlsym(coreHandle, #sym)); \
@@ -95,12 +94,82 @@ public:
         m64p_error e = fnCoreStartup(API_VER, configDir.c_str(), DATA_DIR,
                         nullptr, n64DebugCb, nullptr, n64StateCb);
         if (e != M64ERR_SUCCESS) {
-                        logState("fnCoreStartup failed with error code: " + std::to_string(e));
+            logState("fnCoreStartup failed with error code: " + std::to_string(e));
             std::cerr << "[N64] CoreStartup failed: " << e << "\n";
             return false;
         }
+
+        // Print the config directory and expected config file path
+        std::cerr << "[N64][DEBUG] Config directory: " << configDir << std::endl;
+        std::cerr << "[N64][DEBUG] Expected config file: " << configDir << "/mupen64plus.cfg" << std::endl;
+
+        // --- RUNTIME KEY REMAPPING VIA CONFIG API ---
+        // This block uses the mupen64plus config API to set key bindings at runtime.
+        // It must be done after CoreStartup but before loading plugins.
+        typedef m64p_error (*ptr_ConfigGetSection)(const char*, m64p_handle*);
+        typedef m64p_error (*ptr_ConfigSetString)(m64p_handle, const char*, const char*);
+        typedef m64p_error (*ptr_ConfigSectionCount)(int*);
+        typedef m64p_error (*ptr_ConfigGetSectionName)(int, const char**, m64p_handle*);
+        typedef m64p_error (*ptr_ConfigListParameters)(m64p_handle, const char***, int*);
+        typedef m64p_error (*ptr_ConfigGetParameterType)(m64p_handle, const char*, int*);
+        typedef m64p_error (*ptr_ConfigGetParameter)(m64p_handle, const char*, void*, int);
+        typedef m64p_error (*ptr_ConfigSaveFile)(void);
+
+        auto fnConfigGetSection = (ptr_ConfigGetSection)dlsym(coreHandle, "ConfigGetSection");
+        auto fnConfigSetString  = (ptr_ConfigSetString)dlsym(coreHandle, "ConfigSetParameter");
+        auto fnConfigSectionCount = (ptr_ConfigSectionCount)dlsym(coreHandle, "ConfigSectionCount");
+        auto fnConfigGetSectionName = (ptr_ConfigGetSectionName)dlsym(coreHandle, "ConfigGetSectionName");
+        auto fnConfigListParameters = (ptr_ConfigListParameters)dlsym(coreHandle, "ConfigListParameters");
+        auto fnConfigGetParameterType = (ptr_ConfigGetParameterType)dlsym(coreHandle, "ConfigGetParameterType");
+        auto fnConfigGetParameter = (ptr_ConfigGetParameter)dlsym(coreHandle, "ConfigGetParameter");
+        auto fnConfigSaveFile   = (ptr_ConfigSaveFile)dlsym(coreHandle, "ConfigSaveFile");
+
+        if (fnConfigGetSection && fnConfigSetString && fnConfigSectionCount && fnConfigGetSectionName && fnConfigListParameters && fnConfigGetParameterType && fnConfigGetParameter && fnConfigSaveFile) {
+            int sectionCount = 0;
+            if (fnConfigSectionCount(&sectionCount) == M64ERR_SUCCESS) {
+                std::cerr << "[N64][DEBUG] Config section count: " << sectionCount << std::endl;
+                for (int i = 0; i < sectionCount; ++i) {
+                    const char* sectionName = nullptr;
+                    m64p_handle sectionHandle = nullptr;
+                    if (fnConfigGetSectionName(i, &sectionName, &sectionHandle) == M64ERR_SUCCESS && sectionName) {
+                        std::cerr << "[N64][DEBUG] Section " << i << ": " << sectionName << std::endl;
+                        // Only set keys for Input-SDL-Control* sections
+                        std::string secName(sectionName);
+                        if (secName.find("Input-SDL-Control") == 0) {
+                            // Print all keys in this section
+                            const char** paramList = nullptr;
+                            int paramCount = 0;
+                            if (fnConfigListParameters(sectionHandle, &paramList, &paramCount) == M64ERR_SUCCESS && paramList) {
+                                std::cerr << "[N64][DEBUG] Keys in section '" << secName << "':" << std::endl;
+                                for (int p = 0; p < paramCount; ++p) {
+                                    std::cerr << "    " << paramList[p] << std::endl;
+                                }
+                            }
+                            // Set key bindings using key() format for mupen64plus-input-sdl
+                            struct KeyMap { const char* key; const char* value; } keymap[] = {
+                                {"A", "key(N)"}, {"B", "key(M)"}, {"Start", "key(Z)"}, {"DPad R", "key(D)"}, {"DPad L", "key(A)"},
+                                {"DPad D", "key(S)"}, {"DPad U", "key(W)"}, {"C Button R", "key(K)"}, {"C Button L", "key(J)"},
+                                {"C Button D", "key(4)"}, {"C Button U", "key(1)"}, {"L", "key(Q)"}, {"R", "key(E)"}, {"Z", "key(1)"},
+                                {"Select", "key(X)"}, {"Home", "key(Tab)"}, {"L3", "key(P)"}, {"R3", "key(O)"}, {"Fire", "key(Space)"}
+                            };
+                            for (const auto& km : keymap) {
+                                m64p_error setRes = fnConfigSetString(sectionHandle, km.key, km.value);
+                                std::cerr << "[N64][DEBUG] Set '" << km.key << "' = '" << km.value << "' in section '" << secName << "': " << (setRes == M64ERR_SUCCESS ? "OK" : "FAIL") << std::endl;
+                            }
+                        }
+                    }
+                }
+                fnConfigSaveFile();
+                logState("[N64] Runtime key remapping applied to all Input-SDL-Control* sections via config API");
+            } else {
+                logState("[N64] Failed to enumerate config sections for runtime remap");
+            }
+        } else {
+            logState("[N64] Mupen64Plus config API not available for runtime remap");
+        }
+
         coreInited = true;
-            logState("init() complete, coreInited = true");
+        logState("init() complete, coreInited = true");
         return true;
     }
 
