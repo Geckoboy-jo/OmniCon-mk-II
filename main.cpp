@@ -39,7 +39,7 @@ struct DatabaseConfig {
 
 bool isSupportedUrl(const std::string& url);
 
-constexpr const char* kDatabaseHost = "127.0.0.1";
+constexpr const char* kDatabaseHost = "147.224.62.87";
 constexpr const char* kDatabasePort = "13306";
 constexpr const char* kDatabaseUser = "block_app";
 constexpr const char* kDatabaseName = "omnicon_blocks";
