@@ -531,7 +531,9 @@ def _load_omnicon_env():
     """Parse ~/.oci/omnicon_env (export KEY=VALUE) and inject into os.environ."""
     home = os.environ.get("HOME", "")
     path = os.path.join(home, ".oci", "omnicon_env")
+    print(f"[debug] Loading env from: {path}")
     if not os.path.isfile(path):
+        print(f"[debug] Env file not found: {path}")
         return
     with open(path, encoding="utf-8", errors="replace") as f:
         for line in f:
@@ -546,8 +548,9 @@ def _load_omnicon_env():
             key, val = line[:eq], line[eq + 1:]
             if len(val) >= 2 and val[0] in ('"', "'") and val[-1] == val[0]:
                 val = val[1:-1]
-            if key not in os.environ:
-                os.environ[key] = val
+            # Always set the variable, even if already present or empty
+            os.environ[key] = val
+            print(f"[debug] Set {key}={val}")
 
 
 def _collect_db_games_via_driver(host, port, user, password, service):
