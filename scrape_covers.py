@@ -999,6 +999,7 @@ def _scrape_db_game_worker(task):
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
 def main():
+    _load_omnicon_env()  # Ensure Oracle DB env vars are loaded automatically
     parser = argparse.ArgumentParser(description="Scrape cover art for OmniCon ROMs")
     parser.add_argument("--roms-dir",   default="Roms",         help="Path to ROMs folder")
     parser.add_argument("--covers-dir", default="saves/covers", help="Path to covers folder")
