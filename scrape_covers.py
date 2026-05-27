@@ -873,9 +873,6 @@ def _generate_name_variants(name, system_name=None):
 
 # --- AI-powered image search fallback (Bing Image Search API) ---
 def ai_image_search_cover(query, dest, api_key=None):
-        if not check_wikimedia_connectivity():
-            print("[ai] Wikimedia Commons is not reachable. Check your network connection.")
-            return False
     """Use Wikimedia Commons API to find and download a cover image for the query."""
     endpoint = "https://commons.wikimedia.org/w/api.php"
     params = {
