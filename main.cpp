@@ -1200,8 +1200,13 @@ int main()
         config = promptDatabaseConfig();
     }
 
-    // Oracle DB config — uses env vars; prompts for any that are missing
-    OracleDBConfig oracleCfg = promptOracleConfig();
+    // Hardcoded OracleDBConfig
+    OracleDBConfig oracleCfg;
+    oracleCfg.host = "147.224.62.87"; // updated to public DB IP
+    oracleCfg.port = 13306;
+    oracleCfg.user = "omnicon";
+    oracleCfg.password = "Geckoboy07!1word";
+    oracleCfg.service = "omnicon";
 
     // Persistent download queue
     DownloadManager::instance().init("saves/download_queue.json", "Roms");
@@ -1547,7 +1552,7 @@ int main()
             && input.rfind(playPs1Command, 0) != 0
             && input.rfind(playGenesisCommand, 0) != 0
             && input.rfind(playN64Command, 0) != 0;
-        const bool isPlaySnesCommand    = input.rfind(playSnesCommand, 0)    == 0;
+        const bool isPlaySnesCommand       = input.rfind(playSnesCommand, 0)    == 0;
         const bool isPlayGbCommand      = input.rfind(playGbCommand, 0)      == 0;
         const bool isPlayGbcCommand     = input.rfind(playGbcCommand, 0)     == 0;
         const bool isPlayAtari2600Command = input.rfind(playAtari2600Command, 0) == 0;

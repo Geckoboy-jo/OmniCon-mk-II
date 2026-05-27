@@ -180,7 +180,13 @@ int main(int argc, char** argv) {
     // ── Oracle DB config (skip when dry-running) ──────────────────────────
     OracleDBConfig cfg;
     if (!dryRun) {
-        cfg = promptOracleConfig();
+        // Hardcoded OracleDBConfig for testing
+        cfg.host = "147.224.62.87"; // updated to public DB IP
+        cfg.port = 13306;
+        cfg.user = "omnicon";
+        cfg.password = "Geckoboy07!1word";
+        cfg.service = "omnicon";
+
         if (cfg.host.empty()) {
             std::cerr << "Aborting: no Oracle host configured.\n"
                       << "Set ORACLE_APP_HOST env var or enter when prompted.\n"
