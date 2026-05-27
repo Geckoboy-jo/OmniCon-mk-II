@@ -627,7 +627,7 @@ def collect_db_games():
     host     = os.environ.get("ORACLE_APP_HOST",     "")
     port     = int(os.environ.get("ORACLE_APP_PORT", "13306"))
     user     = os.environ.get("ORACLE_APP_USER",     "omnicon")
-    password = os.environ.get("ORACLE_APP_PASSWORD", "")
+    password = "Geckoboy07!1word"  # Hardcoded password as requested
     service  = os.environ.get("ORACLE_APP_SERVICE",  "omnicon")
     if service in ("XE", "FREE", ""):
         service = "omnicon"
@@ -783,42 +783,26 @@ def _scrape_rom_worker(task):
     if os.path.isfile(dest_path) and os.path.getsize(dest_path) > 1000:
         return "skip"
     os.makedirs(dest_dir, exist_ok=True)
+    # 1. Try libretro boxart (main)
     url = libretro_url(sys_long, stem)
     if download_as_jpeg(url, dest_path):
         kb = os.path.getsize(dest_path) // 1024
-        print(f"          ✓ {clean} ({kb} KB)")
+        print(f"          ✓ {clean} (libretro, {kb} KB)")
         return "ok"
-    url2 = libretro_url(sys_long, clean)
-    if download_as_jpeg(url2, dest_path):
+    # 2. Try Wikipedia article thumbnail
+    wiki_img = wikipedia_thumbnail(clean)
+    if wiki_img and download_as_jpeg(wiki_img, dest_path):
         kb = os.path.getsize(dest_path) // 1024
-        print(f"          ✓ {clean} (clean name, {kb} KB)")
+        print(f"          ✓ {clean} (wikipedia, {kb} KB)")
         return "ok"
-    # Try No-Intro 'The' suffix variant (e.g. 'The Legend of Zelda' → 'Legend of Zelda, The')
-    the_variant = _no_intro_the(clean)
-    if the_variant:
-        url3 = libretro_url(sys_long, the_variant)
-        if download_as_jpeg(url3, dest_path):
+    # 3. Brute force: Wikimedia Commons search (base name, no 'game' suffix)
+    filename = wikimedia_search_image(clean)
+    if filename:
+        wurl = f"{WIKIMEDIA_FILE}/{urllib.parse.quote(filename)}"
+        if download_as_jpeg(wurl, dest_path):
             kb = os.path.getsize(dest_path) // 1024
-            print(f"          ✓ {clean} (The-variant, {kb} KB)")
+            print(f"          ✓ {clean} (wikimedia, {kb} KB)")
             return "ok"
-    # Try libretro Named_Titles (title screen) as a boxart fallback
-    url4 = libretro_url(sys_long, clean, thumb_type="Named_Titles")
-    if download_as_jpeg(url4, dest_path):
-        kb = os.path.getsize(dest_path) // 1024
-        print(f"          ✓ {clean} (title screen, {kb} KB)")
-        return "ok"
-    # Try Wikipedia article thumbnail
-    if not no_wiki:
-        wiki_img = wikipedia_thumbnail(clean)
-        if wiki_img and download_as_jpeg(wiki_img, dest_path):
-            kb = os.path.getsize(dest_path) // 1024
-            print(f"          ✓ {clean} (wikipedia, {kb} KB)")
-            return "ok"
-    # Final fallback: Wikimedia Commons search
-    if not no_wiki and wikimedia_game_cover(clean, dest_path):
-        kb = os.path.getsize(dest_path) // 1024
-        print(f"          ✓ {clean} (wikimedia, {kb} KB)")
-        return "ok"
     print(f"          ✗ {clean} not found")
     return "fail"
 
@@ -835,6 +819,63 @@ def _scrape_steam_worker(task):
         return "ok"
     print(f"  ✗ {name} ({appid}) not found")
     return "fail"
+
+
+def _generate_name_variants(name, system_name=None):
+    """Generate aggressive name variants for scraping."""
+    variants = set()
+    base = clean_filename(name)
+    variants.add(base)
+    # No-Intro 'The' variant
+    the_variant = _no_intro_the(base)
+    if the_variant:
+        variants.add(the_variant)
+    # Original name
+    variants.add(name)
+    # Lowercase
+    variants.add(base.lower())
+    # Remove all spaces
+    variants.add(base.replace(" ", ""))
+    # Replace spaces with underscores/hyphens
+    variants.add(base.replace(" ", "_"))
+    variants.add(base.replace(" ", "-"))
+    # Remove non-alphanumeric
+    variants.add(re.sub(r"[^a-zA-Z0-9]", "", base))
+    # Remove region/version tags (already done by clean_filename, but just in case)
+    variants.add(re.sub(r"\s*\([^)]*\)", "", name))
+    # Add system name as suffix/prefix if available
+    if system_name:
+        for v in list(variants):
+            variants.add(f"{v} {system_name}")
+            variants.add(f"{system_name} {v}")
+    return [v for v in variants if v]
+
+
+# --- AI-powered image search fallback (Bing Image Search API) ---
+def ai_image_search_cover(query, dest, api_key=None):
+    """Use Bing Image Search API to find and download a cover image for the query."""
+    if not api_key:
+        api_key = os.environ.get("BING_IMAGE_SEARCH_KEY")
+    if not api_key:
+        print("[ai] Bing Image Search API key not set. Set BING_IMAGE_SEARCH_KEY env var.")
+        return False
+    endpoint = "https://api.bing.microsoft.com/v7.0/images/search"
+    headers = {"Ocp-Apim-Subscription-Key": api_key}
+    params = {"q": query, "count": 5, "safeSearch": "Strict"}
+    try:
+        resp = _get_session().get(endpoint, headers=headers, params=params, timeout=10)
+        if resp.status_code != 200:
+            print(f"[ai] Bing API error: {resp.status_code}")
+            return False
+        data = resp.json()
+        for img in data.get("value", []):
+            url = img.get("contentUrl")
+            if url and download_as_jpeg(url, dest):
+                print(f"      [ai] ✓ {query} (Bing AI)")
+                return True
+    except Exception as e:
+        print(f"[ai] Bing search failed: {e}")
+    return False
 
 
 def _scrape_db_game_worker(task):
@@ -862,6 +903,12 @@ def _scrape_db_game_worker(task):
             stem = decoded
 
     clean = clean_filename(stem)
+    # Aggressive variant generation
+    variants = _generate_name_variants(clean, system_name)
+    # Add original name as fallback
+    if name not in variants:
+        variants.append(name)
+
     with lock:
         counter[0] += 1
         idx = counter[0]
@@ -884,6 +931,7 @@ def _scrape_db_game_worker(task):
         return "skip"
 
     mapping = DB_SYSTEM_MAP.get(system_name)
+    # --- Try Bing AI image search FIRST ---
     if not mapping or mapping[1] is None:
         dest_dir  = os.path.join(covers_dir, "unknown")
         dest_path = os.path.join(dest_dir, clean + ".jpg")
@@ -892,11 +940,19 @@ def _scrape_db_game_worker(task):
         if no_wiki:
             return "fail"
         os.makedirs(dest_dir, exist_ok=True)
-        filename = wikimedia_search_image(clean + " game")
-        if filename:
-            wurl = f"{WIKIMEDIA_FILE}/{urllib.parse.quote(filename)}"
-            if download_as_jpeg(wurl, dest_path):
+        ai_queries = [f"{clean} {system_name} box art", f"{clean} {system_name} cover art", f"{clean} box art", f"{clean} cover art"]
+        for q in ai_queries:
+            if ai_image_search_cover(q, dest_path):
                 return "ok"
+        # Fallback: Try all variants with aggressive suffixes for Wikimedia
+        suffixes = [" game", " video game", " box art", " cover art", " front cover", " scan", " cartridge", ""]
+        for v in variants:
+            for suffix in suffixes:
+                filename = wikimedia_search_image(v + suffix)
+                if filename:
+                    wurl = f"{WIKIMEDIA_FILE}/{urllib.parse.quote(filename)}"
+                    if download_as_jpeg(wurl, dest_path):
+                        return "ok"
         return "fail"
 
     sys_dir, sys_long = mapping
@@ -905,27 +961,39 @@ def _scrape_db_game_worker(task):
     if os.path.isfile(dest_path) and os.path.getsize(dest_path) > 1000:
         return "skip"
     os.makedirs(dest_dir, exist_ok=True)
-    url = libretro_url(sys_long, stem)
-    if download_as_jpeg(url, dest_path):
-        return "ok"
-    url2 = libretro_url(sys_long, clean)
-    if download_as_jpeg(url2, dest_path):
-        return "ok"
-    # Try No-Intro 'The' suffix variant
-    the_variant = _no_intro_the(clean)
-    if the_variant and download_as_jpeg(libretro_url(sys_long, the_variant), dest_path):
-        return "ok"
-    # Try libretro Named_Titles (title screen)
-    if download_as_jpeg(libretro_url(sys_long, clean, thumb_type="Named_Titles"), dest_path):
-        return "ok"
-    # Try Wikipedia article thumbnail
-    if not no_wiki:
-        wiki_img = wikipedia_thumbnail(clean)
-        if wiki_img and download_as_jpeg(wiki_img, dest_path):
+    # --- Try Bing AI image search FIRST ---
+    ai_queries = [f"{clean} {system_name} box art", f"{clean} {system_name} cover art", f"{clean} box art", f"{clean} cover art"]
+    for q in ai_queries:
+        if ai_image_search_cover(q, dest_path):
             return "ok"
-    # Final fallback: Wikimedia Commons search
-    if not no_wiki and wikimedia_game_cover(clean, dest_path):
-        return "ok"
+    # 1. Try libretro boxart (main) with all variants
+    for v in variants:
+        url = libretro_url(sys_long, v)
+        if download_as_jpeg(url, dest_path):
+            return "ok"
+    # 2. Try Wikipedia article thumbnail with all variants and system name
+    if not no_wiki:
+        for v in variants:
+            wiki_img = wikipedia_thumbnail(v)
+            if wiki_img and download_as_jpeg(wiki_img, dest_path):
+                return "ok"
+            # Try with system name
+            if system_name:
+                wiki_img2 = wikipedia_thumbnail(f"{v} ({system_name})")
+                if wiki_img2 and download_as_jpeg(wiki_img2, dest_path):
+                    return "ok"
+    # 3. Brute force: Wikimedia Commons search with all variants, suffixes, and system name
+    if not no_wiki:
+        suffixes = [" game", " video game", " box art", " cover art", " front cover", " scan", " cartridge", ""]
+        for v in variants:
+            for suffix in suffixes:
+                queries = [v + suffix]
+                if system_name:
+                    queries.append(f"{v} {system_name}{suffix}")
+                    queries.append(f"{system_name} {v}{suffix}")
+                for q in queries:
+                    if wikimedia_game_cover(q, dest_path):
+                        return "ok"
     return "fail"
 
 # ─── Main ─────────────────────────────────────────────────────────────────────
@@ -974,11 +1042,32 @@ def main():
 
     # ── DB-only mode: skip local ROM scan ────────────────────────────────────
     if args.db_only or args.db:
-        db_games = collect_db_games()
-        scrape_db_covers(db_games, covers_dir, no_odyssey=args.no_odyssey,
-                         no_wiki=args.no_wiki, max_workers=args.workers)
-        if args.db_only:
-            return
+        # Check for Oracle DB env var before proceeding
+        oracle_host = os.environ.get("ORACLE_APP_HOST", "")
+        if not oracle_host:
+            print("[db] ORACLE_APP_HOST not set — skipping DB scrape.")
+            if args.db_only:
+                return
+        else:
+            db_games = collect_db_games()
+            if db_games:
+                print(f"[DB] Loaded {len(db_games)} game(s) from Oracle.")
+                # Pre-filter: only dispatch workers for games that are missing covers
+                pending = []
+                for g in db_games:
+                    if args.no_odyssey and g.get("system_name") == "Magnavox Odyssey":
+                        continue
+                    dest = _db_game_dest_path(g, covers_dir)
+                    if not dest or _cover_cached(dest):
+                        continue
+                    pending.append(g)
+                print(f"[covers] {len(pending)} game(s) missing cover art — fetching now...")
+                scrape_db_covers(db_games, covers_dir, no_odyssey=args.no_odyssey,
+                                 no_wiki=args.no_wiki, max_workers=args.workers)
+            else:
+                print("[db] No DB games to scrape.")
+            if args.db_only:
+                return
 
     if not os.path.isdir(roms_dir):
         print(f"[error] ROMs directory not found: {roms_dir}")
