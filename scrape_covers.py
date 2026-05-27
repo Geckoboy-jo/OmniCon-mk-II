@@ -625,6 +625,11 @@ def collect_db_games():
     Skips status='failed' rows (same as GameLibrary::loadFromDB).
     Tries a Python MySQL driver first; falls back to the `mysql` CLI client.
     """
+    # Hardcode ORACLE_APP_HOST to match the shell environment if present
+    shell_host = os.environ.get("ORACLE_APP_HOST")
+    if shell_host:
+        os.environ["ORACLE_APP_HOST"] = shell_host
+        print(f"[debug] Hardcoded ORACLE_APP_HOST from shell: {shell_host}")
     _load_omnicon_env()
 
     host     = os.environ.get("ORACLE_APP_HOST",     "")
@@ -1002,6 +1007,11 @@ def _scrape_db_game_worker(task):
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
 def main():
+    # Hardcode ORACLE_APP_HOST to match the shell environment if present
+    shell_host = os.environ.get("ORACLE_APP_HOST")
+    if shell_host:
+        os.environ["ORACLE_APP_HOST"] = shell_host
+        print(f"[debug] Hardcoded ORACLE_APP_HOST from shell: {shell_host}")
     _load_omnicon_env()  # Ensure Oracle DB env vars are loaded automatically
     parser = argparse.ArgumentParser(description="Scrape cover art for OmniCon ROMs")
     parser.add_argument("--roms-dir",   default="Roms",         help="Path to ROMs folder")
