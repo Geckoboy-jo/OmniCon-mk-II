@@ -1,3 +1,16 @@
+import socket
+def check_wikimedia_connectivity(timeout=3):
+    """Check if commons.wikimedia.org is reachable on port 443 (HTTPS)."""
+    try:
+        socket.setdefaulttimeout(timeout)
+        host = "commons.wikimedia.org"
+        port = 443
+        s = socket.create_connection((host, port), timeout)
+        s.close()
+        return True
+    except Exception as e:
+        print(f"[ai] Network check failed: {e}")
+        return False
 #!/usr/bin/env python3
 """
 scrape_covers.py — Download box art for OmniCon ROMs.
@@ -860,28 +873,36 @@ def _generate_name_variants(name, system_name=None):
 
 # --- AI-powered image search fallback (Bing Image Search API) ---
 def ai_image_search_cover(query, dest, api_key=None):
-    """Use Bing Image Search API to find and download a cover image for the query."""
-    if not api_key:
-        api_key = os.environ.get("BING_IMAGE_SEARCH_KEY")
-    if not api_key:
-        print("[ai] Bing Image Search API key not set. Set BING_IMAGE_SEARCH_KEY env var.")
-        return False
-    endpoint = "https://api.bing.microsoft.com/v7.0/images/search"
-    headers = {"Ocp-Apim-Subscription-Key": api_key}
-    params = {"q": query, "count": 5, "safeSearch": "Strict"}
+        if not check_wikimedia_connectivity():
+            print("[ai] Wikimedia Commons is not reachable. Check your network connection.")
+            return False
+    """Use Wikimedia Commons API to find and download a cover image for the query."""
+    endpoint = "https://commons.wikimedia.org/w/api.php"
+    params = {
+        "action": "query",
+        "format": "json",
+        "prop": "imageinfo",
+        "generator": "search",
+        "gsrsearch": query + " filetype:bitmap",
+        "gsrlimit": 5,
+        "iiprop": "url",
+        "iiurlwidth": 600
+    }
     try:
-        resp = _get_session().get(endpoint, headers=headers, params=params, timeout=10)
+        resp = _get_session().get(endpoint, params=params, timeout=10)
         if resp.status_code != 200:
-            print(f"[ai] Bing API error: {resp.status_code}")
+            print(f"[ai] Wikimedia API error: {resp.status_code}")
             return False
         data = resp.json()
-        for img in data.get("value", []):
-            url = img.get("contentUrl")
+        pages = data.get("query", {}).get("pages", {})
+        for page in pages.values():
+            imageinfo = page.get("imageinfo", [{}])[0]
+            url = imageinfo.get("thumburl") or imageinfo.get("url")
             if url and download_as_jpeg(url, dest):
-                print(f"      [ai] ✓ {query} (Bing AI)")
+                print(f"      [ai] ✓ {query} (Wikimedia)")
                 return True
     except Exception as e:
-        print(f"[ai] Bing search failed: {e}")
+        print(f"[ai] Wikimedia search failed: {e}")
     return False
 
 
