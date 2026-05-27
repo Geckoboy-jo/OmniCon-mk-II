@@ -1,30 +1,16 @@
 import socket
-def check_wikimedia_connectivity(timeout=3):
-    """Check if commons.wikimedia.org is reachable on port 443 (HTTPS)."""
-    try:
-        socket.setdefaulttimeout(timeout)
-        host = "commons.wikimedia.org"
-        port = 443
-        s = socket.create_connection((host, port), timeout)
-        s.close()
-        return True
-    except Exception as e:
-        print(f"[ai] Network check failed: {e}")
-        return False
-#!/usr/bin/env python3
 """
 scrape_covers.py — Download box art for OmniCon ROMs.
 
 Sources:
-  * libretro thumbnails CDN  — NES, SNES, GB, GBC, GBA, NDS, 3DS, Atari 2600/5200/800
-  * Wikimedia Commons API    — Magnavox Odyssey
-  * Steam CDN                — Steam games (requires a local Steam install)
+    * libretro thumbnails CDN  — NES, SNES, GB, GBC, GBA, NDS, 3DS, Atari 2600/5200/800
+    * Steam CDN                — Steam games (requires a local Steam install)
 
 No API key required for any source.
 
 Usage:
-    python3 scrape_covers.py [--roms-dir Roms] [--covers-dir saves/covers]
-                             [--steam-root PATH] [--no-steam] [--no-odyssey]
+        python3 scrape_covers.py [--roms-dir Roms] [--covers-dir saves/covers]
+                                                         [--steam-root PATH] [--no-steam] [--no-odyssey]
 """
 
 import os
@@ -115,8 +101,6 @@ SYSTEM_MAP = {
 }
 
 LIBRETRO_BASE  = "https://thumbnails.libretro.com"
-WIKIMEDIA_API  = "https://commons.wikimedia.org/w/api.php"
-WIKIMEDIA_FILE = "https://commons.wikimedia.org/wiki/Special:FilePath"
 STEAM_CDN      = "https://cdn.akamai.steamstatic.com/steam/apps"
 
 # Maps GameLibrary::systemName() strings → (sys_dir, libretro_long_name)
@@ -135,7 +119,7 @@ DB_SYSTEM_MAP = {
     "Sega Genesis":     ("genesis",   "Sega - Mega Drive - Genesis"),
     "Nintendo 64":      ("n64",       "Nintendo - Nintendo 64"),
     "PlayStation":       ("ps1",       "Sony - PlayStation"),
-    "Magnavox Odyssey": ("odyssey",   None),   # handled separately via Wikimedia
+    "Magnavox Odyssey": ("odyssey",   None),   # handled separately
     "Steam":            ("steam",     None),   # handled via Steam CDN (needs appid)
 }
 
@@ -184,14 +168,8 @@ def wikipedia_thumbnail(game_name: str) -> str:
     return data.get("thumbnail", {}).get("source", "")
 
 
-def wikimedia_game_cover(game_name: str, dest: str) -> bool:
-    """Search Wikimedia Commons for a game cover image and save it to dest."""
-    filename = wikimedia_search_image(f"{game_name} game cover")
-    if filename:
-        url = f"{WIKIMEDIA_FILE}/{urllib.parse.quote(filename)}"
-        if download_as_jpeg(url, dest):
-            return True
-    return False
+
+
 
 
 # ─── Per-thread HTTP session (connection pooling) ───────────────────────────
@@ -330,58 +308,11 @@ def fetch_json(url: str):
         return None
 
 
-# ─── Odyssey via Wikimedia Commons ────────────────────────────────────────────
 
 def odyssey_bare_name(stem: str) -> str:
     """'Odyssey - Tennis' → 'Tennis'"""
     prefix = "Odyssey - "
     return stem[len(prefix):] if stem.startswith(prefix) else stem
-
-
-def wikimedia_search_image(query: str) -> str:
-    """
-    Search Wikimedia Commons for the best matching image file.
-    Returns the raw filename (without 'File:' prefix) or empty string.
-    """
-    params = urllib.parse.urlencode({
-        "action":      "query",
-        "list":        "search",
-        "srsearch":    query,
-        "srnamespace": 6,       # NS 6 = File
-        "srlimit":     5,
-        "format":      "json",
-    })
-    data = fetch_json(f"{WIKIMEDIA_API}?{params}")
-    if not data:
-        return ""
-    results = data.get("query", {}).get("search", [])
-    if not results:
-        return ""
-    title = results[0]["title"]  # e.g. "File:Magnavox Odyssey Tennis.jpg"
-    if title.startswith("File:"):
-        title = title[5:]
-    return title
-
-
-def download_odyssey_cover(game_bare: str, dest: str) -> bool:
-    """
-    Download a Wikimedia Commons image for a Magnavox Odyssey game.
-    Tries multiple search queries in priority order.
-    """
-    queries = [
-        f"Magnavox Odyssey {game_bare} overlay",
-        f"Magnavox Odyssey {game_bare}",
-    ]
-    for q in queries:
-        print(f"          wikimedia: {q!r}")
-        filename = wikimedia_search_image(q)
-        if not filename:
-            continue
-        url = f"{WIKIMEDIA_FILE}/{urllib.parse.quote(filename)}"
-        print(f"          → {filename}")
-        if download_as_jpeg(url, dest):
-            return True
-    return False
 
 
 # ─── Steam library scan ───────────────────────────────────────────────────────
@@ -478,7 +409,7 @@ def download_steam_cover(appid: str, dest: str) -> bool:
     return False
 
 
-# ─── Unknown-system games via archive.org / Wikimedia ───────────────────────
+# ─── Unknown-system games via archive.org ───────────────────────
 
 def archive_identifier_from_url(url: str) -> str:
     """Extract archive.org item identifier from a download URL."""
@@ -520,18 +451,14 @@ def scrape_unknown_from_csv(csv_path: str, covers_dir: str):
                 ok += 1
                 time.sleep(0.3)
                 continue
-        # 2. Fallback: Wikimedia Commons search by game name
-        print(f"          wikimedia: {clean!r}")
-        filename = wikimedia_search_image(clean + " game")
-        if filename:
-            wurl = f"{WIKIMEDIA_FILE}/{urllib.parse.quote(filename)}"
-            print(f"          → {filename}")
-            if download_as_jpeg(wurl, dest_path):
-                kb = os.path.getsize(dest_path) // 1024
-                print(f"          ✓ saved ({kb} KB)")
-                ok += 1
-                time.sleep(0.4)
-                continue
+        # 2. Fallback: Wikipedia article thumbnail by game name
+        wiki_img = wikipedia_thumbnail(clean)
+        if wiki_img and download_as_jpeg(wiki_img, dest_path):
+            kb = os.path.getsize(dest_path) // 1024
+            print(f"          ✓ saved ({kb} KB)")
+            ok += 1
+            time.sleep(0.4)
+            continue
         print(f"          ✗ not found")
         fail += 1
         time.sleep(0.3)
@@ -784,17 +711,13 @@ def _scrape_rom_worker(task):
     if ext == ".odyssey":
         if no_odyssey:
             return "skip"
-        bare      = odyssey_bare_name(stem)
         dest_dir  = os.path.join(covers_dir, "odyssey")
         dest_path = os.path.join(dest_dir, clean + ".jpg")
         if os.path.isfile(dest_path) and os.path.getsize(dest_path) > 1000:
             return "skip"
         os.makedirs(dest_dir, exist_ok=True)
-        if download_odyssey_cover(bare, dest_path):
-            kb = os.path.getsize(dest_path) // 1024
-            print(f"          ✓ {clean} ({kb} KB)")
-            return "ok"
-        print(f"          ✗ {clean} not found on Wikimedia Commons")
+        # No fallback: just fail
+        print(f"          ✗ {clean} not found")
         return "fail"
 
     sys_dir, sys_long = SYSTEM_MAP[ext]
@@ -809,20 +732,20 @@ def _scrape_rom_worker(task):
         kb = os.path.getsize(dest_path) // 1024
         print(f"          ✓ {clean} (libretro, {kb} KB)")
         return "ok"
-    # 2. Try Wikipedia article thumbnail
+    # 2. Try archive.org thumbnail (for unknown/obscure games)
+    # (Libretro is already tried first above)
+    ident = archive_identifier_from_url(clean)
+    if ident:
+        if download_archive_thumbnail(ident, dest_path):
+            kb = os.path.getsize(dest_path) // 1024
+            print(f"          ✓ {clean} (archive.org, {kb} KB)")
+            return "ok"
+    # 3. Try Wikipedia article thumbnail
     wiki_img = wikipedia_thumbnail(clean)
     if wiki_img and download_as_jpeg(wiki_img, dest_path):
         kb = os.path.getsize(dest_path) // 1024
         print(f"          ✓ {clean} (wikipedia, {kb} KB)")
         return "ok"
-    # 3. Brute force: Wikimedia Commons search (base name, no 'game' suffix)
-    filename = wikimedia_search_image(clean)
-    if filename:
-        wurl = f"{WIKIMEDIA_FILE}/{urllib.parse.quote(filename)}"
-        if download_as_jpeg(wurl, dest_path):
-            kb = os.path.getsize(dest_path) // 1024
-            print(f"          ✓ {clean} (wikimedia, {kb} KB)")
-            return "ok"
     print(f"          ✗ {clean} not found")
     return "fail"
 
@@ -871,36 +794,6 @@ def _generate_name_variants(name, system_name=None):
     return [v for v in variants if v]
 
 
-# --- AI-powered image search fallback (Bing Image Search API) ---
-def ai_image_search_cover(query, dest, api_key=None):
-    """Use Wikimedia Commons API to find and download a cover image for the query."""
-    endpoint = "https://commons.wikimedia.org/w/api.php"
-    params = {
-        "action": "query",
-        "format": "json",
-        "prop": "imageinfo",
-        "generator": "search",
-        "gsrsearch": query + " filetype:bitmap",
-        "gsrlimit": 5,
-        "iiprop": "url",
-        "iiurlwidth": 600
-    }
-    try:
-        resp = _get_session().get(endpoint, params=params, timeout=10)
-        if resp.status_code != 200:
-            print(f"[ai] Wikimedia API error: {resp.status_code}")
-            return False
-        data = resp.json()
-        pages = data.get("query", {}).get("pages", {})
-        for page in pages.values():
-            imageinfo = page.get("imageinfo", [{}])[0]
-            url = imageinfo.get("thumburl") or imageinfo.get("url")
-            if url and download_as_jpeg(url, dest):
-                print(f"      [ai] ✓ {query} (Wikimedia)")
-                return True
-    except Exception as e:
-        print(f"[ai] Wikimedia search failed: {e}")
-    return False
 
 
 def _scrape_db_game_worker(task):
@@ -947,16 +840,13 @@ def _scrape_db_game_worker(task):
         if os.path.isfile(dest_path) and os.path.getsize(dest_path) > 1000:
             return "skip"
         os.makedirs(dest_dir, exist_ok=True)
-        bare = odyssey_bare_name(stem)
-        if download_odyssey_cover(bare, dest_path):
-            return "ok"
+        # No fallback: just fail
         return "fail"
 
     if system_name == "Steam":
         return "skip"
 
     mapping = DB_SYSTEM_MAP.get(system_name)
-    # --- Try Bing AI image search FIRST ---
     if not mapping or mapping[1] is None:
         dest_dir  = os.path.join(covers_dir, "unknown")
         dest_path = os.path.join(dest_dir, clean + ".jpg")
@@ -965,19 +855,16 @@ def _scrape_db_game_worker(task):
         if no_wiki:
             return "fail"
         os.makedirs(dest_dir, exist_ok=True)
-        ai_queries = [f"{clean} {system_name} box art", f"{clean} {system_name} cover art", f"{clean} box art", f"{clean} cover art"]
-        for q in ai_queries:
-            if ai_image_search_cover(q, dest_path):
-                return "ok"
-        # Fallback: Try all variants with aggressive suffixes for Wikimedia
-        suffixes = [" game", " video game", " box art", " cover art", " front cover", " scan", " cartridge", ""]
+        # Only Wikipedia and Archive.org fallback
         for v in variants:
-            for suffix in suffixes:
-                filename = wikimedia_search_image(v + suffix)
-                if filename:
-                    wurl = f"{WIKIMEDIA_FILE}/{urllib.parse.quote(filename)}"
-                    if download_as_jpeg(wurl, dest_path):
-                        return "ok"
+            wiki_img = wikipedia_thumbnail(v)
+            if wiki_img and download_as_jpeg(wiki_img, dest_path):
+                return "ok"
+        for v in variants:
+            ident = archive_identifier_from_url(v)
+            if ident:
+                if download_archive_thumbnail(ident, dest_path):
+                    return "ok"
         return "fail"
 
     sys_dir, sys_long = mapping
@@ -986,11 +873,6 @@ def _scrape_db_game_worker(task):
     if os.path.isfile(dest_path) and os.path.getsize(dest_path) > 1000:
         return "skip"
     os.makedirs(dest_dir, exist_ok=True)
-    # --- Try Bing AI image search FIRST ---
-    ai_queries = [f"{clean} {system_name} box art", f"{clean} {system_name} cover art", f"{clean} box art", f"{clean} cover art"]
-    for q in ai_queries:
-        if ai_image_search_cover(q, dest_path):
-            return "ok"
     # 1. Try libretro boxart (main) with all variants
     for v in variants:
         url = libretro_url(sys_long, v)
@@ -1007,18 +889,12 @@ def _scrape_db_game_worker(task):
                 wiki_img2 = wikipedia_thumbnail(f"{v} ({system_name})")
                 if wiki_img2 and download_as_jpeg(wiki_img2, dest_path):
                     return "ok"
-    # 3. Brute force: Wikimedia Commons search with all variants, suffixes, and system name
-    if not no_wiki:
-        suffixes = [" game", " video game", " box art", " cover art", " front cover", " scan", " cartridge", ""]
-        for v in variants:
-            for suffix in suffixes:
-                queries = [v + suffix]
-                if system_name:
-                    queries.append(f"{v} {system_name}{suffix}")
-                    queries.append(f"{system_name} {v}{suffix}")
-                for q in queries:
-                    if wikimedia_game_cover(q, dest_path):
-                        return "ok"
+    # 3. Archive.org fallback for variants
+    for v in variants:
+        ident = archive_identifier_from_url(v)
+        if ident:
+            if download_archive_thumbnail(ident, dest_path):
+                return "ok"
     return "fail"
 
 # ─── Main ─────────────────────────────────────────────────────────────────────
@@ -1046,7 +922,7 @@ def main():
     parser.add_argument("--db-only",    action="store_true",
                         help="Only scrape DB entries (skip local ROM scan)")
     parser.add_argument("--no-wiki",    action="store_true",
-                        help="Skip Wikipedia/Wikimedia fallbacks (faster, libretro-only)")
+                        help="Skip Wikipedia fallback (faster, libretro-only)")
     parser.add_argument("--convert-existing", action="store_true",
                         help="Convert any already-downloaded .png covers to .jpg and exit")
     args = parser.parse_args()
@@ -1124,7 +1000,7 @@ def main():
         print(f"All {len(roms)} ROM cover(s) already cached.\n")
     else:
         print(f"Found {len(roms)} ROM(s), {len(pending_roms)} missing cover(s). Fetching...\n")
-        # ── libretro CDN + Wikimedia (ROM files) ──────────────────────────────
+        # ── libretro CDN (ROM files) ──────────────────────────────
         counter = [0]
         lock    = threading.Lock()
         tasks   = [
