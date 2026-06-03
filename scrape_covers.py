@@ -101,6 +101,8 @@ SYSTEM_MAP = {
 }
 
 LIBRETRO_BASE  = "https://thumbnails.libretro.com"
+WIKIMEDIA_API  = "https://commons.wikimedia.org/w/api.php"
+WIKIMEDIA_FILE = "https://commons.wikimedia.org/wiki/Special:FilePath"
 STEAM_CDN      = "https://cdn.akamai.steamstatic.com/steam/apps"
 
 # Maps GameLibrary::systemName() strings → (sys_dir, libretro_long_name)
@@ -166,6 +168,52 @@ def wikipedia_thumbnail(game_name: str) -> str:
     if not data:
         return ""
     return data.get("thumbnail", {}).get("source", "")
+
+
+def odyssey_bare_name(stem: str) -> str:
+    """'Odyssey - Tennis' → 'Tennis'"""
+    prefix = "Odyssey - "
+    return stem[len(prefix):] if stem.startswith(prefix) else stem
+
+
+def wikimedia_search_image(query: str) -> str:
+    """Search Wikimedia Commons for the best matching image filename."""
+    params = urllib.parse.urlencode({
+        "action":      "query",
+        "list":        "search",
+        "srsearch":    query,
+        "srnamespace": 6,
+        "srlimit":     5,
+        "format":      "json",
+    })
+    data = fetch_json(f"{WIKIMEDIA_API}?{params}")
+    if not data:
+        return ""
+    results = data.get("query", {}).get("search", [])
+    if not results:
+        return ""
+    title = results[0].get("title", "")
+    if title.startswith("File:"):
+        title = title[5:]
+    return title
+
+
+def download_odyssey_cover(game_bare: str, dest: str) -> bool:
+    """Download a Wikimedia Commons image for a Magnavox Odyssey game."""
+    queries = [
+        f"Magnavox Odyssey {game_bare} overlay",
+        f"Magnavox Odyssey {game_bare}",
+    ]
+    for query in queries:
+        print(f"          wikimedia: {query!r}")
+        filename = wikimedia_search_image(query)
+        if not filename:
+            continue
+        url = f"{WIKIMEDIA_FILE}/{urllib.parse.quote(filename)}"
+        print(f"          → {filename}")
+        if download_as_jpeg(url, dest):
+            return True
+    return False
 
 
 
@@ -306,14 +354,6 @@ def fetch_json(url: str):
             return json.loads(resp.read().decode("utf-8"))
     except Exception:
         return None
-
-
-
-def odyssey_bare_name(stem: str) -> str:
-    """'Odyssey - Tennis' → 'Tennis'"""
-    prefix = "Odyssey - "
-    return stem[len(prefix):] if stem.startswith(prefix) else stem
-
 
 # ─── Steam library scan ───────────────────────────────────────────────────────
 
@@ -459,6 +499,16 @@ def scrape_unknown_from_csv(csv_path: str, covers_dir: str):
             ok += 1
             time.sleep(0.4)
             continue
+        # 3. Fallback: Wikimedia Commons search
+        filename = wikimedia_search_image(clean + " game")
+        if filename:
+            wurl = f"{WIKIMEDIA_FILE}/{urllib.parse.quote(filename)}"
+            if download_as_jpeg(wurl, dest_path):
+                kb = os.path.getsize(dest_path) // 1024
+                print(f"          ✓ saved ({kb} KB)")
+                ok += 1
+                time.sleep(0.4)
+                continue
         print(f"          ✗ not found")
         fail += 1
         time.sleep(0.3)
@@ -716,8 +766,12 @@ def _scrape_rom_worker(task):
         if os.path.isfile(dest_path) and os.path.getsize(dest_path) > 1000:
             return "skip"
         os.makedirs(dest_dir, exist_ok=True)
-        # No fallback: just fail
-        print(f"          ✗ {clean} not found")
+        bare = odyssey_bare_name(stem)
+        if download_odyssey_cover(bare, dest_path):
+            kb = os.path.getsize(dest_path) // 1024
+            print(f"          ✓ {clean} ({kb} KB)")
+            return "ok"
+        print(f"          ✗ {clean} not found on Wikimedia Commons")
         return "fail"
 
     sys_dir, sys_long = SYSTEM_MAP[ext]
@@ -746,6 +800,14 @@ def _scrape_rom_worker(task):
         kb = os.path.getsize(dest_path) // 1024
         print(f"          ✓ {clean} (wikipedia, {kb} KB)")
         return "ok"
+    # 4. Brute force: Wikimedia Commons search (base name)
+    filename = wikimedia_search_image(clean)
+    if filename:
+        wurl = f"{WIKIMEDIA_FILE}/{urllib.parse.quote(filename)}"
+        if download_as_jpeg(wurl, dest_path):
+            kb = os.path.getsize(dest_path) // 1024
+            print(f"          ✓ {clean} (wikimedia, {kb} KB)")
+            return "ok"
     print(f"          ✗ {clean} not found")
     return "fail"
 
@@ -840,7 +902,9 @@ def _scrape_db_game_worker(task):
         if os.path.isfile(dest_path) and os.path.getsize(dest_path) > 1000:
             return "skip"
         os.makedirs(dest_dir, exist_ok=True)
-        # No fallback: just fail
+        bare = odyssey_bare_name(stem)
+        if download_odyssey_cover(bare, dest_path):
+            return "ok"
         return "fail"
 
     if system_name == "Steam":
@@ -855,11 +919,17 @@ def _scrape_db_game_worker(task):
         if no_wiki:
             return "fail"
         os.makedirs(dest_dir, exist_ok=True)
-        # Only Wikipedia and Archive.org fallback
+        # Wikipedia, then Wikimedia Commons, then archive.org fallback
         for v in variants:
             wiki_img = wikipedia_thumbnail(v)
             if wiki_img and download_as_jpeg(wiki_img, dest_path):
                 return "ok"
+        for v in variants:
+            filename = wikimedia_search_image(v + " game")
+            if filename:
+                wurl = f"{WIKIMEDIA_FILE}/{urllib.parse.quote(filename)}"
+                if download_as_jpeg(wurl, dest_path):
+                    return "ok"
         for v in variants:
             ident = archive_identifier_from_url(v)
             if ident:
@@ -889,7 +959,16 @@ def _scrape_db_game_worker(task):
                 wiki_img2 = wikipedia_thumbnail(f"{v} ({system_name})")
                 if wiki_img2 and download_as_jpeg(wiki_img2, dest_path):
                     return "ok"
-    # 3. Archive.org fallback for variants
+        # 3. Brute force: Wikimedia Commons search
+        suffixes = [" game", " video game", " box art", " cover art", " front cover", " scan", " cartridge", ""]
+        for v in variants:
+            for suffix in suffixes:
+                filename = wikimedia_search_image(v + suffix)
+                if filename:
+                    wurl = f"{WIKIMEDIA_FILE}/{urllib.parse.quote(filename)}"
+                    if download_as_jpeg(wurl, dest_path):
+                        return "ok"
+    # 4. Archive.org fallback for variants
     for v in variants:
         ident = archive_identifier_from_url(v)
         if ident:
