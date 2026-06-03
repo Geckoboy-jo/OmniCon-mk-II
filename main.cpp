@@ -12,6 +12,7 @@
 #include "GBA.hpp"
 #include "NDS.hpp"
 #include "PS1.hpp"
+#include "GameCube.hpp"
 #include "GameLibrary.hpp"
 #include "GameShell.hpp"
 #include "OracleDB.hpp"
@@ -611,8 +612,9 @@ void configureAllControls()
         Atari800Emulation     a800Init;
         SegaGenesisEmulation  genesisInit;
         PS1Emulation          ps1Init;
+        GameCubeEmulation     gameCubeInit;
         (void)nesInit; (void)gbInit; (void)snesInit; (void)gbaInit;
-        (void)ndsInit; (void)a2600Init; (void)a5200Init; (void)a800Init; (void)genesisInit; (void)ps1Init;
+        (void)ndsInit; (void)a2600Init; (void)a5200Init; (void)a800Init; (void)genesisInit; (void)ps1Init; (void)gameCubeInit;
     }
 
     const bool hadController = (SDL_WasInit(SDL_INIT_GAMECONTROLLER) != 0);
@@ -826,6 +828,7 @@ void configureAllControls()
     auto toA5200Mode = [&]() { return static_cast<Atari5200Emulation::InputMode>(static_cast<int>(mode)); };
     auto toA800Mode  = [&]() { return static_cast<Atari800Emulation::InputMode>(static_cast<int>(mode)); };
     auto toPS1Mode   = [&]() { return static_cast<PS1Emulation::InputMode>(static_cast<int>(mode)); };
+    auto toGcMode    = [&]() { return static_cast<GameCubeEmulation::InputMode>(static_cast<int>(mode)); };
 
     // NES
     NESEmulation::globalInputMode = toNesMode();
@@ -903,6 +906,24 @@ void configureAllControls()
     };
     PS1Emulation::globalInputConfigured = true;
 
+    // GameCube
+    // A/B/X/Y and shoulders share the same unified mappings as PS1/SNES/NDS.
+    GameCubeEmulation::globalInputMode = toGcMode();
+    GameCubeEmulation::globalKeyBindings = {
+        kUp, kDown, kLeft, kRight,
+        kB,  kA,    kX,    kY,
+        kStart, kSel,
+        kL, kR,
+        GameCubeEmulation::globalKeyBindings.l2, GameCubeEmulation::globalKeyBindings.r2
+    };
+    GameCubeEmulation::globalControllerBindings = {
+        bUp, bDown, bLeft, bRight,
+        bB,  bA,    bX,    bY,
+        bStart, bSel,
+        bL, bR
+    };
+    GameCubeEmulation::globalInputConfigured = true;
+
     if (ctrl) SDL_GameControllerClose(ctrl);
     if (!hadController) SDL_QuitSubSystem(SDL_INIT_GAMECONTROLLER);
 
@@ -930,6 +951,7 @@ void printHelp()
               << "  play-gba <path>  Load and run a GBA ROM (.gba)\n"
               << "  play-nds <path>  Load and run a Nintendo DS ROM (.nds)\n"
               << "  play-ps1 <path>  Load and run a PlayStation ROM (.cue/.bin/.iso/.pbp/.chd)\n"
+              << "  play-gamecube <path>  Load and run a GameCube ROM (.gcm/.iso/.gcz/.rvz/.ciso)\n"
               << "  play-genesis <path>  Load and run a Sega Genesis ROM (.md/.gen/.smd)\n"
               << "  play-n64 <path>  Load and run a Nintendo 64 ROM (.n64/.z64/.v64)\n"
               << "  shell           Open the graphical game library launcher\n"
@@ -1158,6 +1180,25 @@ void setControlsFromCSV() {
         keycodeFromString(mapping["r2"])
     };
     PS1Emulation::globalInputConfigured = true;
+
+    // GameCube (shares the same unified keyboard/controller mapping style)
+    GameCubeEmulation::globalKeyBindings = {
+        keycodeFromString(mapping["Up"]),
+        keycodeFromString(mapping["Down"]),
+        keycodeFromString(mapping["Left"]),
+        keycodeFromString(mapping["Right"]),
+        keycodeFromString(mapping["b"]),
+        keycodeFromString(mapping["a"]),
+        keycodeFromString(mapping["x"]),
+        keycodeFromString(mapping["y"]),
+        keycodeFromString(mapping["start"]),
+        keycodeFromString(mapping["select"]),
+        keycodeFromString(mapping["l1"]),
+        keycodeFromString(mapping["r1"]),
+        keycodeFromString(mapping["l2"]),
+        keycodeFromString(mapping["r2"])
+    };
+    GameCubeEmulation::globalInputConfigured = true;
 
     // Odyssey (P1 up/down, P2 up/down, serve)
     OdysseyEmulation::globalKeyBindings = {
@@ -1475,7 +1516,7 @@ int main()
                         } else {
                             std::cout << "Could not detect system from URL.\n"
                                       << "Enter system (NES, SNES, GBA, GBC, GameBoy, NDS, N64,\n"
-                                      << "  SegaGenesis, Atari2600, Atari5200, Atari800, 3DS, Odyssey)\n"
+                                      << "  SegaGenesis, Atari2600, Atari5200, Atari800, 3DS, Odyssey, PS1, GameCube)\n"
                                       << "or leave blank to skip unknowns: ";
                             std::cout.flush();
                             std::getline(std::cin, batchSysName);
@@ -1539,6 +1580,7 @@ int main()
         const std::string playGbaCommand = "play-gba ";
         const std::string playNdsCommand = "play-nds ";
         const std::string playPs1Command = "play-ps1 ";
+        const std::string playGameCubeCommand = "play-gamecube ";
         const std::string playGenesisCommand = "play-genesis ";
         const std::string playN64Command = "play-n64 ";
         const bool isPlayCommand = input.rfind(playCommand, 0) == 0
@@ -1550,6 +1592,7 @@ int main()
             && input.rfind(playGbaCommand, 0) != 0
             && input.rfind(playNdsCommand, 0) != 0
             && input.rfind(playPs1Command, 0) != 0
+            && input.rfind(playGameCubeCommand, 0) != 0
             && input.rfind(playGenesisCommand, 0) != 0
             && input.rfind(playN64Command, 0) != 0;
         const bool isPlaySnesCommand       = input.rfind(playSnesCommand, 0)    == 0;
@@ -1560,6 +1603,7 @@ int main()
         const bool isPlayGbaCommand     = input.rfind(playGbaCommand, 0)     == 0;
         const bool isPlayNdsCommand     = input.rfind(playNdsCommand, 0)     == 0;
         const bool isPlayPs1Command     = input.rfind(playPs1Command, 0)     == 0;
+        const bool isPlayGameCubeCommand = input.rfind(playGameCubeCommand, 0) == 0;
         const bool isPlayGenesisCommand = input.rfind(playGenesisCommand, 0) == 0;
         const bool isPlayN64Command     = input.rfind(playN64Command, 0)     == 0;
 
@@ -1645,6 +1689,15 @@ int main()
                     }
                 } catch (const std::exception& e) {
                     std::cerr << "PS1 error: " << e.what() << "\n";
+                }
+            } else if (extension == ".gcm" || extension == ".gcz" || extension == ".rvz" || extension == ".ciso") {
+                GameCubeEmulation gc;
+                try {
+                    if (gc.loadRom(romPath)) {
+                        gc.runInteractive();
+                    }
+                } catch (const std::exception& e) {
+                    std::cerr << "GameCube error: " << e.what() << "\n";
                 }
             } else if (extension == ".bin" || extension == ".rom") {
                 // Ambiguous extension: try Atari 5200 first, then Atari 2600, then NES
@@ -1858,6 +1911,32 @@ int main()
                 }
             } catch (const std::exception& e) {
                 std::cerr << "PS1 error: " << e.what() << "\n";
+            }
+            continue;
+        }
+
+        if (isPlayGameCubeCommand) {
+            std::string romPath = trim(input.substr(playGameCubeCommand.size()));
+            romPath = stripOuterQuotes(romPath);
+            romPath = normalizePath(romPath);
+
+            if (romPath.empty()) {
+                std::cout << "ROM path is required.\n";
+                continue;
+            }
+
+            if (!std::filesystem::exists(romPath)) {
+                std::cout << "ROM file does not exist: " << romPath << "\n";
+                continue;
+            }
+
+            GameCubeEmulation gc;
+            try {
+                if (gc.loadRom(romPath)) {
+                    gc.runInteractive();
+                }
+            } catch (const std::exception& e) {
+                std::cerr << "GameCube error: " << e.what() << "\n";
             }
             continue;
         }

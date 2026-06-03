@@ -245,6 +245,11 @@ public:
 
     void startExecution() {
             logState("startExecution() called");
+        if (!fnCoreDoCommand) {
+            logState("startExecution() aborted: fnCoreDoCommand is null");
+            emulRunning = false;
+            return;
+        }
         emulRunning = true;
         execThread = std::thread([this]() {
                         logState("Emulation thread started");
@@ -267,9 +272,10 @@ public:
 
     void requestStop() {
             logState("requestStop() called");
-        if (emulRunning && fnCoreDoCommand)
-                        logState("Calling fnCoreDoCommand(M64CMD_STOP)");
+        if (emulRunning && fnCoreDoCommand) {
+            logState("Calling fnCoreDoCommand(M64CMD_STOP)");
             fnCoreDoCommand(M64CMD_STOP, 0, nullptr);
+        }
     }
 
     void teardown() {

@@ -13,6 +13,7 @@
 #include "SegaGenesis.hpp"
 #include "N64.hpp"
 #include "PS1.hpp"
+#include "GameCube.hpp"
 #include "Odyssey.hpp"
 #include "SaveManager.hpp"
 
@@ -26,7 +27,7 @@ namespace fs = std::filesystem;
 
 // ─── Static members ───────────────────────────────────────────────────────────
 
-const SystemType GameShell::kSystems[15] = {
+const SystemType GameShell::kSystems[16] = {
     SystemType::NES,
     SystemType::SNES,
     SystemType::GameBoy,
@@ -40,12 +41,13 @@ const SystemType GameShell::kSystems[15] = {
     SystemType::SegaGenesis,
     SystemType::N64,
     SystemType::PS1,
+    SystemType::GameCube,
     SystemType::Odyssey,
     SystemType::Steam,
 };
 
-const char* const GameShell::kSysAbbrev[15] = {
-    "NES", "SNES", "GB", "GBC", "GBA", "NDS", "3DS", "2600", "5200", "800", "GEN", "N64", "PS1", "ODY", "STM"
+const char* const GameShell::kSysAbbrev[16] = {
+    "NES", "SNES", "GB", "GBC", "GBA", "NDS", "3DS", "2600", "5200", "800", "GEN", "N64", "PS1", "GCN", "ODY", "STM"
 };
 
 // ─── Colour palette ───────────────────────────────────────────────────────────
@@ -78,6 +80,7 @@ static SDL_Color sysBadgeColor(SystemType sys) {
         case SystemType::SegaGenesis:  return { 20,  80, 180, 255};   // Sega blue
         case SystemType::N64:           return {140,  20,  20, 255};   // N64 red
         case SystemType::PS1:           return { 10,  50, 140, 255};   // PS1 navy blue
+        case SystemType::GameCube:      return { 88,  76, 168, 255};   // GameCube indigo
         case SystemType::Odyssey:       return { 45, 160, 160, 255};   // teal
         case SystemType::Steam:         return { 23, 134, 192, 255};   // Steam blue
         default:                       return { 70,  70,  70, 255};
@@ -859,6 +862,12 @@ void GameShell::run(GameLibrary& library, const std::string& coversDir) {
                     goto done;
                 }
                 launchTarget.romPath = localRom;
+                // Re-detect system from the extracted file's extension if still Unknown.
+                if (launchTarget.system == SystemType::Unknown) {
+                    std::string ext = fs::path(localRom).extension().string();
+                    for (auto& c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                    launchTarget.system = GameLibrary::systemFromExtension(ext);
+                }
             }
 
             if (launchTarget.system == SystemType::Steam) {
@@ -1033,6 +1042,19 @@ void GameShell::launchGame(const GameEntry& game) {
                 }
             }
             catch (const std::exception& e) { std::cerr << "PS1 error: " << e.what() << "\n"; }
+            break;
+        }
+        case SystemType::GameCube: {
+            GameCubeEmulation gc;
+            try {
+                if (gc.loadRom(path)) {
+                    std::vector<unsigned char> data;
+                    if (SaveManager::instance().get(path, data)) gc.restoreSaveData(data);
+                    gc.runInteractive();
+                    SaveManager::instance().put(path, gc.dumpSaveData());
+                }
+            }
+            catch (const std::exception& e) { std::cerr << "GameCube error: " << e.what() << "\n"; }
             break;
         }
         case SystemType::Odyssey: {

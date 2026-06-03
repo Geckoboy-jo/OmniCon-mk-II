@@ -262,6 +262,10 @@ Libretro3DSBackend::Libretro3DSBackend()
 
     s_instance = this;
     ensureLibretroDirectories();
+    // Force Mesa's llvmpipe software renderer so Citra's #version 430 shaders
+    // compile on hosts whose GPU driver only supports GLSL 4.20.  llvmpipe
+    // supports GLSL 4.60 natively, so this is sufficient.
+    setenv("LIBGL_ALWAYS_SOFTWARE", "1", 1);
     initGLContext();   // Must happen before fn_init so SET_HW_RENDER can succeed
     fn_set_environment(s_envCb);
     fn_set_video_refresh(s_videoCb);
@@ -639,8 +643,8 @@ bool Libretro3DSBackend::onEnvironment(unsigned cmd, void* data)
         // initialises its subsystems properly rather than using unchecked defaults.
         const char* k = v->key;
         if      (!std::strcmp(k,"citra_use_cpu_jit"))          v->value = "enabled";
-        else if (!std::strcmp(k,"citra_cpu_scale"))             v->value = "100";
-        else if (!std::strcmp(k,"citra_use_hw_shaders"))        v->value = "enabled";
+        else if (!std::strcmp(k,"citra_cpu_scale"))             v->value = "100%";
+        else if (!std::strcmp(k,"citra_use_hw_shaders"))        v->value = "disabled";
         else if (!std::strcmp(k,"citra_use_shader_jit"))        v->value = "enabled";
         else if (!std::strcmp(k,"citra_use_acc_mul"))           v->value = "enabled";
         else if (!std::strcmp(k,"citra_use_virtual_sd"))        v->value = "enabled";
@@ -656,11 +660,11 @@ bool Libretro3DSBackend::onEnvironment(unsigned cmd, void* data)
         else if (!std::strcmp(k,"citra_mouse_touchscreen"))     v->value = "enabled";
         else if (!std::strcmp(k,"citra_touch_touchscreen"))     v->value = "enabled";
         else if (!std::strcmp(k,"citra_render_touchscreen"))    v->value = "enabled";
-        else if (!std::strcmp(k,"citra_resolution_factor"))     v->value = "1";
+        else if (!std::strcmp(k,"citra_resolution_factor"))     v->value = "1x";
         else if (!std::strcmp(k,"citra_layout_option"))         v->value = "Default Top-Bottom Screen";
         else if (!std::strcmp(k,"citra_deadzone"))              v->value = "15";
         else if (!std::strcmp(k,"citra_analog_function"))       v->value = "C-Stick";
-        else if (!std::strcmp(k,"citra_region_value"))          v->value = "auto";
+        else if (!std::strcmp(k,"citra_region_value"))          v->value = "USA";
         else if (!std::strcmp(k,"citra_language"))              v->value = "English";
         else if (!std::strcmp(k,"citra_use_libretro_save_path"))v->value = "enabled";
         else { v->value = nullptr; return false; }

@@ -542,63 +542,151 @@ std::string DownloadManager::extractRom(const std::string& archivePath,
 
     std::string foundFile;
 
-    if (arcExt == ".7z") {
+    if (arcExt == ".7z" || arcExt == ".rar" || arcExt == ".gz" || arcExt == ".bz2" || arcExt == ".xz") {
         // ── 7z branch ──────────────────────────────────────────────────────
-        // "7z l -ba -slt" emits one block per entry; "Path = <name>" lines
-        // contain the member filename without extra column formatting.
-        std::string listCmd = "7z l -ba -slt '" + archivePath + "' 2>/dev/null";
-        FILE* f = popen(listCmd.c_str(), "r");
-        if (!f) return "";
-        char buf[2048];
-        while (fgets(buf, sizeof(buf), f)) {
-            std::string line(buf);
-            while (!line.empty() && (line.back() == '\n' || line.back() == '\r'))
-                line.pop_back();
-            if (line.rfind("Path = ", 0) != 0) continue;
-            std::string fname = line.substr(7);
-            if (fname.empty() || fname.back() == '/') continue;
-            std::string ext = fs::path(fname).extension().string();
-            if (!ext.empty()) ext = ext.substr(1);
-            std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-            for (const auto& e : kRomExts) {
-                if (ext == e) { foundFile = fname; break; }
-            }
-            if (!foundFile.empty()) break;
+        // Prefer CLI tools if available; fall back to Python py7zr when absent.
+        std::string sevenZipCmd;
+        if (system("7z i >/dev/null 2>&1") == 0) { // NOLINT
+            sevenZipCmd = "7z";
+        } else if (system("7zz i >/dev/null 2>&1") == 0) { // NOLINT
+            sevenZipCmd = "7zz";
+        } else if (system("7zr i >/dev/null 2>&1") == 0) { // NOLINT
+            sevenZipCmd = "7zr";
         }
-        pclose(f);
-        if (foundFile.empty()) return "";
 
-        // -aoa = overwrite all without prompt; -o<dir> has no space in 7z syntax
-        std::string extractCmd = "7z e -aoa -o'" + destDir + "' '" +
-                                 archivePath + "' '" + foundFile + "' 2>/dev/null";
-        if (system(extractCmd.c_str()) != 0) return ""; // NOLINT
+        if (!sevenZipCmd.empty()) {
+            // "7z l -ba -slt" emits one block per entry; "Path = <name>" lines
+            // contain the member filename without extra column formatting.
+            std::string listCmd = sevenZipCmd + " l -ba -slt '" + archivePath + "' 2>/dev/null";
+            FILE* f = popen(listCmd.c_str(), "r");
+            if (!f) return "";
+            char buf[2048];
+            while (fgets(buf, sizeof(buf), f)) {
+                std::string line(buf);
+                while (!line.empty() && (line.back() == '\n' || line.back() == '\r'))
+                    line.pop_back();
+                if (line.rfind("Path = ", 0) != 0) continue;
+                std::string fname = line.substr(7);
+                if (fname.empty() || fname.back() == '/') continue;
+                std::string ext = fs::path(fname).extension().string();
+                if (!ext.empty()) ext = ext.substr(1);
+                std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+                for (const auto& e : kRomExts) {
+                    if (ext == e) { foundFile = fname; break; }
+                }
+                if (!foundFile.empty()) break;
+            }
+            pclose(f);
+            if (foundFile.empty()) return "";
+
+            // -aoa = overwrite all without prompt; -o<dir> has no space in 7z syntax
+            std::string extractCmd = sevenZipCmd + " e -aoa -o'" + destDir + "' '" +
+                                     archivePath + "' '" + foundFile + "' 2>/dev/null";
+            if (system(extractCmd.c_str()) != 0) return ""; // NOLINT
+        } else {
+            std::string extList;
+            for (size_t i = 0; i < kRomExts.size(); ++i) {
+                if (i) extList += ',';
+                extList += kRomExts[i];
+            }
+
+            std::string pyList =
+                "python3 -c \""
+                "import sys,os;"
+                "import py7zr;"
+                "z=py7zr.SevenZipFile(sys.argv[1],mode='r');"
+                "exts={e for e in sys.argv[2].split(',')};"
+                "names=[n for n in z.getnames() if not n.endswith('/') and os.path.splitext(n)[1].lstrip('.').lower() in exts];"
+                "z.close();"
+                "print(names[0] if names else '')\" '" + archivePath + "' '" + extList + "' 2>/dev/null";
+            FILE* f = popen(pyList.c_str(), "r");
+            if (!f) return "";
+            char buf[2048] = {};
+            if (fgets(buf, sizeof(buf), f)) {
+                foundFile = buf;
+                while (!foundFile.empty() &&
+                       (foundFile.back() == '\n' || foundFile.back() == '\r'))
+                    foundFile.pop_back();
+            }
+            pclose(f);
+            if (foundFile.empty()) return "";
+
+            std::string pyExtract =
+                "python3 -c \""
+                "import sys;"
+                "import py7zr;"
+                "z=py7zr.SevenZipFile(sys.argv[1],mode='r');"
+                "z.extract(path=sys.argv[3], targets=[sys.argv[2]]);"
+                "z.close()\" '" + archivePath + "' '" + foundFile + "' '" + destDir + "' 2>/dev/null";
+            if (system(pyExtract.c_str()) != 0) return ""; // NOLINT
+        }
     } else {
         // ── zip branch (default) ────────────────────────────────────────────
-        // Use "unzip -Z1" (zipinfo short format) to get one clean filename per
-        // line, avoiding column-based parsing that breaks on names with spaces.
-        std::string listCmd = "unzip -Z1 '" + archivePath + "' 2>/dev/null";
-        FILE* f = popen(listCmd.c_str(), "r");
-        if (!f) return "";
-        char buf[2048];
-        while (fgets(buf, sizeof(buf), f)) {
-            std::string fname(buf);
-            while (!fname.empty() && (fname.back() == '\n' || fname.back() == '\r'))
-                fname.pop_back();
-            if (fname.empty() || fname.back() == '/') continue;
-            std::string ext = fs::path(fname).extension().string();
-            if (!ext.empty()) ext = ext.substr(1);
-            std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-            for (const auto& e : kRomExts) {
-                if (ext == e) { foundFile = fname; break; }
-            }
-            if (!foundFile.empty()) break;
-        }
-        pclose(f);
-        if (foundFile.empty()) return "";
+        // Prefer unzip (fast C tool); fall back to Python zipfile if absent.
+        bool haveUnzip = (system("unzip -v >/dev/null 2>&1") == 0); // NOLINT
 
-        std::string extractCmd = "unzip -o '" + archivePath + "' '" + foundFile +
-                                 "' -d '" + destDir + "' 2>/dev/null";
-        if (system(extractCmd.c_str()) != 0) return ""; // NOLINT
+        if (haveUnzip) {
+            // Use "unzip -Z1" (zipinfo short format) to get one clean filename
+            // per line, avoiding column-based parsing that breaks on names with spaces.
+            std::string listCmd = "unzip -Z1 '" + archivePath + "' 2>/dev/null";
+            FILE* f = popen(listCmd.c_str(), "r");
+            if (!f) return "";
+            char buf[2048];
+            while (fgets(buf, sizeof(buf), f)) {
+                std::string fname(buf);
+                while (!fname.empty() && (fname.back() == '\n' || fname.back() == '\r'))
+                    fname.pop_back();
+                if (fname.empty() || fname.back() == '/') continue;
+                std::string ext = fs::path(fname).extension().string();
+                if (!ext.empty()) ext = ext.substr(1);
+                std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+                for (const auto& e : kRomExts) {
+                    if (ext == e) { foundFile = fname; break; }
+                }
+                if (!foundFile.empty()) break;
+            }
+            pclose(f);
+            if (foundFile.empty()) return "";
+
+            std::string extractCmd = "unzip -o '" + archivePath + "' '" + foundFile +
+                                     "' -d '" + destDir + "' 2>/dev/null";
+            if (system(extractCmd.c_str()) != 0) return ""; // NOLINT
+        } else {
+            // ── Python zipfile fallback ───────────────────────────────────────
+            // Build a comma-separated list of allowed extensions for the script.
+            std::string extList;
+            for (size_t i = 0; i < kRomExts.size(); ++i) {
+                if (i) extList += ',';
+                extList += kRomExts[i];
+            }
+            // List zip members and pick the first ROM file.
+            std::string pyList =
+                "python3 -c \""
+                "import zipfile,sys,os;"
+                "z=zipfile.ZipFile(sys.argv[1]);"
+                "exts={e for e in sys.argv[2].split(',')};"
+                "names=[n for n in z.namelist() if not n.endswith('/') and os.path.splitext(n)[1].lstrip('.').lower() in exts];"
+                "print(names[0] if names else '')\" '" + archivePath + "' '" + extList + "' 2>/dev/null";
+            FILE* f = popen(pyList.c_str(), "r");
+            if (!f) return "";
+            char buf[2048] = {};
+            if (fgets(buf, sizeof(buf), f)) {
+                foundFile = buf;
+                while (!foundFile.empty() &&
+                       (foundFile.back() == '\n' || foundFile.back() == '\r'))
+                    foundFile.pop_back();
+            }
+            pclose(f);
+            if (foundFile.empty()) return "";
+
+            std::string pyExtract =
+                "python3 -c \""
+                "import zipfile,sys;"
+                "z=zipfile.ZipFile(sys.argv[1]);"
+                "z.extract(sys.argv[2],sys.argv[3])\" '" + archivePath +
+                "' '" + foundFile + "' '" + destDir + "' 2>/dev/null";
+            if (system(pyExtract.c_str()) != 0) return ""; // NOLINT
+        }
     }
 
     return (fs::path(destDir) / fs::path(foundFile).filename()).string();
@@ -703,9 +791,10 @@ std::string DownloadManager::downloadBlocking(
         if (!curlError.empty()) std::cerr << "\n[DL] curl error: " << curlError;
         std::cerr << "\n";
 
-        // If it was a 404, try to recover via archive.org metadata fallback.
-        bool is404 = curlError.find("404") != std::string::npos;
-        if (is404) {
+        // For archive.org URLs, try metadata-based recovery on any curl failure,
+        // not just 404 (some mirrors fail with other status/error text).
+        bool fromArchiveOrg = (entry.url.find("archive.org") != std::string::npos);
+        if (fromArchiveOrg) {
             std::string altUrl = archiveOrgFixUrl(entry.url);
             if (!altUrl.empty() && altUrl != entry.url) {
                 std::cout << "[DL] Retrying with corrected URL...\n";
@@ -765,7 +854,7 @@ std::string DownloadManager::downloadBlocking(
     std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
 
     std::string finalPath;
-    if (ext == ".zip" || ext == ".7z") {
+    if (ext == ".zip" || ext == ".7z" || ext == ".rar" || ext == ".gz" || ext == ".bz2" || ext == ".xz") {
         std::cout << "[DL] Extracting " << tmpPath << "...\n";
         finalPath = extractRom(tmpPath, romsDir_);
         unlink(tmpPath.c_str());

@@ -201,6 +201,7 @@ private:
     SDL_AudioDeviceID audioDevice = 0;
     int audioSampleRate = 48000;
     double coreFps = 59.7275;
+    bool audioDeviceFailed = false;
     bool audioPrimed = false;
     int targetPrebufferMs = 120;
     int underrunEvents = 0;
@@ -269,7 +270,12 @@ bool NativeSameBoyBackend::loadRom(const std::string& path)
     currentInput = {};
 
     GB_set_user_data(gameBoy, this);
-    GB_set_boot_rom_load_callback(gameBoy, loadNativeSameBoyBootRom);
+    const char* useBootRom = std::getenv("OMNICON_GB_USE_BOOTROM");
+    if (useBootRom && *useBootRom == '1') {
+        GB_set_boot_rom_load_callback(gameBoy, loadNativeSameBoyBootRom);
+    } else {
+        GB_set_boot_rom_load_callback(gameBoy, nullptr);
+    }
     GB_set_rgb_encode_callback(gameBoy, s_rgbEncode);
     GB_set_pixels_output(gameBoy, framePixels.data());
     GB_set_border_mode(gameBoy, GB_BORDER_NEVER);
@@ -378,6 +384,10 @@ sameboy_color_t NativeSameBoyBackend::getPixel(int x, int y) const
 
 bool NativeSameBoyBackend::ensureAudioDevice(int sampleRate)
 {
+    if (audioDeviceFailed) {
+        return false;
+    }
+
     if (sampleRate <= 0) {
         sampleRate = 48000;
     }
@@ -411,6 +421,7 @@ bool NativeSameBoyBackend::ensureAudioDevice(int sampleRate)
     audioDevice = SDL_OpenAudioDevice(nullptr, 0, &desired, &obtained, 0);
     if (audioDevice == 0) {
         std::cerr << "[GB] Failed to open SDL audio device: " << SDL_GetError() << "\n";
+        audioDeviceFailed = true;
         return false;
     }
 
@@ -685,7 +696,18 @@ namespace libretro {
 
 class LibretroSameBoyBackend final : public SameBoyBackend {
 public:
-    static constexpr const char* kCorePath = "/usr/lib/x86_64-linux-gnu/libretro/sameboy_libretro.so";
+    static std::string resolveCorePath() {
+        const char* env = std::getenv("OMNICON_GB_CORE");
+        if (env && *env && std::filesystem::exists(env)) return env;
+        const char* candidates[] = {
+            "third_party/libretro/sameboy_libretro.so",
+            "/usr/lib/x86_64-linux-gnu/libretro/sameboy_libretro.so",
+            "/usr/lib/libretro/sameboy_libretro.so",
+        };
+        for (const char* c : candidates)
+            if (std::filesystem::exists(c)) return c;
+        return {};
+    }
 
     LibretroSameBoyBackend();
     ~LibretroSameBoyBackend() override;
@@ -759,6 +781,8 @@ private:
     size_t audioRingCount = 0;
     int16_t lastAudioLeft = 0;
     int16_t lastAudioRight = 0;
+    std::string corePath;
+    bool audioDeviceFailed = false;
 
     static LibretroSameBoyBackend* s_instance;
     static bool s_envCb(unsigned cmd, void* data);
@@ -774,9 +798,15 @@ LibretroSameBoyBackend* LibretroSameBoyBackend::s_instance = nullptr;
 
 LibretroSameBoyBackend::LibretroSameBoyBackend()
 {
-    coreHandle = dlopen(kCorePath, RTLD_LAZY);
+    corePath = resolveCorePath();
+    if (corePath.empty()) {
+        std::cerr << "[GB] No SameBoy libretro core found.\n";
+        std::cerr << "     Place sameboy_libretro.so in third_party/libretro/\n";
+        return;
+    }
+    coreHandle = dlopen(corePath.c_str(), RTLD_LAZY);
     if (!coreHandle) {
-        std::cerr << "[GB] Failed to load SameBoy core: " << dlerror() << "\n";
+        std::cerr << "[GB] Failed to load SameBoy core: " << corePath << ": " << dlerror() << "\n";
         return;
     }
 
@@ -1091,6 +1121,10 @@ void LibretroSameBoyBackend::flushSingleSampleBatch()
 
 bool LibretroSameBoyBackend::ensureAudioDevice(int sampleRate)
 {
+    if (audioDeviceFailed) {
+        return false;
+    }
+
     if (sampleRate <= 0) {
         sampleRate = 48000;
     }
@@ -1125,6 +1159,7 @@ bool LibretroSameBoyBackend::ensureAudioDevice(int sampleRate)
     audioDevice = SDL_OpenAudioDevice(nullptr, 0, &desired, &obtained, 0);
     if (audioDevice == 0) {
         std::cerr << "[GB] Failed to open SDL audio device: " << SDL_GetError() << "\n";
+        audioDeviceFailed = true;
         return false;
     }
 

@@ -173,8 +173,8 @@ std::string LibretroNDSBackend::resolveCorePath()
 {
     const char* envPath = std::getenv("OMNICON_NDS_CORE");
     if (envPath && *envPath && std::filesystem::exists(envPath)) return envPath;
-    if (std::filesystem::exists(kWorkspaceCorePath)) return kWorkspaceCorePath;
     if (std::filesystem::exists(kSystemCorePath))    return kSystemCorePath;
+    if (std::filesystem::exists(kWorkspaceCorePath)) return kWorkspaceCorePath;
     return "";
 }
 
@@ -182,6 +182,8 @@ LibretroNDSBackend::LibretroNDSBackend()
     : corePath(resolveCorePath())
 {
     if (corePath.empty()) return;
+
+    std::cout << "[NDS] Using core: " << corePath << "\n";
 
     coreHandle = dlopen(corePath.c_str(), RTLD_LAZY);
     if (!coreHandle) {

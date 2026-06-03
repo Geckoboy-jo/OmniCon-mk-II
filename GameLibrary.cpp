@@ -43,6 +43,9 @@ SystemType GameLibrary::systemFromUrl(const std::string& url) {
         return SystemType::NDS;
     if (has("/roms_n64") || has("/n64_roms") || has("nintendo_64"))
         return SystemType::N64;
+    if (has("/roms_gamecube") || has("/gamecube_roms") || has("nintendo_gamecube") ||
+        has("/roms_gcn") || has("/gcn_roms") || has("gamecube_iso"))
+        return SystemType::GameCube;
     if (has("/roms_genesis") || has("/genesis_roms") || has("/roms_sega") || has("sega_genesis"))
         return SystemType::SegaGenesis;
     if (has("/roms_ps1") || has("/ps1_roms") || has("playstation_roms") || has("psx_roms") || has("/roms_psx"))
@@ -96,6 +99,8 @@ SystemType GameLibrary::systemFromExtension(const std::string& ext) {
     if (e == ".md" || e == ".gen" || e == ".smd" || e == ".68k" || e == ".sgd")
                                                                return SystemType::SegaGenesis;
     if (e == ".n64" || e == ".z64" || e == ".v64")            return SystemType::N64;
+    if (e == ".gcm" || e == ".gcz" || e == ".rvz" || e == ".ciso")
+                                                               return SystemType::GameCube;
     if (e == ".cue" || e == ".iso" || e == ".pbp" || e == ".chd" || e == ".img" || e == ".mdf")
                                                                return SystemType::PS1;
     if (e == ".odyssey")                                       return SystemType::Odyssey;
@@ -115,7 +120,8 @@ SystemType GameLibrary::systemFromName(const std::string& name) {
     if (name == "Atari 800")        return SystemType::Atari800;
     if (name == "Sega Genesis")     return SystemType::SegaGenesis;
     if (name == "Nintendo 64")      return SystemType::N64;
-    if (name == "PlayStation")       return SystemType::PS1;
+    if (name == "PlayStation" || name == "PS1") return SystemType::PS1;
+    if (name == "Nintendo GameCube" || name == "GameCube" || name == "GCN") return SystemType::GameCube;
     if (name == "Magnavox Odyssey") return SystemType::Odyssey;
     if (name == "Steam")            return SystemType::Steam;
     return SystemType::Unknown;
@@ -136,6 +142,7 @@ std::string GameLibrary::systemName(SystemType sys) {
         case SystemType::SegaGenesis: return "Sega Genesis";
         case SystemType::N64:          return "Nintendo 64";
         case SystemType::PS1:          return "PlayStation";
+        case SystemType::GameCube:     return "Nintendo GameCube";
         case SystemType::Odyssey:       return "Magnavox Odyssey";
         case SystemType::Steam:         return "Steam";
         default:                       return "Unknown";
@@ -157,6 +164,7 @@ std::string GameLibrary::systemDirName(SystemType sys) {
         case SystemType::SegaGenesis: return "genesis";
         case SystemType::N64:          return "n64";
         case SystemType::PS1:          return "ps1";
+        case SystemType::GameCube:     return "gamecube";
         case SystemType::Odyssey:       return "odyssey";
         case SystemType::Steam:         return "steam";
         default:                       return "unknown";
@@ -178,6 +186,7 @@ int GameLibrary::screenscraper_systemId(SystemType sys) {
         case SystemType::SegaGenesis: return 1;   // Mega Drive / Genesis
         case SystemType::N64:          return 14;  // Nintendo 64
         case SystemType::PS1:          return 57;  // PlayStation
+        case SystemType::GameCube:     return 13;  // Nintendo GameCube
         case SystemType::Odyssey:       return 0;   // no ROM dumps exist
         case SystemType::Steam:         return 0;   // not scraped
         default:                        return 0;
@@ -253,6 +262,7 @@ void GameLibrary::scan(const std::string& romsDir) {
         {"genesis",   SystemType::SegaGenesis},
         {"n64",       SystemType::N64},
         {"ps1",       SystemType::PS1},
+        {"gamecube",  SystemType::GameCube},
         {"odyssey",   SystemType::Odyssey},
     };
     for (const auto& sd : subdirs)

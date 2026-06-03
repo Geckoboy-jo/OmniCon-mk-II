@@ -176,8 +176,18 @@ namespace libretro {
 
 class LibretroSnes9xBackend final : public SuperPyBackend {
 public:
-    static constexpr const char* kCorePath =
-        "/usr/lib/x86_64-linux-gnu/libretro/snes9x_libretro.so";
+    static std::string resolveCorePath() {
+        const char* env = std::getenv("OMNICON_SNES_CORE");
+        if (env && *env && std::filesystem::exists(env)) return env;
+        const char* candidates[] = {
+            "third_party/libretro/snes9x_libretro.so",
+            "/usr/lib/x86_64-linux-gnu/libretro/snes9x_libretro.so",
+            "/usr/lib/libretro/snes9x_libretro.so",
+        };
+        for (const char* c : candidates)
+            if (std::filesystem::exists(c)) return c;
+        return {};
+    }
 
     LibretroSnes9xBackend();
     ~LibretroSnes9xBackend() override;
@@ -235,6 +245,8 @@ private:
     int audioSampleRate = 48000;
     double coreFps = 60.0;
     std::vector<uint8_t> audioConvertBuffer;
+    bool audioDeviceFailed = false;
+    std::string corePath;
 
     static LibretroSnes9xBackend* s_instance;
     static bool    s_envCb(unsigned cmd, void* data);
@@ -249,9 +261,15 @@ LibretroSnes9xBackend* LibretroSnes9xBackend::s_instance = nullptr;
 
 LibretroSnes9xBackend::LibretroSnes9xBackend()
 {
-    coreHandle = dlopen(kCorePath, RTLD_LAZY);
+    corePath = resolveCorePath();
+    if (corePath.empty()) {
+        std::cerr << "[SNES] No snes9x libretro core found.\n";
+        std::cerr << "       Place snes9x_libretro.so in third_party/libretro/\n";
+        return;
+    }
+    coreHandle = dlopen(corePath.c_str(), RTLD_LAZY);
     if (!coreHandle) {
-        std::cerr << "[SNES] Failed to load core: " << dlerror() << "\n";
+        std::cerr << "[SNES] Failed to load core: " << corePath << ": " << dlerror() << "\n";
         return;
     }
     if (!loadSymbols()) {
@@ -535,6 +553,10 @@ size_t LibretroSnes9xBackend::s_audioBatchCb(const int16_t* data, size_t frames)
 
 bool LibretroSnes9xBackend::ensureAudioDevice(int sampleRate)
 {
+    if (audioDeviceFailed) {
+        return false;
+    }
+
     if (sampleRate <= 0) {
         sampleRate = 48000;
     }
@@ -568,6 +590,7 @@ bool LibretroSnes9xBackend::ensureAudioDevice(int sampleRate)
     audioDevice = SDL_OpenAudioDevice(nullptr, 0, &desired, &obtained, 0);
     if (audioDevice == 0) {
         std::cerr << "[SNES] Failed to open SDL audio device: " << SDL_GetError() << "\n";
+        audioDeviceFailed = true;
         return false;
     }
 

@@ -150,8 +150,12 @@ namespace libretro {
 
 class LibretroAtari2600Backend final : public Atari2600Backend {
 public:
-    static constexpr const char* kSystemCorePath = "/usr/lib/x86_64-linux-gnu/libretro/stella_libretro.so";
-    static constexpr const char* kWorkspaceCorePath = "third_party/libretro/stella_libretro.so";
+    static constexpr const char* kWorkspaceCorePathStella2014 = "third_party/libretro/stella2014_libretro.so";
+    static constexpr const char* kWorkspaceCorePathProsystem = "third_party/libretro/prosystem_libretro.so";
+    static constexpr const char* kWorkspaceCorePathStella = "third_party/libretro/stella_libretro.so";
+    static constexpr const char* kSystemCorePathStella2014 = "/usr/lib/x86_64-linux-gnu/libretro/stella2014_libretro.so";
+    static constexpr const char* kSystemCorePathProsystem = "/usr/lib/x86_64-linux-gnu/libretro/prosystem_libretro.so";
+    static constexpr const char* kSystemCorePathStella = "/usr/lib/x86_64-linux-gnu/libretro/stella_libretro.so";
 
     LibretroAtari2600Backend();
     ~LibretroAtari2600Backend() override;
@@ -239,12 +243,22 @@ std::string LibretroAtari2600Backend::resolveCorePath()
     if (envCorePath && *envCorePath && std::filesystem::exists(envCorePath)) {
         return envCorePath;
     }
-    if (std::filesystem::exists(kWorkspaceCorePath)) {
-        return kWorkspaceCorePath;
+
+    // Prefer more broadly compatible Atari 2600 cores first.
+    const char* candidates[] = {
+        kWorkspaceCorePathStella2014,
+        kWorkspaceCorePathProsystem,
+        kWorkspaceCorePathStella,
+        kSystemCorePathStella2014,
+        kSystemCorePathProsystem,
+        kSystemCorePathStella,
+    };
+    for (const char* path : candidates) {
+        if (std::filesystem::exists(path)) {
+            return path;
+        }
     }
-    if (std::filesystem::exists(kSystemCorePath)) {
-        return kSystemCorePath;
-    }
+
     return "";
 }
 
