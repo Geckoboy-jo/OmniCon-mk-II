@@ -86,9 +86,11 @@ public:
 
 GB_model_t selectSameBoyModel(const std::string& path, const std::vector<unsigned char>& romData)
 {
-    const auto endsWith = [&path](const char* suffix) {
-        const std::size_t suffixLength = std::strlen(suffix);
-        return path.size() >= suffixLength && path.compare(path.size() - suffixLength, suffixLength, suffix) == 0;
+    // Build a lowercase copy of the file extension for case-insensitive matching.
+    std::string extLower = std::filesystem::path(path).extension().string();
+    for (auto& c : extLower) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    const auto endsWith = [&extLower](const char* suffix) {
+        return extLower == suffix;
     };
 
     if (endsWith(".sgb")) {
@@ -1542,11 +1544,10 @@ bool GameBoyEmulation::loadRom(const string& path)
         return false;
     }
 
-    const bool isGb = path.length() >= 3 && path.substr(path.length() - 3) == ".gb";
-    const bool isGbc = path.length() >= 4 && path.substr(path.length() - 4) == ".gbc";
-    const bool isSgb = path.length() >= 4 && path.substr(path.length() - 4) == ".sgb";
-    if (!isGb && !isGbc && !isSgb) {
-        std::cerr << "Invalid file extension. Only .gb, .gbc, and .sgb files are supported.\n";
+    std::string extLower = std::filesystem::path(path).extension().string();
+    for (auto& c : extLower) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    if (extLower != ".gb" && extLower != ".gbc" && extLower != ".sgb") {
+        std::cerr << "Invalid file extension '" << extLower << "'. Only .gb, .gbc, and .sgb files are supported.\n";
         return false;
     }
 
