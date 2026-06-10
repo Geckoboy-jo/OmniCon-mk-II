@@ -28,8 +28,12 @@ static void n64StateCb(void*, m64p_core_param, int) {}
 // ─── Backend ─────────────────────────────────────────────────────────────────
 
 class Mupen64PlusBackend {
+        static bool n64DebugEnabled() {
+            static const bool v = (std::getenv("OMNICON_N64_DEBUG") != nullptr);
+            return v;
+        }
         void logState(const std::string& msg) const {
-            std::cerr << "[N64][VERBOSE] " << msg << std::endl;
+            if (n64DebugEnabled()) std::cerr << "[N64][VERBOSE] " << msg << "\n";
         }
     static constexpr const char* CORE_SO  = "/usr/lib/x86_64-linux-gnu/libmupen64plus.so.2";
     static constexpr const char* VIDEO_SO = "/usr/lib/x86_64-linux-gnu/mupen64plus/mupen64plus-video-rice.so";
@@ -280,24 +284,19 @@ public:
 
     void teardown() {
             logState("teardown() called");
-        std::cerr << "[N64] teardown: begin" << std::endl;
         requestStop();
             logState("requestStop() returned");
-        std::cerr << "[N64] teardown: requested stop" << std::endl;
         waitForStop();
             logState("waitForStop() returned");
-        std::cerr << "[N64] teardown: waitForStop done" << std::endl;
 
         if (romOpened && fnCoreDoCommand) {
                         logState("Closing ROM via fnCoreDoCommand(M64CMD_ROM_CLOSE)");
-            std::cerr << "[N64] teardown: closing ROM" << std::endl;
             fnCoreDoCommand(M64CMD_ROM_CLOSE, 0, nullptr);
             romOpened = false;
         }
 
         if (pluginsReady && fnCoreDetachPlugin) {
                         logState("Detaching plugins");
-            std::cerr << "[N64] teardown: detaching plugins" << std::endl;
             fnCoreDetachPlugin(M64PLUGIN_RSP);
             fnCoreDetachPlugin(M64PLUGIN_INPUT);
             fnCoreDetachPlugin(M64PLUGIN_AUDIO);
@@ -307,38 +306,27 @@ public:
 
         typedef m64p_error (*PlugShutFn)(void);
         void* plugHandles[] = {rspHandle, inputHandle, audioHandle, videoHandle};
-        const char* plugNames[] = {"RSP", "INPUT", "AUDIO", "VIDEO"};
         for (int i = 0; i < 4; ++i) {
                             logState(std::string("Detaching plugin index ") + std::to_string(i));
             void* h = plugHandles[i];
             if (h) {
-                std::cerr << "[N64] teardown: shutting down plugin " << plugNames[i] << std::endl;
                 auto fn = reinterpret_cast<PlugShutFn>(dlsym(h, "PluginShutdown"));
-                if (fn) {
-                    std::cerr << "[N64] teardown: calling PluginShutdown for " << plugNames[i] << std::endl;
-                    fn();
-                } else {
-                    std::cerr << "[N64] teardown: PluginShutdown not found for " << plugNames[i] << std::endl;
-                }
-                std::cerr << "[N64] teardown: skipping dlclose(" << plugNames[i] << ") for crash test" << std::endl;
-                // dlclose(h); // Disabled for crash test
+                if (fn) fn();
+                // dlclose(h); // Disabled: unloading plugins can crash on some hosts
             }
         }
         rspHandle = inputHandle = audioHandle = videoHandle = nullptr;
 
         if (coreInited && fnCoreShutdown) {
                         logState("Shutting down core via fnCoreShutdown");
-            std::cerr << "[N64] teardown: shutting down core" << std::endl;
             fnCoreShutdown();
             coreInited = false;
         }
         if (coreHandle) {
                         logState("coreHandle non-null, would dlclose if enabled");
-            std::cerr << "[N64] teardown: skipping dlclose(coreHandle) for crash test" << std::endl;
-            // dlclose(coreHandle); // Disabled for crash test
+            // dlclose(coreHandle); // Disabled: see above
             coreHandle = nullptr;
         }
-        std::cerr << "[N64] teardown: complete" << std::endl;
         logState("teardown() complete");
     }
 
@@ -391,9 +379,8 @@ bool N64Emulation::globalInputConfigured = false;
 
 N64Emulation::N64Emulation()
     : backend(std::make_unique<Mupen64PlusBackend>()) {
-    std::cerr << "[N64][DEBUG] N64Emulation constructed" << std::endl;
-    std::cerr << "[N64][VERBOSE] N64Emulation::N64Emulation() entry" << std::endl;
-    std::cerr << "[N64][VERBOSE] N64Emulation::~N64Emulation() entry" << std::endl;
+    static const bool n64Debug = (std::getenv("OMNICON_N64_DEBUG") != nullptr);
+    if (n64Debug) std::cerr << "[N64][DEBUG] N64Emulation constructed\n";
 }
 
 N64Emulation::~N64Emulation() {
@@ -401,15 +388,13 @@ N64Emulation::~N64Emulation() {
 }
 
 bool N64Emulation::isLoaded() const {
-        std::cerr << "[N64][VERBOSE] isLoaded() called" << std::endl;
     return backend && backend->isRomOpen();
 }
 
 bool N64Emulation::loadRom(const std::string& path) {
-        std::cerr << "[N64][VERBOSE] loadRom() entry" << std::endl;
-    std::cerr << "[N64][DEBUG] loadRom called with path: " << path << std::endl;
+    static const bool n64Debug = (std::getenv("OMNICON_N64_DEBUG") != nullptr);
+    if (n64Debug) std::cerr << "[N64][DEBUG] loadRom called with path: " << path << "\n";
     if (!fs::exists(path)) {
-            std::cerr << "[N64][VERBOSE] loadRom() file does not exist" << std::endl;
         std::cerr << "[N64] File not found: " << path << "\n";
         return false;
     }
@@ -418,55 +403,45 @@ bool N64Emulation::loadRom(const std::string& path) {
     const std::string cfgDir = fs::absolute("saves/n64/config").string();
 
     if (!backend->init(cfgDir)) {
-            std::cerr << "[N64][VERBOSE] loadRom() backend->init failed" << std::endl;
-        std::cerr << "[N64][DEBUG] backend->init failed" << std::endl;
+        if (n64Debug) std::cerr << "[N64][DEBUG] backend->init failed\n";
         return false;
     }
     if (!backend->openRom(path)) {
-            std::cerr << "[N64][VERBOSE] loadRom() backend->openRom failed" << std::endl;
-        std::cerr << "[N64][DEBUG] backend->openRom failed" << std::endl;
+        if (n64Debug) std::cerr << "[N64][DEBUG] backend->openRom failed\n";
         return false;
     }
     if (!backend->loadPlugins()) {
-            std::cerr << "[N64][VERBOSE] loadRom() backend->loadPlugins failed" << std::endl;
-        std::cerr << "[N64][DEBUG] backend->loadPlugins failed" << std::endl;
+        if (n64Debug) std::cerr << "[N64][DEBUG] backend->loadPlugins failed\n";
         return false;
     }
 
     romPath = path;
     std::cout << "[N64] Loaded: " << path << "\n";
-        std::cerr << "[N64][VERBOSE] loadRom() success" << std::endl;
-    std::cerr << "[N64][DEBUG] loadRom success for: " << path << std::endl;
+    if (n64Debug) std::cerr << "[N64][DEBUG] loadRom success for: " << path << "\n";
     return true;
 }
 
 void N64Emulation::unloadRom() {
-        std::cerr << "[N64][VERBOSE] unloadRom() entry" << std::endl;
     if (backend) backend->teardown();
     romPath.clear();
     isRunning = false;
 }
 
 void N64Emulation::runInteractive() {
-        std::cerr << "[N64][VERBOSE] runInteractive() entry" << std::endl;
-    std::cerr << "[N64][DEBUG] runInteractive called" << std::endl;
+    static const bool n64Debug = (std::getenv("OMNICON_N64_DEBUG") != nullptr);
+    if (n64Debug) std::cerr << "[N64][DEBUG] runInteractive called\n";
     if (!isLoaded()) {
-            std::cerr << "[N64][VERBOSE] runInteractive() not loaded" << std::endl;
-        std::cerr << "[N64][DEBUG] runInteractive: not loaded" << std::endl;
+        if (n64Debug) std::cerr << "[N64][DEBUG] runInteractive: not loaded\n";
         return;
     }
 
     std::cout << "[N64] Press ESC or close the game window to exit.\n";
     isRunning = true;
-        std::cerr << "[N64][VERBOSE] runInteractive() starting emulation" << std::endl;
     backend->startExecution();
-        std::cerr << "[N64][VERBOSE] runInteractive() waiting for stop" << std::endl;
     backend->waitForStop();
-        std::cerr << "[N64][VERBOSE] runInteractive() emulation stopped" << std::endl;
-        std::cerr << "[N64][VERBOSE] runInteractive() exit" << std::endl;
     isRunning = false;
     std::cout << "[N64] Emulation stopped.\n";
-    std::cerr << "[N64][DEBUG] runInteractive finished" << std::endl;
+    if (n64Debug) std::cerr << "[N64][DEBUG] runInteractive finished\n";
 }
 
 void N64Emulation::configureGlobalControls() {
@@ -493,7 +468,8 @@ static const fs::path kN64SaveDir = "saves/n64/config/save";
 
 std::vector<unsigned char> N64Emulation::dumpSaveData() const
 {
-    std::cerr << "[N64][DEBUG] dumpSaveData called for: " << romPath << std::endl;
+    static const bool n64Debug = (std::getenv("OMNICON_N64_DEBUG") != nullptr);
+    if (n64Debug) std::cerr << "[N64][DEBUG] dumpSaveData called for: " << romPath << "\n";
     std::vector<std::pair<std::string, std::vector<unsigned char>>> files;
     std::error_code ec;
     if (!fs::exists(kN64SaveDir, ec)) return {};

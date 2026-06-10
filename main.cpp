@@ -942,6 +942,9 @@ void printHelp()
               << "                  .gbc -> Game Boy Color, .a26 -> Atari 2600\n"
               << "                  .a52/.bin/.rom -> Atari 5200/2600\n"
               << "                  .md/.gen/.smd -> Sega Genesis\n"
+              << "                  .cue/.iso/.chd/.pbp/.img/.mdf -> PS1\n"
+              << "                  .gcm/.gcz/.rvz/.ciso -> GameCube\n"
+              << "                  (For GameCube .iso files use play-gamecube)\n"
               << "                  (Supports Windows paths: C:\\Users\\...\\file.gbc)\n"
               << "  play-gb <path>  Load and run a Game Boy ROM (.gb/.gbc/.sgb)\n"
               << "  play-gbc <path> Load and run a Game Boy Color ROM (.gbc/.gb/.sgb)\n"
@@ -1984,12 +1987,7 @@ int main()
                 // After session, dump save data and store in DB using full ROM path as key
                 auto saveData = n64.dumpSaveData();
                 if (!saveData.empty()) {
-                    DatabaseConfig config;
-                    config.host = kDatabaseHost;
-                    config.port = kDatabasePort;
-                    config.user = kDatabaseUser;
-                    config.password = ""; // Set or prompt for password if needed
-                    config.database = kDatabaseName;
+                    // Use the outer `config` (already has host/port/user/password/database).
                     // Use the full ROM path as the key, sanitize for SQL and shell
                     std::string romKey = romPath;
                     std::string romKeySql = sqlEscape(romKey);
@@ -2004,18 +2002,14 @@ int main()
                         + " --password=" + shellEscape(config.password)
                         + " --database=" + shellEscape(config.database)
                         + " 2>/dev/null";
-                    std::cerr << "[N64] About to update DB for save: key='" << romKey << "' (sql-escaped: '" << romKeySql << "')\n";
                     FILE* mysqlPipe = popen(command.c_str(), "w");
                     if (mysqlPipe) {
-                        size_t written = fwrite(sql.data(), 1, sql.size(), mysqlPipe);
-                        std::cerr << "[N64] Wrote " << written << " bytes to mysql pipe\n";
-                        int rc = pclose(mysqlPipe);
-                        std::cerr << "[N64] mysql pipe closed, rc=" << rc << "\n";
+                        fwrite(sql.data(), 1, sql.size(), mysqlPipe);
+                        pclose(mysqlPipe);
                         std::cout << "[N64] Save data updated in DB for " << romKey << "\n";
                     } else {
                         std::cerr << "[N64] Failed to open mysql pipe for save data update\n";
                     }
-                    std::cerr << "[N64] DB update for save complete\n";
                 } else {
                     std::cout << "[N64] No save data to store for " << romPath << "\n";
                 }

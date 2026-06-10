@@ -47,6 +47,8 @@ public:
 // ─── libretro helpers ────────────────────────────────────────────────────────
 
 namespace libretroGameCube {
+    static constexpr unsigned ENV_GET_LOG_INTERFACE   = 27;
+    static constexpr unsigned ENV_SET_HW_RENDER       = 14;
     static constexpr unsigned ENV_SET_PIXEL_FORMAT    = 10;
     static constexpr unsigned ENV_GET_VARIABLE        = 15;
     static constexpr unsigned ENV_SET_VARIABLES       = 16;
@@ -80,12 +82,31 @@ namespace libretroGameCube {
         game_geometry geometry;
         struct { double fps; double sample_rate; } timing;
     };
+    enum class hw_context_type : unsigned {
+        NONE=0, OPENGL=1, OPENGLES2=2, OPENGL_CORE=3, OPENGLES3=4
+    };
+    using hw_context_reset_t           = void (*)();
+    using hw_get_current_framebuffer_t = uintptr_t (*)();
+    using hw_get_proc_address_t        = void* (*)(const char*);
+    struct hw_render_callback {
+        hw_context_type              context_type;
+        hw_context_reset_t           context_reset;
+        hw_get_current_framebuffer_t get_current_framebuffer;
+        hw_get_proc_address_t        get_proc_address;
+        bool     depth, stencil, bottom_left_origin;
+        unsigned version_major, version_minor;
+        bool     cache_context;
+        hw_context_reset_t           context_destroy;
+        bool     debug_context;
+    };
     using environment_t        = bool (*)(unsigned, void*);
     using video_refresh_t      = void (*)(const void*, unsigned, unsigned, size_t);
     using audio_sample_t       = void (*)(int16_t, int16_t);
     using audio_sample_batch_t = size_t (*)(const int16_t*, size_t);
     using input_poll_t         = void (*)(void);
     using input_state_t        = int16_t (*)(unsigned, unsigned, unsigned, unsigned);
+    using log_printf_t         = void (*)(int, const char*, ...);
+    struct log_callback { log_printf_t log; };
 }
 
 // ─── Libretro backend ────────────────────────────────────────────────────────
@@ -125,6 +146,10 @@ private:
     void queueAudioFrames(const int16_t* data, size_t frames);
     bool initializeAudio() override;
     void ensureLibretroDirectories();
+    bool initGLContext();
+    void cleanupGLContext();
+    void createFbo();
+    void readGLPixels();
 
     std::string corePath;
     void* coreHandle = nullptr;
@@ -151,6 +176,30 @@ private:
     std::string contentDirectory;
     gamecube_input_t currentInput{};
     bool gameLoaded = false;
+    bool hwRenderRequested = false;
+    SDL_Window*    hwWindow       = nullptr;
+    SDL_GLContext  hwGLCtx        = nullptr;
+    unsigned       hwFbo          = 0;
+    unsigned       hwColorTex     = 0;
+    unsigned       hwDepthRb      = 0;
+    libretroGameCube::hw_context_reset_t hwContextReset   = nullptr;
+    libretroGameCube::hw_context_reset_t hwContextDestroy = nullptr;
+    bool           hwRenderActive = false;
+    void     (*glGenFramebuffers_)(int, unsigned*)                        = nullptr;
+    void     (*glBindFramebuffer_)(unsigned, unsigned)                    = nullptr;
+    void     (*glGenTextures_)(int, unsigned*)                            = nullptr;
+    void     (*glBindTexture_)(unsigned, unsigned)                        = nullptr;
+    void     (*glTexImage2D_)(unsigned,int,int,int,int,int,unsigned,unsigned,const void*) = nullptr;
+    void     (*glFramebufferTexture2D_)(unsigned,unsigned,unsigned,unsigned,int) = nullptr;
+    void     (*glGenRenderbuffers_)(int, unsigned*)                       = nullptr;
+    void     (*glBindRenderbuffer_)(unsigned, unsigned)                   = nullptr;
+    void     (*glRenderbufferStorage_)(unsigned,unsigned,int,int)         = nullptr;
+    void     (*glFramebufferRenderbuffer_)(unsigned,unsigned,unsigned,unsigned) = nullptr;
+    void     (*glDeleteFramebuffers_)(int, const unsigned*)               = nullptr;
+    void     (*glDeleteTextures_)(int, const unsigned*)                   = nullptr;
+    void     (*glDeleteRenderbuffers_)(int, const unsigned*)              = nullptr;
+    void     (*glReadPixels_)(int,int,int,int,unsigned,unsigned,void*)    = nullptr;
+    void     (*glViewport_)(int,int,int,int)                              = nullptr;
     unsigned pixelFormat = libretroGameCube::PIXEL_0RGB1555;
     int    frameWidth   = 320;
     int    frameHeight  = 240;
@@ -168,6 +217,9 @@ private:
     static size_t  s_audioBatchCb(const int16_t* data, size_t frames);
     static void    s_inputPollCb();
     static int16_t s_inputStateCb(unsigned port, unsigned device, unsigned index, unsigned id);
+    static void    s_logNoop(int, const char*, ...);
+    static uintptr_t s_getCurrentFramebuffer();
+    static void*     s_getProcAddress(const char* sym);
 };
 
 LibretroGameCubeBackend* LibretroGameCubeBackend::s_instance = nullptr;
@@ -198,6 +250,8 @@ LibretroGameCubeBackend::LibretroGameCubeBackend()
 
     s_instance = this;
     ensureLibretroDirectories();
+    setenv("LIBGL_ALWAYS_SOFTWARE", "1", 1);
+    initGLContext();
     fn_set_environment(s_envCb);
     fn_set_video_refresh(s_videoCb);
     fn_set_audio_sample(s_audioCb);
@@ -217,6 +271,7 @@ LibretroGameCubeBackend::~LibretroGameCubeBackend()
         dlclose(coreHandle);
         coreHandle = nullptr;
     }
+    cleanupGLContext();
     if (s_instance == this) s_instance = nullptr;
 }
 
@@ -264,6 +319,140 @@ void LibretroGameCubeBackend::ensureLibretroDirectories()
     systemDirectory  = sysDir.string();
     saveDirectory    = saveDir.string();
     contentDirectory = contDir.string();
+}
+
+bool LibretroGameCubeBackend::initGLContext()
+{
+    const Uint32 needed  = SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER;
+    const Uint32 missing = needed & ~SDL_WasInit(0);
+    if (missing && SDL_InitSubSystem(missing) != 0) {
+        std::cerr << "[GameCube] SDL init for GL failed: " << SDL_GetError() << "\n";
+        return false;
+    }
+
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+    SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 0);
+    SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE,   24);
+    SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);
+
+    hwWindow = SDL_CreateWindow("OmniConGameCube_GL", 0, 0, frameWidth, frameHeight,
+                                SDL_WINDOW_OPENGL | SDL_WINDOW_HIDDEN);
+    if (!hwWindow) {
+        std::cerr << "[GameCube] Failed to create GL window: " << SDL_GetError() << "\n";
+        return false;
+    }
+    hwGLCtx = SDL_GL_CreateContext(hwWindow);
+    if (!hwGLCtx) {
+        std::cerr << "[GameCube] Failed to create GL context: " << SDL_GetError() << "\n";
+        SDL_DestroyWindow(hwWindow); hwWindow = nullptr;
+        return false;
+    }
+    SDL_GL_MakeCurrent(hwWindow, hwGLCtx);
+
+    auto load = [](const char* sym) { return SDL_GL_GetProcAddress(sym); };
+    glGenFramebuffers_         = (void(*)(int,unsigned*))                             load("glGenFramebuffers");
+    glBindFramebuffer_         = (void(*)(unsigned,unsigned))                         load("glBindFramebuffer");
+    glGenTextures_             = (void(*)(int,unsigned*))                             load("glGenTextures");
+    glBindTexture_             = (void(*)(unsigned,unsigned))                         load("glBindTexture");
+    glTexImage2D_              = (void(*)(unsigned,int,int,int,int,int,unsigned,unsigned,const void*)) load("glTexImage2D");
+    glFramebufferTexture2D_    = (void(*)(unsigned,unsigned,unsigned,unsigned,int))   load("glFramebufferTexture2D");
+    glGenRenderbuffers_        = (void(*)(int,unsigned*))                             load("glGenRenderbuffers");
+    glBindRenderbuffer_        = (void(*)(unsigned,unsigned))                         load("glBindRenderbuffer");
+    glRenderbufferStorage_     = (void(*)(unsigned,unsigned,int,int))                 load("glRenderbufferStorage");
+    glFramebufferRenderbuffer_ = (void(*)(unsigned,unsigned,unsigned,unsigned))       load("glFramebufferRenderbuffer");
+    glDeleteFramebuffers_      = (void(*)(int,const unsigned*))                       load("glDeleteFramebuffers");
+    glDeleteTextures_          = (void(*)(int,const unsigned*))                       load("glDeleteTextures");
+    glDeleteRenderbuffers_     = (void(*)(int,const unsigned*))                       load("glDeleteRenderbuffers");
+    glReadPixels_              = (void(*)(int,int,int,int,unsigned,unsigned,void*))   load("glReadPixels");
+    glViewport_                = (void(*)(int,int,int,int))                           load("glViewport");
+
+    const bool ok = glGenFramebuffers_ && glBindFramebuffer_ && glGenTextures_ &&
+                    glBindTexture_ && glTexImage2D_ && glFramebufferTexture2D_ &&
+                    glGenRenderbuffers_ && glBindRenderbuffer_ && glRenderbufferStorage_ &&
+                    glFramebufferRenderbuffer_ && glReadPixels_;
+    if (!ok) std::cerr << "[GameCube] Some GL functions unavailable; HW rendering may fail.\n";
+    return ok;
+}
+
+void LibretroGameCubeBackend::cleanupGLContext()
+{
+    if (hwGLCtx && hwWindow) {
+        SDL_GL_MakeCurrent(hwWindow, hwGLCtx);
+        if (hwContextDestroy) hwContextDestroy();
+        if (hwFbo      && glDeleteFramebuffers_)  glDeleteFramebuffers_(1,  &hwFbo);
+        if (hwColorTex && glDeleteTextures_)      glDeleteTextures_(1,      &hwColorTex);
+        if (hwDepthRb  && glDeleteRenderbuffers_) glDeleteRenderbuffers_(1, &hwDepthRb);
+        hwFbo = hwColorTex = hwDepthRb = 0;
+    }
+    if (hwGLCtx)  { SDL_GL_DeleteContext(hwGLCtx); hwGLCtx  = nullptr; }
+    if (hwWindow) { SDL_DestroyWindow(hwWindow);   hwWindow = nullptr; }
+}
+
+void LibretroGameCubeBackend::createFbo()
+{
+    if (!hwGLCtx || !glGenFramebuffers_ || !glBindFramebuffer_ ||
+        !glGenTextures_ || !glBindTexture_ || !glTexImage2D_ ||
+        !glFramebufferTexture2D_ || !glGenRenderbuffers_ ||
+        !glBindRenderbuffer_ || !glRenderbufferStorage_ || !glFramebufferRenderbuffer_)
+        return;
+
+    if (hwFbo      && glDeleteFramebuffers_)  glDeleteFramebuffers_(1,  &hwFbo);
+    if (hwColorTex && glDeleteTextures_)      glDeleteTextures_(1,      &hwColorTex);
+    if (hwDepthRb  && glDeleteRenderbuffers_) glDeleteRenderbuffers_(1, &hwDepthRb);
+    hwFbo = hwColorTex = hwDepthRb = 0;
+
+    constexpr unsigned GL_FRAMEBUFFER          = 0x8D40;
+    constexpr unsigned GL_COLOR_ATTACHMENT0    = 0x8CE0;
+    constexpr unsigned GL_RENDERBUFFER         = 0x8D41;
+    constexpr unsigned GL_DEPTH_STENCIL_ATTACH = 0x821A;
+    constexpr unsigned GL_DEPTH24_STENCIL8     = 0x88F0;
+    constexpr unsigned GL_TEXTURE_2D           = 0x0DE1;
+    constexpr unsigned GL_RGBA8                = 0x8058;
+    constexpr unsigned GL_RGBA                 = 0x1908;
+    constexpr unsigned GL_UNSIGNED_BYTE        = 0x1401;
+
+    glGenFramebuffers_(1, &hwFbo);
+    glBindFramebuffer_(GL_FRAMEBUFFER, hwFbo);
+
+    glGenTextures_(1, &hwColorTex);
+    glBindTexture_(GL_TEXTURE_2D, hwColorTex);
+    glTexImage2D_(GL_TEXTURE_2D, 0, GL_RGBA8, frameWidth, frameHeight, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    glFramebufferTexture2D_(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, hwColorTex, 0);
+
+    glGenRenderbuffers_(1, &hwDepthRb);
+    glBindRenderbuffer_(GL_RENDERBUFFER, hwDepthRb);
+    glRenderbufferStorage_(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, frameWidth, frameHeight);
+    glFramebufferRenderbuffer_(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACH, GL_RENDERBUFFER, hwDepthRb);
+}
+
+void LibretroGameCubeBackend::readGLPixels()
+{
+    if (!hwGLCtx || !hwFbo || !glBindFramebuffer_ || !glReadPixels_) return;
+
+    constexpr unsigned GL_FRAMEBUFFER   = 0x8D40;
+    constexpr unsigned GL_RGBA          = 0x1908;
+    constexpr unsigned GL_UNSIGNED_BYTE = 0x1401;
+
+    SDL_GL_MakeCurrent(hwWindow, hwGLCtx);
+    glBindFramebuffer_(GL_FRAMEBUFFER, hwFbo);
+    if (glViewport_) glViewport_(0, 0, frameWidth, frameHeight);
+
+    const size_t sz = static_cast<size_t>(frameWidth * frameHeight) * 4;
+    framePixels.resize(sz);
+    glReadPixels_(0, 0, frameWidth, frameHeight, GL_RGBA, GL_UNSIGNED_BYTE, framePixels.data());
+
+    // OpenGL readback origin is bottom-left; flip rows so SDL displays upright.
+    const size_t rowBytes = static_cast<size_t>(frameWidth) * 4;
+    std::vector<unsigned char> tmp(rowBytes);
+    for (int y = 0; y < frameHeight / 2; ++y) {
+        unsigned char* top = framePixels.data() + static_cast<size_t>(y) * rowBytes;
+        unsigned char* bot = framePixels.data() + static_cast<size_t>(frameHeight - 1 - y) * rowBytes;
+        std::memcpy(tmp.data(), top, rowBytes);
+        std::memcpy(top, bot, rowBytes);
+        std::memcpy(bot, tmp.data(), rowBytes);
+    }
 }
 
 bool LibretroGameCubeBackend::ensureAudioDevice(int sampleRate)
@@ -321,13 +510,20 @@ bool LibretroGameCubeBackend::loadRom(const std::string& path)
     }
 
     if (gameLoaded) { fn_unload_game(); gameLoaded = false; }
+    hwRenderRequested = false;
 
     // Pass path + NULL data; GameCube cores require need_fullpath
     libretroGameCube::game_info info{ loadedRomPath.c_str(), nullptr, 0, nullptr };
     if (!fn_load_game(&info)) {
         std::cerr << "[GameCube] Core rejected ROM: " << path << "\n";
-        std::cerr << "      Ensure BIOS files (scph1001.bin etc.) are in "
-                  << systemDirectory << "\n";
+        std::cerr << "      Ensure the Dolphin core can initialize GPU/audio on this host.\n";
+        return false;
+    }
+
+    if (hwRenderRequested && !hwRenderActive) {
+        std::cerr << "[GameCube] Core requested HW rendering but backend failed to activate it.\n";
+        fn_unload_game();
+        gameLoaded = false;
         return false;
     }
     gameLoaded = true;
@@ -349,7 +545,17 @@ bool LibretroGameCubeBackend::loadRom(const std::string& path)
 bool LibretroGameCubeBackend::nextFrame()
 {
     if (!coreHandle || !gameLoaded) return false;
+    if (hwGLCtx && hwWindow) SDL_GL_MakeCurrent(hwWindow, hwGLCtx);
+
+    if (hwRenderActive && hwContextReset) {
+        createFbo();
+        hwContextReset();
+        hwContextReset = nullptr;
+    }
+
     fn_run();
+
+    if (hwRenderActive) readGLPixels();
     return true;
 }
 
@@ -365,11 +571,29 @@ gamecube_color_t LibretroGameCubeBackend::getPixel(int x, int y) const
 
 bool LibretroGameCubeBackend::onEnvironment(unsigned cmd, void* data)
 {
-    if (cmd == 3)  { *static_cast<bool*>(data) = true; return true; }  // GET_OVERSCAN
-    if (cmd == 9)  { *static_cast<const char**>(data) = systemDirectory.c_str(); return true; }   // GET_SYSTEM_DIRECTORY
-    if (cmd == 30) { *static_cast<const char**>(data) = contentDirectory.c_str(); return true; }  // GET_CONTENT_DIRECTORY
-    if (cmd == 31) { *static_cast<const char**>(data) = saveDirectory.c_str(); return true; }     // GET_SAVE_DIRECTORY
+    if (cmd == 3)  { if (data) *static_cast<bool*>(data) = true; return true; }  // GET_OVERSCAN
+    if (cmd == 9)  { if (data) *static_cast<const char**>(data) = systemDirectory.c_str(); return true; }   // GET_SYSTEM_DIRECTORY
+    if (cmd == 30) { if (data) *static_cast<const char**>(data) = contentDirectory.c_str(); return true; }  // GET_CONTENT_DIRECTORY
+    if (cmd == 31) { if (data) *static_cast<const char**>(data) = saveDirectory.c_str(); return true; }     // GET_SAVE_DIRECTORY
     if (cmd == 18) { return true; }   // SET_SUPPORT_NO_GAME
+    if (cmd == libretroGameCube::ENV_GET_LOG_INTERFACE && data) {
+        static_cast<libretroGameCube::log_callback*>(data)->log = s_logNoop;
+        return true;
+    }
+    if (cmd == libretroGameCube::ENV_SET_HW_RENDER && data) {
+        hwRenderRequested = true;
+        if (!hwGLCtx) {
+            std::cerr << "[GameCube] Core requested HW render but GL context is unavailable.\n";
+            return false;
+        }
+        auto* hw = static_cast<libretroGameCube::hw_render_callback*>(data);
+        hw->get_current_framebuffer = s_getCurrentFramebuffer;
+        hw->get_proc_address        = s_getProcAddress;
+        hwContextReset   = hw->context_reset;
+        hwContextDestroy = hw->context_destroy;
+        hwRenderActive   = true;
+        return true;
+    }
     if (cmd == libretroGameCube::ENV_SET_VARIABLES)       { return true; }
     if (cmd == libretroGameCube::ENV_GET_VARIABLE_UPDATE) { if (data) *static_cast<bool*>(data) = false; return true; }
     if (cmd == libretroGameCube::ENV_GET_VARIABLE) {
@@ -397,7 +621,14 @@ bool LibretroGameCubeBackend::onEnvironment(unsigned cmd, void* data)
 
 void LibretroGameCubeBackend::onVideoRefresh(const void* data, unsigned w, unsigned h, size_t pitch)
 {
-    if (!data || w == 0 || h == 0) return;
+    if (data == reinterpret_cast<const void*>(static_cast<uintptr_t>(-1))) {
+        if (w > 0) frameWidth  = static_cast<int>(w);
+        if (h > 0) frameHeight = static_cast<int>(h);
+        return;
+    }
+    // HW-rendered libretro cores may pass RETRO_HW_FRAME_BUFFER_VALID (-1)
+    // instead of a CPU pixel buffer.
+    if (!data || data == reinterpret_cast<const void*>(-1) || w == 0 || h == 0) return;
     frameWidth  = static_cast<int>(w);
     frameHeight = static_cast<int>(h);
     framePixels.resize(static_cast<size_t>(w * h) * 4, 0);
@@ -458,6 +689,20 @@ int16_t LibretroGameCubeBackend::s_inputStateCb(unsigned port, unsigned device, 
         case libretroGameCube::JOYPAD_R3:     return in.r3       ? 1 : 0;
         default: return 0;
     }
+}
+
+void LibretroGameCubeBackend::s_logNoop(int, const char*, ...)
+{
+}
+
+uintptr_t LibretroGameCubeBackend::s_getCurrentFramebuffer()
+{
+    return s_instance ? s_instance->hwFbo : 0;
+}
+
+void* LibretroGameCubeBackend::s_getProcAddress(const char* sym)
+{
+    return SDL_GL_GetProcAddress(sym);
 }
 
 std::vector<unsigned char> LibretroGameCubeBackend::dumpSaveData() const
@@ -612,8 +857,11 @@ void GameCubeEmulation::initSDL()
 {
     if (window && renderer && screenTexture) return;
 
-    if (SDL_WasInit(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER) == 0) {
-        if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER) != 0) {
+    const Uint32 wanted = SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER;
+    const Uint32 have = SDL_WasInit(wanted);
+    const Uint32 missing = wanted & ~have;
+    if (missing != 0) {
+        if (SDL_InitSubSystem(missing) != 0) {
             std::cerr << "SDL init failed: " << SDL_GetError() << "\n";
             return;
         }
@@ -875,7 +1123,7 @@ bool GameCubeEmulation::loadRom(const string& path)
         [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
 
     static const char* const kValidExts[] = {
-        ".bin", ".cue", ".iso", ".pbp", ".img", ".mdf", ".chd", nullptr
+        ".iso", ".gcm", ".gcz", ".rvz", ".ciso", nullptr
     };
     bool validExt = false;
     for (int i = 0; kValidExts[i]; ++i) {
@@ -883,7 +1131,7 @@ bool GameCubeEmulation::loadRom(const string& path)
     }
     if (!validExt) {
         std::cerr << "[GameCube] Unsupported extension '" << ext << "'.\n";
-        std::cerr << "      GameCube ROMs use: .bin/.cue, .iso, .pbp, .chd\n";
+        std::cerr << "      GameCube ROMs use: .iso, .gcm, .gcz, .rvz, .ciso\n";
         return false;
     }
 
@@ -932,9 +1180,8 @@ void GameCubeEmulation::runInteractive()
 
     std::cout << "GameCube: " << romPath << "\n";
     std::cout << "Press Escape or close the window to exit.\n";
-    std::cout << "Default keys: Arrows=D-pad, Z=Cross, X=Circle, A=Square, S=Triangle\n";
+    std::cout << "Default keys: Arrows=D-pad, Z=B, X=A, A=X, S=Y\n";
     std::cout << "              Enter=Start, RShift=Select, Q=L1, W=R1, E=L2, R=R2\n";
-    std::cout << "Note: GameCube BIOS (e.g. scph1001.bin) must be in third_party/libretro/system/\n";
 
     bool running = true;
     gamecube_input_t input{};
@@ -971,7 +1218,10 @@ void GameCubeEmulation::runInteractive()
         }
 
         backendPtr->setInput(input);
-        backendPtr->nextFrame();
+        if (!backendPtr->nextFrame()) {
+            std::cerr << "[GameCube] Frame execution failed; stopping emulation.\n";
+            break;
+        }
         renderFrameSDL();
 
         const auto elapsed = std::chrono::steady_clock::now() - frameStart;

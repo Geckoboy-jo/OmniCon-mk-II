@@ -450,13 +450,12 @@ void Libretro3DSBackend::createFbo()
 void Libretro3DSBackend::readGLPixels()
 {
     if (!hwGLCtx || !glReadPixels_ || !glBindFramebuffer_) return;
-    constexpr unsigned GL_FRAMEBUFFER  = 0x8D40;
     constexpr unsigned GL_READ_FRAMEBUFFER = 0x8CA8;
     constexpr unsigned GL_RGBA         = 0x1908;
     constexpr unsigned GL_UNSIGNED_BYTE= 0x1401;
 
     framePixels.resize(static_cast<size_t>(frameWidth * frameHeight) * 4);
-    glBindFramebuffer_(GL_READ_FRAMEBUFFER, hwFbo ? hwFbo : 0);
+    glBindFramebuffer_(GL_READ_FRAMEBUFFER, hwFbo ? hwFbo : 0u);
     glReadPixels_(0, 0, frameWidth, frameHeight, GL_RGBA, GL_UNSIGNED_BYTE, framePixels.data());
     glBindFramebuffer_(GL_READ_FRAMEBUFFER, 0);
 
