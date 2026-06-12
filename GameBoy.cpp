@@ -272,8 +272,27 @@ bool NativeSameBoyBackend::loadRom(const std::string& path)
     currentInput = {};
 
     GB_set_user_data(gameBoy, this);
+    // Log callback: forward SameBoy messages to stderr and print CPU registers
+    // when an illegal opcode is hit, to help diagnose ROM compatibility issues.
+    GB_set_log_callback(gameBoy, [](GB_gameboy_t* gb, const char* msg, GB_log_attributes_t) {
+        std::cerr << msg;
+        if (std::strstr(msg, "Illegal Opcode")) {
+            const GB_registers_t* r = GB_get_registers(gb);
+            if (r) {
+                std::cerr << std::hex << std::uppercase
+                          << "[GB] Crash registers: PC=0x" << r->pc
+                          << " AF=0x" << r->af << " BC=0x" << r->bc
+                          << " DE=0x" << r->de << " HL=0x" << r->hl
+                          << " SP=0x" << r->sp << "\n" << std::dec;
+            }
+        }
+    });
+    // Always provide the boot ROM so SameBoy's boot-rom-finished handshake
+    // completes and the game actually starts. Without a boot ROM the CPU runs
+    // a zero-filled region (NOPs) indefinitely and the LCD stays off (white).
+    // Set OMNICON_GB_USE_BOOTROM=0 to disable if a boot ROM causes issues.
     const char* useBootRom = std::getenv("OMNICON_GB_USE_BOOTROM");
-    if (useBootRom && *useBootRom == '1') {
+    if (!useBootRom || useBootRom[0] != '0') {
         GB_set_boot_rom_load_callback(gameBoy, loadNativeSameBoyBootRom);
     } else {
         GB_set_boot_rom_load_callback(gameBoy, nullptr);

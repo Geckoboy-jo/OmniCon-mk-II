@@ -13,6 +13,7 @@
 #include "SegaGenesis.hpp"
 #include "N64.hpp"
 #include "PS1.hpp"
+#include "PS2.hpp"
 #include "GameCube.hpp"
 #include "Odyssey.hpp"
 #include "SaveManager.hpp"
@@ -27,7 +28,7 @@ namespace fs = std::filesystem;
 
 // ─── Static members ───────────────────────────────────────────────────────────
 
-const SystemType GameShell::kSystems[16] = {
+const SystemType GameShell::kSystems[17] = {
     SystemType::NES,
     SystemType::SNES,
     SystemType::GameBoy,
@@ -41,13 +42,14 @@ const SystemType GameShell::kSystems[16] = {
     SystemType::SegaGenesis,
     SystemType::N64,
     SystemType::PS1,
+    SystemType::PS2,
     SystemType::GameCube,
     SystemType::Odyssey,
     SystemType::Steam,
 };
 
-const char* const GameShell::kSysAbbrev[16] = {
-    "NES", "SNES", "GB", "GBC", "GBA", "NDS", "3DS", "2600", "5200", "800", "GEN", "N64", "PS1", "GCN", "ODY", "STM"
+const char* const GameShell::kSysAbbrev[17] = {
+    "NES", "SNES", "GB", "GBC", "GBA", "NDS", "3DS", "2600", "5200", "800", "GEN", "N64", "PS1", "PS2", "GCN", "ODY", "STM"
 };
 
 // ─── Colour palette ───────────────────────────────────────────────────────────
@@ -80,6 +82,7 @@ static SDL_Color sysBadgeColor(SystemType sys) {
         case SystemType::SegaGenesis:  return { 20,  80, 180, 255};   // Sega blue
         case SystemType::N64:           return {140,  20,  20, 255};   // N64 red
         case SystemType::PS1:           return { 10,  50, 140, 255};   // PS1 navy blue
+        case SystemType::PS2:           return {  0,  70, 170, 255};   // PS2 blue
         case SystemType::GameCube:      return { 88,  76, 168, 255};   // GameCube indigo
         case SystemType::Odyssey:       return { 45, 160, 160, 255};   // teal
         case SystemType::Steam:         return { 23, 134, 192, 255};   // Steam blue
@@ -253,6 +256,14 @@ void GameShell::rebuildFilter() {
             } else if (!ge.downloadUrl.empty() && dm.isDownloaded(ge.downloadUrl)) {
                 // Sync romPath so launch skips re-download
                 ge.romPath = dm.localPath(ge.downloadUrl);
+                // Refine system type from the downloaded file's extension if it
+                // wasn't determined at load time (e.g. DB entry with blank systemName).
+                if (ge.system == SystemType::Unknown) {
+                    std::string ext = fs::path(ge.romPath).extension().string();
+                    std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+                    SystemType extSys = GameLibrary::systemFromExtension(ext);
+                    if (extSys != SystemType::Unknown) ge.system = extSys;
+                }
                 include = true;
             }
         } else {
@@ -901,7 +912,14 @@ void GameShell::run(GameLibrary& library, const std::string& coversDir) {
 
 void GameShell::launchGame(const GameEntry& game) {
     const std::string& path = game.romPath;
-    switch (game.system) {
+    // Defensive: if system is Unknown, try to detect from the file extension.
+    SystemType sys = game.system;
+    if (sys == SystemType::Unknown && !path.empty()) {
+        std::string ext = fs::path(path).extension().string();
+        std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+        sys = GameLibrary::systemFromExtension(ext);
+    }
+    switch (sys) {
         case SystemType::NES: {
             NESEmulation nes;
             if (nes.loadRom(path)) {
@@ -1042,6 +1060,19 @@ void GameShell::launchGame(const GameEntry& game) {
                 }
             }
             catch (const std::exception& e) { std::cerr << "PS1 error: " << e.what() << "\n"; }
+            break;
+        }
+        case SystemType::PS2: {
+            PS2Emulation ps2;
+            try {
+                if (ps2.loadRom(path)) {
+                    std::vector<unsigned char> data;
+                    if (SaveManager::instance().get(path, data)) ps2.restoreSaveData(data);
+                    ps2.runInteractive();
+                    SaveManager::instance().put(path, ps2.dumpSaveData());
+                }
+            }
+            catch (const std::exception& e) { std::cerr << "PS2 error: " << e.what() << "\n"; }
             break;
         }
         case SystemType::GameCube: {

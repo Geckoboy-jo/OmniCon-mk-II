@@ -50,6 +50,8 @@ SystemType GameLibrary::systemFromUrl(const std::string& url) {
         return SystemType::SegaGenesis;
     if (has("/roms_ps1") || has("/ps1_roms") || has("playstation_roms") || has("psx_roms") || has("/roms_psx"))
         return SystemType::PS1;
+    if (has("/roms_ps2") || has("/ps2_roms") || has("playstation2_roms") || has("ps2_iso"))
+        return SystemType::PS2;
     if (has("/roms_gba") || has("gameboy_advance"))
         return SystemType::GBA;
     if (has("atari_2600") || has("roms_2600") || has("atari2600"))
@@ -121,6 +123,7 @@ SystemType GameLibrary::systemFromName(const std::string& name) {
     if (name == "Sega Genesis")     return SystemType::SegaGenesis;
     if (name == "Nintendo 64")      return SystemType::N64;
     if (name == "PlayStation" || name == "PS1") return SystemType::PS1;
+    if (name == "PlayStation 2" || name == "PS2") return SystemType::PS2;
     if (name == "Nintendo GameCube" || name == "GameCube" || name == "GCN") return SystemType::GameCube;
     if (name == "Magnavox Odyssey") return SystemType::Odyssey;
     if (name == "Steam")            return SystemType::Steam;
@@ -142,6 +145,7 @@ std::string GameLibrary::systemName(SystemType sys) {
         case SystemType::SegaGenesis: return "Sega Genesis";
         case SystemType::N64:          return "Nintendo 64";
         case SystemType::PS1:          return "PlayStation";
+        case SystemType::PS2:          return "PlayStation 2";
         case SystemType::GameCube:     return "Nintendo GameCube";
         case SystemType::Odyssey:       return "Magnavox Odyssey";
         case SystemType::Steam:         return "Steam";
@@ -164,6 +168,7 @@ std::string GameLibrary::systemDirName(SystemType sys) {
         case SystemType::SegaGenesis: return "genesis";
         case SystemType::N64:          return "n64";
         case SystemType::PS1:          return "ps1";
+        case SystemType::PS2:          return "ps2";
         case SystemType::GameCube:     return "gamecube";
         case SystemType::Odyssey:       return "odyssey";
         case SystemType::Steam:         return "steam";
@@ -186,6 +191,7 @@ int GameLibrary::screenscraper_systemId(SystemType sys) {
         case SystemType::SegaGenesis: return 1;   // Mega Drive / Genesis
         case SystemType::N64:          return 14;  // Nintendo 64
         case SystemType::PS1:          return 57;  // PlayStation
+        case SystemType::PS2:          return 58;  // PlayStation 2
         case SystemType::GameCube:     return 13;  // Nintendo GameCube
         case SystemType::Odyssey:       return 0;   // no ROM dumps exist
         case SystemType::Steam:         return 0;   // not scraped
@@ -262,6 +268,7 @@ void GameLibrary::scan(const std::string& romsDir) {
         {"genesis",   SystemType::SegaGenesis},
         {"n64",       SystemType::N64},
         {"ps1",       SystemType::PS1},
+        {"ps2",       SystemType::PS2},
         {"gamecube",  SystemType::GameCube},
         {"odyssey",   SystemType::Odyssey},
     };

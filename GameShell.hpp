@@ -21,9 +21,9 @@ public:
     void setDBConfig(const OracleDBConfig& cfg) { dbCfg_ = cfg; }
 
     // Public so free functions in the .cpp can access them
-    static const SystemType  kSystems[16];
-    static const char* const kSysAbbrev[16];
-    static constexpr int     kNumSystems = 16;
+    static const SystemType  kSystems[17];
+    static const char* const kSysAbbrev[17];
+    static constexpr int     kNumSystems = 17;
 
 private:
     // SDL resources

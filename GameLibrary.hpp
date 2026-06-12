@@ -18,6 +18,7 @@ enum class SystemType {
     SegaGenesis,
     N64,
     PS1,
+    PS2,
     GameCube,
     Odyssey,
     Steam,

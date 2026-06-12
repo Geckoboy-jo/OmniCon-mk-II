@@ -12,11 +12,13 @@
 #include "GBA.hpp"
 #include "NDS.hpp"
 #include "PS1.hpp"
+#include "PS2.hpp"
 #include "GameCube.hpp"
 #include "GameLibrary.hpp"
 #include "GameShell.hpp"
 #include "OracleDB.hpp"
 #include "DownloadManager.hpp"
+#include "SaveManager.hpp"
 
 #include <cstdlib>
 #include <cctype>
@@ -612,9 +614,10 @@ void configureAllControls()
         Atari800Emulation     a800Init;
         SegaGenesisEmulation  genesisInit;
         PS1Emulation          ps1Init;
+        PS2Emulation          ps2Init;
         GameCubeEmulation     gameCubeInit;
         (void)nesInit; (void)gbInit; (void)snesInit; (void)gbaInit;
-        (void)ndsInit; (void)a2600Init; (void)a5200Init; (void)a800Init; (void)genesisInit; (void)ps1Init; (void)gameCubeInit;
+        (void)ndsInit; (void)a2600Init; (void)a5200Init; (void)a800Init; (void)genesisInit; (void)ps1Init; (void)ps2Init; (void)gameCubeInit;
     }
 
     const bool hadController = (SDL_WasInit(SDL_INIT_GAMECONTROLLER) != 0);
@@ -828,6 +831,7 @@ void configureAllControls()
     auto toA5200Mode = [&]() { return static_cast<Atari5200Emulation::InputMode>(static_cast<int>(mode)); };
     auto toA800Mode  = [&]() { return static_cast<Atari800Emulation::InputMode>(static_cast<int>(mode)); };
     auto toPS1Mode   = [&]() { return static_cast<PS1Emulation::InputMode>(static_cast<int>(mode)); };
+    auto toPS2Mode   = [&]() { return static_cast<PS2Emulation::InputMode>(static_cast<int>(mode)); };
     auto toGcMode    = [&]() { return static_cast<GameCubeEmulation::InputMode>(static_cast<int>(mode)); };
 
     // NES
@@ -906,6 +910,24 @@ void configureAllControls()
     };
     PS1Emulation::globalInputConfigured = true;
 
+    // PlayStation 2
+    // Same button layout as PS1: Cross=B, Circle=A, Square=X, Triangle=Y; L1=L, R1=R
+    PS2Emulation::globalInputMode = toPS2Mode();
+    PS2Emulation::globalKeyBindings = {
+        kUp, kDown, kLeft, kRight,
+        kB,  kA,    kX,    kY,     // cross, circle, square, triangle
+        kStart, kSel,
+        kL, kR,                    // l1, r1
+        PS2Emulation::globalKeyBindings.l2, PS2Emulation::globalKeyBindings.r2  // keep defaults
+    };
+    PS2Emulation::globalControllerBindings = {
+        bUp, bDown, bLeft, bRight,
+        bB,  bA,    bX,    bY,     // cross, circle, square, triangle
+        bStart, bSel,
+        bL, bR                     // l1, r1
+    };
+    PS2Emulation::globalInputConfigured = true;
+
     // GameCube
     // A/B/X/Y and shoulders share the same unified mappings as PS1/SNES/NDS.
     GameCubeEmulation::globalInputMode = toGcMode();
@@ -945,6 +967,7 @@ void printHelp()
               << "                  .cue/.iso/.chd/.pbp/.img/.mdf -> PS1\n"
               << "                  .gcm/.gcz/.rvz/.ciso -> GameCube\n"
               << "                  (For GameCube .iso files use play-gamecube)\n"
+              << "                  (For PS2 .iso/.bin files use play-ps2)\n"
               << "                  (Supports Windows paths: C:\\Users\\...\\file.gbc)\n"
               << "  play-gb <path>  Load and run a Game Boy ROM (.gb/.gbc/.sgb)\n"
               << "  play-gbc <path> Load and run a Game Boy Color ROM (.gbc/.gb/.sgb)\n"
@@ -954,6 +977,7 @@ void printHelp()
               << "  play-gba <path>  Load and run a GBA ROM (.gba)\n"
               << "  play-nds <path>  Load and run a Nintendo DS ROM (.nds)\n"
               << "  play-ps1 <path>  Load and run a PlayStation ROM (.cue/.bin/.iso/.pbp/.chd)\n"
+              << "  play-ps2 <path>  Load and run a PlayStation 2 ROM (.iso/.bin/.cue/.chd/.gz/.cso)\n"
               << "  play-gamecube <path>  Load and run a GameCube ROM (.gcm/.iso/.gcz/.rvz/.ciso)\n"
               << "  play-genesis <path>  Load and run a Sega Genesis ROM (.md/.gen/.smd)\n"
               << "  play-n64 <path>  Load and run a Nintendo 64 ROM (.n64/.z64/.v64)\n"
@@ -1166,7 +1190,7 @@ void setControlsFromCSV() {
     N64Emulation::globalInputConfigured = true;
 
     // PS1 (only 14 fields)
-    PS1Emulation::globalKeyBindings = {
+    PS1Emulation::globalKeyBindings = {    // NOLINT
         keycodeFromString(mapping["Up"]),
         keycodeFromString(mapping["Down"]),
         keycodeFromString(mapping["Left"]),
@@ -1183,6 +1207,25 @@ void setControlsFromCSV() {
         keycodeFromString(mapping["r2"])
     };
     PS1Emulation::globalInputConfigured = true;
+
+    // PS2 (same layout as PS1)
+    PS2Emulation::globalKeyBindings = {
+        keycodeFromString(mapping["Up"]),
+        keycodeFromString(mapping["Down"]),
+        keycodeFromString(mapping["Left"]),
+        keycodeFromString(mapping["Right"]),
+        keycodeFromString(mapping["b"]), // cross
+        keycodeFromString(mapping["a"]), // circle
+        keycodeFromString(mapping["x"]), // square
+        keycodeFromString(mapping["y"]), // triangle
+        keycodeFromString(mapping["start"]),
+        keycodeFromString(mapping["select"]),
+        keycodeFromString(mapping["l1"]),
+        keycodeFromString(mapping["r1"]),
+        keycodeFromString(mapping["l2"]),
+        keycodeFromString(mapping["r2"])
+    };
+    PS2Emulation::globalInputConfigured = true;
 
     // GameCube (shares the same unified keyboard/controller mapping style)
     GameCubeEmulation::globalKeyBindings = {
@@ -1221,6 +1264,27 @@ bool isSupportedUrl(const std::string& url)
     return url.rfind("http://", 0) == 0 || url.rfind("https://", 0) == 0;
 }
 
+// Helper: restore save state before running, persist it on exit.
+// Works with any emulation class that exposes restoreSaveData / runInteractive / dumpSaveData.
+template<typename Emu>
+static void runWithAutoSave(Emu& emu, const std::string& romPath)
+{
+    auto& sm = SaveManager::instance();
+    {
+        std::vector<unsigned char> saved;
+        if (sm.get(romPath, saved) && !saved.empty()) {
+            emu.restoreSaveData(saved);
+        }
+    }
+    emu.runInteractive();
+    {
+        auto saveData = emu.dumpSaveData();
+        if (!saveData.empty()) {
+            sm.put(romPath, saveData);
+        }
+    }
+}
+
 } // namespace
 
 int main()
@@ -1254,6 +1318,7 @@ int main()
 
     // Persistent download queue
     DownloadManager::instance().init("saves/download_queue.json", "Roms");
+    SaveManager::instance().init("saves/saves.db");
 
     // Auto-launch the game library shell on startup
     {
@@ -1519,7 +1584,7 @@ int main()
                         } else {
                             std::cout << "Could not detect system from URL.\n"
                                       << "Enter system (NES, SNES, GBA, GBC, GameBoy, NDS, N64,\n"
-                                      << "  SegaGenesis, Atari2600, Atari5200, Atari800, 3DS, Odyssey, PS1, GameCube)\n"
+                                      << "  SegaGenesis, Atari2600, Atari5200, Atari800, 3DS, Odyssey, PS1, PS2, GameCube)\n"
                                       << "or leave blank to skip unknowns: ";
                             std::cout.flush();
                             std::getline(std::cin, batchSysName);
@@ -1583,6 +1648,7 @@ int main()
         const std::string playGbaCommand = "play-gba ";
         const std::string playNdsCommand = "play-nds ";
         const std::string playPs1Command = "play-ps1 ";
+        const std::string playPs2Command = "play-ps2 ";
         const std::string playGameCubeCommand = "play-gamecube ";
         const std::string playGenesisCommand = "play-genesis ";
         const std::string playN64Command = "play-n64 ";
@@ -1595,6 +1661,7 @@ int main()
             && input.rfind(playGbaCommand, 0) != 0
             && input.rfind(playNdsCommand, 0) != 0
             && input.rfind(playPs1Command, 0) != 0
+            && input.rfind(playPs2Command, 0) != 0
             && input.rfind(playGameCubeCommand, 0) != 0
             && input.rfind(playGenesisCommand, 0) != 0
             && input.rfind(playN64Command, 0) != 0;
@@ -1606,6 +1673,7 @@ int main()
         const bool isPlayGbaCommand     = input.rfind(playGbaCommand, 0)     == 0;
         const bool isPlayNdsCommand     = input.rfind(playNdsCommand, 0)     == 0;
         const bool isPlayPs1Command     = input.rfind(playPs1Command, 0)     == 0;
+        const bool isPlayPs2Command     = input.rfind(playPs2Command, 0)     == 0;
         const bool isPlayGameCubeCommand = input.rfind(playGameCubeCommand, 0) == 0;
         const bool isPlayGenesisCommand = input.rfind(playGenesisCommand, 0) == 0;
         const bool isPlayN64Command     = input.rfind(playN64Command, 0)     == 0;
@@ -1632,7 +1700,7 @@ int main()
                 GBAEmulation gba;
                 try {
                     if (gba.loadRom(romPath)) {
-                        gba.runInteractive();
+                        runWithAutoSave(gba, romPath);
                     }
                 } catch (const std::exception& e) {
                     std::cerr << "GBA error: " << e.what() << "\n";
@@ -1640,28 +1708,28 @@ int main()
             } else if (extension == ".gbc" || extension == ".sgb") {
                 GameBoyColorEmulation gbc;
                 if (gbc.loadRom(romPath)) {
-                    gbc.runInteractive();
+                    runWithAutoSave(gbc, romPath);
                 }
             } else if (extension == ".gb") {
                 GameBoyEmulation gb;
                 if (gb.loadRom(romPath)) {
-                    gb.runInteractive();
+                    runWithAutoSave(gb, romPath);
                 }
             } else if (extension == ".smc" || extension == ".sfc") {
                 SNESEmulation snes;
                 if (snes.loadRom(romPath)) {
-                    snes.runInteractive();
+                    runWithAutoSave(snes, romPath);
                 }
             } else if (extension == ".a26") {
                 Atari2600Emulation atari2600;
                 if (atari2600.loadRom(romPath)) {
-                    atari2600.runInteractive();
+                    runWithAutoSave(atari2600, romPath);
                 }
             } else if (extension == ".nds") {
                 NDSEmulation nds;
                 try {
                     if (nds.loadRom(romPath)) {
-                        nds.runInteractive();
+                        runWithAutoSave(nds, romPath);
                     }
                 } catch (const std::exception& e) {
                     std::cerr << "NDS error: " << e.what() << "\n";
@@ -1669,18 +1737,18 @@ int main()
             } else if (extension == ".a52") {
                 Atari5200Emulation atari5200;
                 if (atari5200.loadRom(romPath)) {
-                    atari5200.runInteractive();
+                    runWithAutoSave(atari5200, romPath);
                 }
             } else if (extension == ".md" || extension == ".gen" || extension == ".smd" ||
                        extension == ".68k" || extension == ".sgd") {
                 SegaGenesisEmulation gen;
                 if (gen.loadRom(romPath)) {
-                    gen.runInteractive();
+                    runWithAutoSave(gen, romPath);
                 }
             } else if (extension == ".n64" || extension == ".z64" || extension == ".v64") {
                 N64Emulation n64;
                 if (n64.loadRom(romPath)) {
-                    n64.runInteractive();
+                    runWithAutoSave(n64, romPath);
                 }
             } else if (extension == ".cue" || extension == ".iso" ||
                        extension == ".pbp" || extension == ".chd" ||
@@ -1688,7 +1756,7 @@ int main()
                 PS1Emulation ps1;
                 try {
                     if (ps1.loadRom(romPath)) {
-                        ps1.runInteractive();
+                        runWithAutoSave(ps1, romPath);
                     }
                 } catch (const std::exception& e) {
                     std::cerr << "PS1 error: " << e.what() << "\n";
@@ -1697,7 +1765,7 @@ int main()
                 GameCubeEmulation gc;
                 try {
                     if (gc.loadRom(romPath)) {
-                        gc.runInteractive();
+                        runWithAutoSave(gc, romPath);
                     }
                 } catch (const std::exception& e) {
                     std::cerr << "GameCube error: " << e.what() << "\n";
@@ -1706,17 +1774,17 @@ int main()
                 // Ambiguous extension: try Atari 5200 first, then Atari 2600, then NES
                 Atari5200Emulation atari5200;
                 if (atari5200.loadRom(romPath)) {
-                    atari5200.runInteractive();
+                    runWithAutoSave(atari5200, romPath);
                 } else {
                     Atari2600Emulation atari2600;
                     if (atari2600.loadRom(romPath)) {
-                        atari2600.runInteractive();
+                        runWithAutoSave(atari2600, romPath);
                     }
                 }
             } else {
                 NESEmulation nes;
                 if (nes.loadRom(romPath)) {
-                    nes.runInteractive();
+                    runWithAutoSave(nes, romPath);
                 }
             }
             continue;
@@ -1740,7 +1808,7 @@ int main()
             GameBoyEmulation gb;
             try {
                 if (gb.loadRom(romPath)) {
-                    gb.runInteractive();
+                    runWithAutoSave(gb, romPath);
                 }
             } catch (const std::exception& e) {
                 std::cerr << "Game Boy error: " << e.what() << "\n";
@@ -1766,7 +1834,7 @@ int main()
             GameBoyColorEmulation gbc;
             try {
                 if (gbc.loadRom(romPath)) {
-                    gbc.runInteractive();
+                    runWithAutoSave(gbc, romPath);
                 }
             } catch (const std::exception& e) {
                 std::cerr << "Game Boy Color error: " << e.what() << "\n";
@@ -1791,7 +1859,7 @@ int main()
 
             SNESEmulation snes;
             if (snes.loadRom(romPath)) {
-                snes.runInteractive();
+                runWithAutoSave(snes, romPath);
             }
             continue;
         }
@@ -1813,7 +1881,7 @@ int main()
 
             Atari2600Emulation atari2600;
             if (atari2600.loadRom(romPath)) {
-                atari2600.runInteractive();
+                runWithAutoSave(atari2600, romPath);
             }
             continue;
         }
@@ -1835,7 +1903,7 @@ int main()
 
             Atari5200Emulation atari5200;
             if (atari5200.loadRom(romPath)) {
-                atari5200.runInteractive();
+                runWithAutoSave(atari5200, romPath);
             }
             continue;
         }
@@ -1858,7 +1926,7 @@ int main()
             GBAEmulation gba;
             try {
                 if (gba.loadRom(romPath)) {
-                    gba.runInteractive();
+                    runWithAutoSave(gba, romPath);
                 }
             } catch (const std::exception& e) {
                 std::cerr << "GBA error: " << e.what() << "\n";
@@ -1884,7 +1952,7 @@ int main()
             NDSEmulation nds;
             try {
                 if (nds.loadRom(romPath)) {
-                    nds.runInteractive();
+                    runWithAutoSave(nds, romPath);
                 }
             } catch (const std::exception& e) {
                 std::cerr << "NDS error: " << e.what() << "\n";
@@ -1910,10 +1978,36 @@ int main()
             PS1Emulation ps1;
             try {
                 if (ps1.loadRom(romPath)) {
-                    ps1.runInteractive();
+                    runWithAutoSave(ps1, romPath);
                 }
             } catch (const std::exception& e) {
                 std::cerr << "PS1 error: " << e.what() << "\n";
+            }
+            continue;
+        }
+
+        if (isPlayPs2Command) {
+            std::string romPath = trim(input.substr(playPs2Command.size()));
+            romPath = stripOuterQuotes(romPath);
+            romPath = normalizePath(romPath);
+
+            if (romPath.empty()) {
+                std::cout << "ROM path is required.\n";
+                continue;
+            }
+
+            if (!std::filesystem::exists(romPath)) {
+                std::cout << "ROM file does not exist: " << romPath << "\n";
+                continue;
+            }
+
+            PS2Emulation ps2;
+            try {
+                if (ps2.loadRom(romPath)) {
+                    runWithAutoSave(ps2, romPath);
+                }
+            } catch (const std::exception& e) {
+                std::cerr << "PS2 error: " << e.what() << "\n";
             }
             continue;
         }
@@ -1936,7 +2030,7 @@ int main()
             GameCubeEmulation gc;
             try {
                 if (gc.loadRom(romPath)) {
-                    gc.runInteractive();
+                    runWithAutoSave(gc, romPath);
                 }
             } catch (const std::exception& e) {
                 std::cerr << "GameCube error: " << e.what() << "\n";
@@ -1961,7 +2055,7 @@ int main()
 
             SegaGenesisEmulation gen;
             if (gen.loadRom(romPath)) {
-                gen.runInteractive();
+                runWithAutoSave(gen, romPath);
             }
             continue;
         }
@@ -1983,8 +2077,8 @@ int main()
 
             N64Emulation n64;
             if (n64.loadRom(romPath)) {
-                n64.runInteractive();
-                // After session, dump save data and store in DB using full ROM path as key
+                runWithAutoSave(n64, romPath);
+                // After session, also sync save data to remote DB using full ROM path as key
                 auto saveData = n64.dumpSaveData();
                 if (!saveData.empty()) {
                     // Use the outer `config` (already has host/port/user/password/database).
