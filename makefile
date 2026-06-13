@@ -13,7 +13,7 @@ SOURCES := main.cpp NES.cpp SNES.cpp GameBoy.cpp GameBoyColor.cpp Atari2600.cpp 
 
 
 $(TARGET): $(SOURCES) NES.hpp SNES.hpp GameBoy.hpp GameBoyColor.hpp Atari2600.hpp Atari5200.hpp Atari800.hpp GBA.hpp NDS.hpp 3DS.hpp SegaGenesis.hpp N64.hpp PS1.hpp PS2.hpp GameCube.hpp GameLibrary.hpp GameShell.hpp top.hpp agnes.h
-	$(CC) $(CFLAGS) $(SDL_CFLAGS) $(MYSQL_CFLAGS) $(SOURCES) -o $(TARGET) $(SAMEBOY_LIB) $(SDL_LIBS) -lSDL2_ttf -lSDL2_image -ldl -lmgba $(MYSQL_LIBS)
+	$(CC) $(CFLAGS) $(SDL_CFLAGS) $(MYSQL_CFLAGS) $(SOURCES) -o $(TARGET) $(SAMEBOY_LIB) $(SDL_LIBS) -lSDL2_ttf -lSDL2_image -ldl -lmgba $(MYSQL_LIBS) -pthread
 
 oracle_test: OracleDB.cpp oracle_test.cpp OracleDB.hpp
 	$(CC) $(CFLAGS) $(MYSQL_CFLAGS) OracleDB.cpp oracle_test.cpp -o oracle_test $(MYSQL_LIBS)

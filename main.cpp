@@ -27,6 +27,9 @@
 #include <set>
 #include <regex>
 #include <chrono>
+#include <atomic>
+#include <mutex>
+#include <thread>
 
 
 //./controller_bridge/start_bridge.sh
@@ -985,6 +988,7 @@ void printHelp()
               << "  scrape-covers   Download missing box art for all games in the library\n"
               << "  controls        Configure controls for all systems (keyboard + controller)\n"
               << "  controls-csv    Parse Controls.csv and set controls for all systems\n"
+              << "  db-rename-from-url  Rename every DB entry to the clean title decoded from its download URL\n"
               << "  config          Re-enter database password\n"
               << "  help            Show this message\n"
               << "  quit            Exit the REPL\n";
@@ -1479,6 +1483,148 @@ int main()
                 }
             }
             std::cout << "db-rename-titles: updated " << renamed << " row(s).\n";
+            continue;
+        }
+
+        // db-rename-from-url: rename every DB row's NAME to the clean title decoded from its download URL.
+        // Region/version/demo tags like (USA), (En), (Demo), (Rev 1.1) are intentionally preserved.
+        if (input == "db-rename-from-url") {
+            std::vector<OracleGameRow> dbRows;
+            if (!queryGames(oracleCfg, dbRows)) { continue; }
+
+            // ── Phase 1: compute new names (pure CPU, no I/O) ──────────────
+            struct RenameTask { int id; std::string newName; };
+            std::vector<RenameTask> tasks;
+            tasks.reserve(dbRows.size());
+
+            // Paren-aware extension stripper.
+            // Scans right-to-left for the last '.' that sits OUTSIDE any (...)/[...]
+            // group, so tags like "(Rev 1.1)", "(En,Fr)", "(Demo)" are never split.
+            static const std::set<std::string> kArcExts = {
+                ".zip",".7z",".gz",".bz2",".xz",".rar",".tar"
+            };
+            static const std::set<std::string> kRomExts = {
+                ".nes",".smc",".sfc",".gb",".gbc",".gba",".nds",".n64",".z64",".v64",
+                ".iso",".bin",".cue",".rom",".md",".gen",".smd",".a26",".a52",".cdi",
+                ".chd",".pbp",".img",".mdf",".gcm",".gcz",".rvz",".wbfs",".ciso",
+                ".3ds",".cia",".a78",".a800"
+            };
+
+            // Returns {stem, matched} where stem has the extension removed only if
+            // the extension (case-insensitive) is in `known`.
+            auto stripKnownExt = [](const std::string& s,
+                                    const std::set<std::string>& known)
+                                  -> std::pair<std::string, bool>
+            {
+                int depth = 0, dotPos = -1;
+                for (int i = static_cast<int>(s.size()) - 1; i >= 0; --i) {
+                    if      (s[i] == ')' || s[i] == ']') ++depth;
+                    else if ((s[i] == '(' || s[i] == '[') && depth > 0) --depth;
+                    else if (s[i] == '.' && depth == 0)  { dotPos = i; break; }
+                }
+                if (dotPos < 0) return {s, false};
+                std::string ext = s.substr(dotPos);
+                std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+                if (known.count(ext)) return {s.substr(0, dotPos), true};
+                return {s, false};
+            };
+
+            // Strip any extension (fallback for unrecognised extensions).
+            auto stripAnyExt = [](const std::string& s) -> std::string {
+                int depth = 0, dotPos = -1;
+                for (int i = static_cast<int>(s.size()) - 1; i >= 0; --i) {
+                    if      (s[i] == ')' || s[i] == ']') ++depth;
+                    else if ((s[i] == '(' || s[i] == '[') && depth > 0) --depth;
+                    else if (s[i] == '.' && depth == 0)  { dotPos = i; break; }
+                }
+                return dotPos > 0 ? s.substr(0, dotPos) : s;
+            };
+
+            for (const auto& r : dbRows) {
+                const std::string& src = !r.downloadUrl.empty() ? r.downloadUrl : r.localPath;
+                if (src.empty()) continue;
+
+                // URL-decode and replace underscores with spaces.
+                // Encoded parens (%28/%29), spaces (%20), commas (%2C) etc. are
+                // all decoded here so region tags arrive intact as plain text.
+                std::string name = urlDecode(fileNameFromUrl(src));
+                std::replace(name.begin(), name.end(), '_', ' ');
+
+                // Strip archive wrapper (.zip, .7z, …)
+                auto [afterArc, wasArc] = stripKnownExt(name, kArcExts);
+                // Strip inner ROM extension (.nes, .gba, …) for double-ext archives
+                auto [afterRom, wasRom] = stripKnownExt(afterArc, kRomExts);
+                // Fallback: strip whatever extension remains if nothing was recognised
+                std::string base = wasRom ? afterRom
+                                 : wasArc ? afterArc
+                                 : stripAnyExt(name);
+
+                // Trim only leading/trailing whitespace and dashes.
+                // Parenthetical tags like (USA), (En,Fr), (Demo), (Rev 1.1) are untouched.
+                while (!base.empty() && (base.front() == ' ' || base.front() == '-')) base.erase(base.begin());
+                while (!base.empty() && (base.back()  == ' ' || base.back()  == '-')) base.pop_back();
+
+                if (!base.empty() && base != r.name)
+                    tasks.push_back({r.id, std::move(base)});
+            }
+
+            const int numTasks = static_cast<int>(tasks.size());
+            std::cout << "Renaming " << numTasks << " row(s) (out of "
+                      << dbRows.size() << " total)...\n";
+
+            if (numTasks == 0) {
+                std::cout << "db-rename-from-url: nothing to update.\n";
+                continue;
+            }
+
+            // ── Phase 2: dispatch DB UPDATEs across worker threads ─────────
+            std::atomic<int> taskIdx{0};
+            std::atomic<int> renamed{0};
+            std::atomic<int> processed{0};
+            std::mutex printMtx;
+
+            auto printProgress = [&](int current) {
+                constexpr int kBarWidth = 40;
+                const float pct = static_cast<float>(current) / numTasks;
+                const int filled = static_cast<int>(pct * kBarWidth);
+                std::cout << "\r[";
+                for (int i = 0; i < kBarWidth; ++i)
+                    std::cout << (i < filled ? '#' : ' ');
+                std::cout << "] " << current << "/" << numTasks
+                          << " (" << static_cast<int>(pct * 100) << "%)  ";
+                std::cout.flush();
+            };
+
+            const int numThreads = std::min(numTasks,
+                std::min(8, static_cast<int>(std::thread::hardware_concurrency())));
+
+            auto worker = [&]() {
+                while (true) {
+                    const int i = taskIdx.fetch_add(1, std::memory_order_relaxed);
+                    if (i >= numTasks) break;
+                    const auto& t = tasks[i];
+                    const std::string sql = "UPDATE GAMES SET NAME='"
+                                          + sqlEscape(t.newName)
+                                          + "' WHERE ID=" + std::to_string(t.id);
+                    if (oracleExecute(oracleCfg, sql)) ++renamed;
+                    const int done = ++processed;
+                    {
+                        std::lock_guard<std::mutex> lk(printMtx);
+                        printProgress(done);
+                    }
+                }
+            };
+
+            std::vector<std::thread> threads;
+            threads.reserve(numThreads);
+            for (int i = 0; i < numThreads; ++i)
+                threads.emplace_back(worker);
+            for (auto& t : threads)
+                t.join();
+
+            printProgress(numTasks);
+            std::cout << "\ndb-rename-from-url: updated " << renamed.load()
+                      << " row(s) using " << numThreads << " thread(s).\n";
             continue;
         }
 

@@ -452,33 +452,75 @@ void GameLibrary::loadFromDB(const OracleDBConfig& cfg) {
         GameEntry ge;
         ge.dbId        = row.id;
         ge.downloadUrl = row.downloadUrl;
-        // URL-decode and clean the stored name: "Kid%20Icarus%20%28USA%29.zip" → "Kid Icarus"
+        // Decode the stored name and strip archive/ROM extension while preserving
+        // version/region/demo tags: (USA), (En), (Demo), (Rev 1.1) etc.
         {
-            // Simple percent-decode
+            // Percent-decode: "%20" → ' ', "%28" → '(', etc.
             std::string decoded;
             decoded.reserve(row.name.size());
             for (size_t i = 0; i < row.name.size(); ) {
                 if (row.name[i] == '%' && i + 2 < row.name.size()) {
-                    char hi = row.name[i+1], lo = row.name[i+2];
                     auto hexVal = [](char c) -> int {
                         if (c >= '0' && c <= '9') return c - '0';
                         if (c >= 'a' && c <= 'f') return c - 'a' + 10;
                         if (c >= 'A' && c <= 'F') return c - 'A' + 10;
                         return -1;
                     };
-                    int h = hexVal(hi), l = hexVal(lo);
+                    int h = hexVal(row.name[i+1]), l = hexVal(row.name[i+2]);
                     if (h >= 0 && l >= 0) { decoded += static_cast<char>(h * 16 + l); i += 3; continue; }
                 }
                 if (row.name[i] == '+') { decoded += ' '; ++i; continue; }
                 decoded += row.name[i++];
             }
-            // Strip archive wrapper then clean: "game.nes.zip" → "game.nes" → "game"
-            fs::path np(decoded);
-            std::string ext = toLower(np.extension().string());
-            static const char* const kArc[] = {".zip",".7z",".gz",".bz2",".xz",".rar",nullptr};
-            bool isArc = false;
-            for (int ai = 0; kArc[ai]; ++ai) if (ext == kArc[ai]) { isArc = true; break; }
-            ge.displayName = cleanFileName(isArc ? np.stem().string() : decoded);
+            std::replace(decoded.begin(), decoded.end(), '_', ' ');
+
+            // Paren-aware extension stripper: skips dots inside (...)/[...] so
+            // that version tags like "(Rev 1.1)" are never split at their dot.
+            static const std::set<std::string> kArcExts = {
+                ".zip",".7z",".gz",".bz2",".xz",".rar",".tar"
+            };
+            static const std::set<std::string> kRomExts = {
+                ".nes",".smc",".sfc",".gb",".gbc",".gba",".nds",".n64",".z64",".v64",
+                ".iso",".bin",".cue",".rom",".md",".gen",".smd",".a26",".a52",".cdi",
+                ".chd",".pbp",".img",".mdf",".gcm",".gcz",".rvz",".wbfs",".ciso",
+                ".3ds",".cia",".a78",".a800"
+            };
+            auto parenStripExt = [](const std::string& s,
+                                    const std::set<std::string>& known)
+                                  -> std::pair<std::string, bool>
+            {
+                int depth = 0, dotPos = -1;
+                for (int i = static_cast<int>(s.size()) - 1; i >= 0; --i) {
+                    if      (s[i] == ')' || s[i] == ']') ++depth;
+                    else if ((s[i] == '(' || s[i] == '[') && depth > 0) --depth;
+                    else if (s[i] == '.' && depth == 0)  { dotPos = i; break; }
+                }
+                if (dotPos < 0) return {s, false};
+                std::string ext = toLower(s.substr(dotPos));
+                if (known.count(ext)) return {s.substr(0, dotPos), true};
+                return {s, false};
+            };
+
+            auto [afterArc, wasArc] = parenStripExt(decoded,   kArcExts);
+            auto [afterRom, wasRom] = parenStripExt(afterArc,  kRomExts);
+            std::string base = wasRom ? afterRom : afterArc;
+
+            // Fallback: strip whatever extension is present paren-aware
+            if (!wasArc && !wasRom) {
+                int depth = 0, dotPos = -1;
+                for (int i = static_cast<int>(decoded.size()) - 1; i >= 0; --i) {
+                    if      (decoded[i] == ')' || decoded[i] == ']') ++depth;
+                    else if ((decoded[i] == '(' || decoded[i] == '[') && depth > 0) --depth;
+                    else if (decoded[i] == '.' && depth == 0)  { dotPos = i; break; }
+                }
+                base = (dotPos > 0) ? decoded.substr(0, dotPos) : decoded;
+            }
+
+            // Trim only leading/trailing spaces and dashes; tag content is untouched
+            while (!base.empty() && (base.front() == ' ' || base.front() == '-')) base.erase(base.begin());
+            while (!base.empty() && (base.back()  == ' ' || base.back()  == '-')) base.pop_back();
+
+            ge.displayName = base.empty() ? row.name : base;
         }
 
         // Prefer the stored system name; fall back to extension detection.
