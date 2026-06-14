@@ -873,7 +873,7 @@ void GameCubeEmulation::initSDL()
     window = SDL_CreateWindow("OmniCon GameCube",
                               SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
                               640, 480,
-                              SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE);
+                              SDL_WINDOW_SHOWN | SDL_WINDOW_FULLSCREEN_DESKTOP);
     if (!window) { std::cerr << "SDL window failed: " << SDL_GetError() << "\n"; return; }
 
     SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "1");

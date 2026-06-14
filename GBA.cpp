@@ -463,7 +463,7 @@ void GBAEmulation::initSDL()
     window = SDL_CreateWindow(windowTitle.c_str(),
                               SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
                               windowWidth, windowHeight,
-                              SDL_WINDOW_SHOWN);
+                              SDL_WINDOW_SHOWN | SDL_WINDOW_FULLSCREEN_DESKTOP);
     if (!window) {
         std::cerr << "[GBA] Failed to create window: " << SDL_GetError() << "\n";
         SDL_Quit();

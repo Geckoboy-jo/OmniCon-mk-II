@@ -134,7 +134,7 @@ bool GameShell::init() {
         "OmniCon \xe2\x80\x94 Game Library",
         SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
         kW, kH,
-        SDL_WINDOW_SHOWN);
+        SDL_WINDOW_SHOWN | SDL_WINDOW_FULLSCREEN_DESKTOP);
     if (!window_) {
         std::cerr << "[GameShell] SDL_CreateWindow: " << SDL_GetError() << "\n";
         IMG_Quit(); TTF_Quit();
@@ -151,6 +151,9 @@ bool GameShell::init() {
         IMG_Quit(); TTF_Quit();
         return false;
     }
+
+    // Scale all rendering to fill the screen while preserving the 1280×720 layout
+    SDL_RenderSetLogicalSize(renderer_, kW, kH);
 
     const char* font = findFont();
     if (!font) {
@@ -595,6 +598,29 @@ void GameShell::run(GameLibrary& library, const std::string& coversDir) {
         }
     }
 
+    // Pre-compute the inverse of what SDL_RenderSetLogicalSize set up.
+    // SDL uses renderer output pixels (not window points) for its internal
+    // viewport/scale, and mouse events arrive in window points.  Computing
+    // both lets us do an exact inverse that is robust on HiDPI and standard
+    // displays alike.
+    int outW, outH, winW, winH;
+    SDL_GetRendererOutputSize(renderer_, &outW, &outH);
+    SDL_GetWindowSize(window_, &winW, &winH);
+    // DPI factor: output pixels per window point (1.0 on non-HiDPI)
+    const float dpiX = (float)outW / winW;
+    const float dpiY = (float)outH / winH;
+    // Match SDL_RenderSetLogicalSize letterbox scale
+    const float uiSc   = std::min((float)outW / kW, (float)outH / kH);
+    // Letterbox offsets in renderer-output pixels
+    const float uiVpX  = (outW - kW * uiSc) * 0.5f;
+    const float uiVpY  = (outH - kH * uiSc) * 0.5f;
+
+    // Convert a window-space mouse coord to 1280×720 logical coord.
+    auto toLogical = [=](int wx, int wy, int* lx, int* ly) {
+        *lx = (int)((wx * dpiX - uiVpX) / uiSc);
+        *ly = (int)((wy * dpiY - uiVpY) / uiSc);
+    };
+
     bool quit = false;
     while (!quit) {
         SDL_Event ev;
@@ -685,8 +711,11 @@ void GameShell::run(GameLibrary& library, const std::string& coversDir) {
             }
 
             // ── Mouse motion ─────────────────────────────────────────────────
-            if (ev.type == SDL_MOUSEMOTION)
-                hoverIdx_ = gameAtMouse(ev.motion.x, ev.motion.y);
+            if (ev.type == SDL_MOUSEMOTION) {
+                int lx, ly;
+                toLogical(ev.motion.x, ev.motion.y, &lx, &ly);
+                hoverIdx_ = gameAtMouse(lx, ly);
+            }
 
             // ── Text input (search) ───────────────────────────────────────────
             if (ev.type == SDL_TEXTINPUT && searchActive_) {
@@ -697,7 +726,8 @@ void GameShell::run(GameLibrary& library, const std::string& coversDir) {
 
             // ── Mouse button ─────────────────────────────────────────────────
             if (ev.type == SDL_MOUSEBUTTONDOWN && ev.button.button == SDL_BUTTON_LEFT) {
-                int mx = ev.button.x, my = ev.button.y;
+                int mx, my;
+                toLogical(ev.button.x, ev.button.y, &mx, &my);
                 int fi = filterBtnAtMouse(mx, my);
                 if (fi >= -1) {
                     // Filter button clicked

@@ -1078,7 +1078,7 @@ void Atari2600Emulation::initSDL()
     const int width = backend ? backend->getFrameWidth() : 160;
     const int height = backend ? backend->getFrameHeight() : 192;
     window = SDL_CreateWindow("OmniCon Atari 2600", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-                              960, 720, SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE);
+                              960, 720, SDL_WINDOW_SHOWN | SDL_WINDOW_FULLSCREEN_DESKTOP);
     if (!window) {
         std::cerr << "SDL window failed: " << SDL_GetError() << "\n";
         return;

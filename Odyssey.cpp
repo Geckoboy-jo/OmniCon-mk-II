@@ -284,7 +284,7 @@ void OdysseyEmulation::runInteractive() {
         ("Magnavox Odyssey \xe2\x80\x94 " + cardName_).c_str(),
         SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
         kW, kH,
-        SDL_WINDOW_SHOWN);
+        SDL_WINDOW_SHOWN | SDL_WINDOW_FULLSCREEN_DESKTOP);
     if (!window_) {
         std::cerr << "[Odyssey] SDL_CreateWindow: " << SDL_GetError() << "\n";
         if (ttfOwned) TTF_Quit();

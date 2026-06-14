@@ -693,7 +693,7 @@ void SegaGenesisEmulation::initSDL(int emuW, int emuH)
     window = SDL_CreateWindow("Sega Genesis — Genesis Plus GX",
         SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
         emuW * scaleX, emuH * scaleY,
-        SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE);
+        SDL_WINDOW_SHOWN | SDL_WINDOW_FULLSCREEN_DESKTOP);
     if (!window) { std::cerr << "[Genesis] Window failed: " << SDL_GetError() << "\n"; SDL_Quit(); return; }
 
     renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);

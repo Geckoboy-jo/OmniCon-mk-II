@@ -165,6 +165,19 @@ public:
                 }
                 fnConfigSaveFile();
                 logState("[N64] Runtime key remapping applied to all Input-SDL-Control* sections via config API");
+
+                // Set fullscreen via Video-General section
+                m64p_handle videoGenSection = nullptr;
+                if (fnConfigGetSection && fnConfigGetSection("Video-General", &videoGenSection) == M64ERR_SUCCESS && videoGenSection) {
+                    typedef m64p_error (*ptr_ConfigSetParamBool)(m64p_handle, const char*, m64p_type, const void*);
+                    auto fnConfigSetBool = (ptr_ConfigSetParamBool)dlsym(coreHandle, "ConfigSetParameter");
+                    if (fnConfigSetBool) {
+                        int trueVal = 1;
+                        fnConfigSetBool(videoGenSection, "Fullscreen", M64TYPE_BOOL, &trueVal);
+                        fnConfigSaveFile();
+                        logState("[N64] Video-General Fullscreen set to true");
+                    }
+                }
             } else {
                 logState("[N64] Failed to enumerate config sections for runtime remap");
             }
