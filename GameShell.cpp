@@ -728,6 +728,18 @@ void GameShell::run(GameLibrary& library, const std::string& coversDir) {
             if (ev.type == SDL_MOUSEBUTTONDOWN && ev.button.button == SDL_BUTTON_LEFT) {
                 int mx, my;
                 toLogical(ev.button.x, ev.button.y, &mx, &my);
+                // DEBUG: print raw and logical coords so we can tune the transform
+                {
+                    int ww, wh, ow, oh;
+                    SDL_GetWindowSize(window_, &ww, &wh);
+                    SDL_GetRendererOutputSize(renderer_, &ow, &oh);
+                    std::cerr << "[Click] raw=(" << ev.button.x << "," << ev.button.y
+                              << ") logical=(" << mx << "," << my
+                              << ") winSize=" << ww << "x" << wh
+                              << " outSize=" << ow << "x" << oh
+                              << " kW=" << kW << " kH=" << kH
+                              << " gameAtMouse=" << gameAtMouse(mx, my) << "\n";
+                }
                 int fi = filterBtnAtMouse(mx, my);
                 if (fi >= -1) {
                     // Filter button clicked
