@@ -1,6 +1,7 @@
 #include "DownloadManager.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <cstdio>
@@ -767,13 +768,54 @@ std::string DownloadManager::downloadBlocking(
                           " " + shellQuote(entry.url) +
                           " 2>" + std::string(progressTmp);
 
-    if (progress) {
-        // For simple progress: we just report 0% before and 100% after
-        // (non-trivial polling would require a separate thread)
-        progress(0, spaceNeeded);
+    // Try to get the real file size via a HEAD request so progress is accurate.
+    // If the server doesn't support HEAD or omits Content-Length, spaceNeeded
+    // (the pre-reserved estimate) is used as the fallback total.
+    {
+        std::string headCmd = "curl --silent --head --max-time 10 --location"
+                              " --user-agent 'Mozilla/5.0 (X11; Linux x86_64)'"
+                              " --referer " + shellQuote(referer) +
+                              " " + shellQuote(entry.url) +
+                              " 2>/dev/null"
+                              " | grep -i '^content-length:' | tail -1 | awk '{print $2}'";
+        FILE* hf = popen(headCmd.c_str(), "r");
+        if (hf) {
+            char hbuf[64] = {};
+            if (fgets(hbuf, sizeof(hbuf), hf)) {
+                try {
+                    long long cl = std::stoll(std::string(hbuf));
+                    if (cl > 0) spaceNeeded = cl;
+                } catch (...) {}
+            }
+            pclose(hf);
+        }
     }
 
-    int rc = system(curlCmd.c_str()); // NOLINT
+    if (progress) progress(0, spaceNeeded);
+
+    // Run curl in a background thread so we can poll the partial file size
+    // and report real download progress on every iteration.
+    std::atomic<bool> curlDone{false};
+    std::atomic<int>  curlExit{0};
+    std::thread curlThread([&]() {
+        curlExit.store(system(curlCmd.c_str())); // NOLINT
+        curlDone.store(true);
+    });
+
+    if (progress) {
+        while (!curlDone.load()) {
+            std::error_code fsec;
+            long long current = 0;
+            if (fs::exists(tmpPath, fsec))
+                current = static_cast<long long>(fs::file_size(tmpPath, fsec));
+            // Clamp so we never report more than 100 % before the final callback.
+            if (current > spaceNeeded) current = spaceNeeded;
+            progress(current, spaceNeeded);
+            std::this_thread::sleep_for(std::chrono::milliseconds(150));
+        }
+    }
+    curlThread.join();
+    int rc = curlExit.load();
 
     // Read curl's error output before deleting the temp file
     std::string curlError;

@@ -871,7 +871,7 @@ void GameShell::run(GameLibrary& library, const std::string& coversDir) {
                     SDL_RenderFillRect(renderer_, &bg);
 
                     if (tot > 0) {
-                        int fill = static_cast<int>((double)cur / (double)tot * barW);
+                        int fill = std::min(static_cast<int>((double)cur / (double)tot * barW), barW);
                         SDL_SetRenderDrawColor(renderer_, 80, 140, 240, 255);
                         SDL_Rect fg = {barX, barY, fill, barH};
                         SDL_RenderFillRect(renderer_, &fg);
@@ -880,7 +880,7 @@ void GameShell::run(GameLibrary& library, const std::string& coversDir) {
                     // Label
                     std::string label = msg;
                     if (tot > 0 && cur > 0) {
-                        int pct = static_cast<int>(100.0 * cur / tot);
+                        int pct = std::min(static_cast<int>(100.0 * cur / tot), 100);
                         label += "  " + std::to_string(pct) + "%";
                     }
                     renderText(label, (kW - barW) / 2, kH / 2 - 14, {220, 220, 255, 255}, fontLg_, barW);
