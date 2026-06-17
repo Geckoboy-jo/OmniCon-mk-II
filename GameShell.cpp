@@ -130,11 +130,21 @@ bool GameShell::init() {
         return false;
     }
 
+    // Use the actual display bounds rather than SDL_WINDOW_FULLSCREEN_DESKTOP.
+    // On WSLg / XWayland (RDP-RAIL mode) the fullscreen state-machine often does
+    // not expand the physical window, leaving it at kW×kH while SDL internally
+    // records the desktop size.  That mismatch halves every mouse coordinate.
+    // Creating a borderless window at the exact display rect is more reliable.
+    SDL_Rect dispBounds = {0, 0, kW, kH};
+    SDL_GetDisplayBounds(0, &dispBounds);
+    if (dispBounds.w <= 0 || dispBounds.h <= 0) {
+        dispBounds.w = kW; dispBounds.h = kH;
+    }
     window_ = SDL_CreateWindow(
         "OmniCon \xe2\x80\x94 Game Library",
-        SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-        kW, kH,
-        SDL_WINDOW_SHOWN | SDL_WINDOW_FULLSCREEN_DESKTOP);
+        dispBounds.x, dispBounds.y,
+        dispBounds.w, dispBounds.h,
+        SDL_WINDOW_SHOWN | SDL_WINDOW_BORDERLESS);
     if (!window_) {
         std::cerr << "[GameShell] SDL_CreateWindow: " << SDL_GetError() << "\n";
         IMG_Quit(); TTF_Quit();
@@ -152,6 +162,10 @@ bool GameShell::init() {
         return false;
     }
 
+    // Flush any pending OS/compositor events (e.g. Wayland's async fullscreen
+    // configure) so SDL_GetRendererOutputSize returns the actual desktop size
+    // before we compute the logical scale.
+    SDL_PumpEvents();
     // Scale all rendering to fill the screen while preserving the 1280×720 layout
     SDL_RenderSetLogicalSize(renderer_, kW, kH);
 
@@ -525,6 +539,11 @@ void GameShell::renderInfoBar() {
 }
 
 void GameShell::render() {
+    // Re-apply logical size every frame as the definitive safety net for the
+    // async Wayland fullscreen race: by the time the first frame actually draws,
+    // the compositor will have delivered the fullscreen size.
+    SDL_RenderSetLogicalSize(renderer_, kW, kH);
+
     SDL_SetRenderDrawColor(renderer_, kColorBg.r, kColorBg.g, kColorBg.b, 255);
     SDL_RenderClear(renderer_);
     renderHeader();
@@ -598,27 +617,22 @@ void GameShell::run(GameLibrary& library, const std::string& coversDir) {
         }
     }
 
-    // Pre-compute the inverse of what SDL_RenderSetLogicalSize set up.
-    // SDL uses renderer output pixels (not window points) for its internal
-    // viewport/scale, and mouse events arrive in window points.  Computing
-    // both lets us do an exact inverse that is robust on HiDPI and standard
-    // displays alike.
-    int outW, outH, winW, winH;
-    SDL_GetRendererOutputSize(renderer_, &outW, &outH);
-    SDL_GetWindowSize(window_, &winW, &winH);
-    // DPI factor: output pixels per window point (1.0 on non-HiDPI)
-    const float dpiX = (float)outW / winW;
-    const float dpiY = (float)outH / winH;
-    // Match SDL_RenderSetLogicalSize letterbox scale
-    const float uiSc   = std::min((float)outW / kW, (float)outH / kH);
-    // Letterbox offsets in renderer-output pixels
-    const float uiVpX  = (outW - kW * uiSc) * 0.5f;
-    const float uiVpY  = (outH - kH * uiSc) * 0.5f;
+    // Re-apply after library load – by now the Wayland compositor has almost
+    // certainly delivered its fullscreen configure.  This is also the fallback
+    // if SDL_PumpEvents() in init() wasn't enough.
+    SDL_RenderSetLogicalSize(renderer_, kW, kH);
 
-    // Convert a window-space mouse coord to 1280×720 logical coord.
-    auto toLogical = [=](int wx, int wy, int* lx, int* ly) {
-        *lx = (int)((wx * dpiX - uiVpX) / uiSc);
-        *ly = (int)((wy * dpiY - uiVpY) / uiSc);
+    // On WSLg/XWayland (RDP-RAIL), SDL pointer events are delivered in the
+    // X11 logical coordinate space, which equals the compositor's logical
+    // resolution (1280×720 = kW×kH here).  SDL_GetWindowSize() however returns
+    // physical pixels (2560×1440 on a 2560×1440 display) because XWayland
+    // exposes the window at physical size.  Any division by winW/winH or by
+    // the render scale would therefore halve the coords and restrict interaction
+    // to the top-left quadrant.  The raw coords are already in kW×kH space, so
+    // pass them through unchanged.
+    auto toLogical = [](int wx, int wy, int* lx, int* ly) {
+        *lx = wx;
+        *ly = wy;
     };
 
     bool quit = false;
@@ -629,6 +643,13 @@ void GameShell::run(GameLibrary& library, const std::string& coversDir) {
 
         while (SDL_PollEvent(&ev)) {
             if (ev.type == SDL_QUIT) { quit = true; break; }
+
+            // ── Window resize (e.g. display change or async fullscreen settle) ─
+            if (ev.type == SDL_WINDOWEVENT &&
+                (ev.window.event == SDL_WINDOWEVENT_SIZE_CHANGED ||
+                 ev.window.event == SDL_WINDOWEVENT_RESIZED)) {
+                SDL_RenderSetLogicalSize(renderer_, kW, kH);
+            }
 
             // ── Keyboard ─────────────────────────────────────────────────────
             if (ev.type == SDL_KEYDOWN) {
@@ -931,6 +952,9 @@ void GameShell::run(GameLibrary& library, const std::string& coversDir) {
                 cleanup();
                 launchGame(launchTarget);
                 if (!init()) break;
+                // Re-apply logical size after renderer recreation for the same
+                // reason as at the top of run() (async fullscreen on Wayland).
+                SDL_RenderSetLogicalSize(renderer_, kW, kH);
                 rebuildFilter();
                 computeFilterRects();
                 for (int i = 0; i < SDL_NumJoysticks(); ++i) {
