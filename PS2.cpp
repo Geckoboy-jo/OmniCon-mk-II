@@ -9,6 +9,8 @@
 #include <thread>
 #include <chrono>
 #include <dlfcn.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 // ─── Abstract backend ────────────────────────────────────────────────────────
 
@@ -24,6 +26,7 @@ public:
     virtual double getAspectRatio() const { return 4.0 / 3.0; }
     virtual double getNominalFps()  const { return 60.0; }
     virtual bool   initializeAudio() { return true; }
+    virtual bool   isStandalone()    { return false; }
     virtual std::vector<unsigned char> dumpSaveData() const { return {}; }
     virtual bool restoreSaveData(const std::vector<unsigned char>&) { return false; }
 };
@@ -42,6 +45,62 @@ public:
     bool nextFrame() override { return false; }
     void setInput(const ps2_input_t&) override {}
     ps2_color_t getPixel(int, int) const override { return {0, 0, 0, 255}; }
+};
+
+// ─── Standalone PCSX2 backend ───────────────────────────────────────────────
+
+class StandalonePS2Backend final : public PS2Backend {
+public:
+    static constexpr const char* kSnapBin  = "/snap/bin/pcsx2-emulator";
+    static constexpr const char* kLocalBin = "/usr/bin/pcsx2";
+    static constexpr const char* kLocalBin2 = "/usr/local/bin/pcsx2";
+
+    static std::string resolveBinary() {
+        if (std::filesystem::exists(kSnapBin))   return kSnapBin;
+        if (std::filesystem::exists(kLocalBin))  return kLocalBin;
+        if (std::filesystem::exists(kLocalBin2)) return kLocalBin2;
+        return "";
+    }
+
+    bool isAvailable() const { return !binary_.empty(); }
+    bool isStandalone() override { return true; }
+
+    StandalonePS2Backend() : binary_(resolveBinary()) {}
+
+    bool loadRom(const std::string& path) override {
+        if (binary_.empty()) return false;
+        std::cout << "[PS2] Launching PCSX2: " << binary_ << " \"" << path << "\"\n";
+        pid_ = fork();
+        if (pid_ < 0) {
+            std::cerr << "[PS2] fork() failed\n";
+            return false;
+        }
+        if (pid_ == 0) {
+            // child
+            execlp(binary_.c_str(), binary_.c_str(), path.c_str(), nullptr);
+            std::cerr << "[PS2] exec failed\n";
+            _exit(1);
+        }
+        return true;
+    }
+
+    bool nextFrame() override {
+        // Check whether PCSX2 is still running.
+        int status = 0;
+        int r = waitpid(pid_, &status, WNOHANG);
+        return (r == 0);  // 0 = still running
+    }
+
+    void waitForExit() {
+        if (pid_ > 0) { waitpid(pid_, nullptr, 0); pid_ = -1; }
+    }
+
+    void setInput(const ps2_input_t&) override {}
+    ps2_color_t getPixel(int, int) const override { return {0, 0, 0, 255}; }
+
+private:
+    std::string binary_;
+    pid_t pid_ = -1;
 };
 
 // ─── libretro helpers ────────────────────────────────────────────────────────
@@ -889,7 +948,12 @@ bool PS2Emulation::loadRom(const string& path)
     if (libretroBackend->isAvailable()) {
         backendPtr = std::move(libretroBackend);
     } else {
-        backendPtr = std::make_unique<PS2UnavailableBackend>();
+        auto standaloneBackend = std::make_unique<StandalonePS2Backend>();
+        if (standaloneBackend->isAvailable()) {
+            backendPtr = std::move(standaloneBackend);
+        } else {
+            backendPtr = std::make_unique<PS2UnavailableBackend>();
+        }
     }
 
     if (!backendPtr->loadRom(path)) {
@@ -933,6 +997,15 @@ void PS2Emulation::runInteractive()
     std::cout << "Default keys: Arrows=D-pad, Z=Cross, X=Circle, A=Square, S=Triangle\n";
     std::cout << "              Enter=Start, RShift=Select, Q=L1, W=R1, E=L2, R=R2\n";
     std::cout << "Note: PS2 BIOS files must be in third_party/libretro/system/\n";
+
+    // Standalone backends (e.g. PCSX2 snap) manage their own window.
+    // Just wait for the external process to exit.
+    if (backendPtr->isStandalone()) {
+        auto* sa = static_cast<StandalonePS2Backend*>(backendPtr.get());
+        sa->waitForExit();
+        isRunning = false;
+        return;
+    }
 
     bool running = true;
     ps2_input_t input{};
