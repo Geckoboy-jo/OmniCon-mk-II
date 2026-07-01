@@ -235,9 +235,75 @@ private:
     static void    s_logCb(libretro3DS::log_level level, const char* fmt, ...);
     static uintptr_t s_getCurrentFramebuffer();
     static void*     s_getProcAddress(const char* sym);
+    // glShaderSource wrapper — patches #version 430 → #version 420 so Citra's
+    // shaders compile on hosts whose GL driver caps out at GLSL 4.20.
+    static void (*glShaderSource_real_)(unsigned, int, const char**, const int*);
+    static void  glShaderSource_patched_(unsigned shader, int count, const char** strings, const int* lengths);
 };
 
 Libretro3DSBackend* Libretro3DSBackend::s_instance = nullptr;
+void (*Libretro3DSBackend::glShaderSource_real_)(unsigned, int, const char**, const int*) = nullptr;
+
+// Runs before main() and before any SDL_InitSubSystem(SDL_INIT_VIDEO) call so
+// that LIBGL_ALWAYS_SOFTWARE takes effect before the GL driver is selected.
+// Mesa's software renderer (llvmpipe) supports OpenGL 4.5, giving Citra all
+// the GL 4.3 function pointers it needs without hitting hardware caps.
+__attribute__((constructor(101))) static void init3DSGLEnv() noexcept {
+    setenv("LIBGL_ALWAYS_SOFTWARE",      "1",   1);
+    setenv("MESA_GL_VERSION_OVERRIDE",   "4.5", 1);
+    setenv("MESA_GLSL_VERSION_OVERRIDE", "450", 1);
+}
+
+void Libretro3DSBackend::glShaderSource_patched_(unsigned shader, int count, const char** strings, const int* lengths)
+{
+    if (!glShaderSource_real_) return;
+    std::vector<std::string> patched(static_cast<size_t>(count));
+    std::vector<const char*> ptrs(static_cast<size_t>(count));
+    for (int i = 0; i < count; ++i) {
+        if (strings[i]) {
+            // Respect caller-supplied length; GL allows non-null-terminated strings.
+            patched[i] = (lengths && lengths[i] >= 0)
+                ? std::string(strings[i], static_cast<size_t>(lengths[i]))
+                : std::string(strings[i]);
+
+            size_t pos = patched[i].find("#version 4");
+            if (pos != std::string::npos) {
+                // Downgrade any #version > 420 to 420 (host driver max).
+                const size_t numPos = pos + 9; // first digit of 3-digit version
+                if (patched[i].size() > numPos + 2) {
+                    const int ver = (patched[i][numPos]   - '0') * 100
+                                  + (patched[i][numPos+1] - '0') * 10
+                                  + (patched[i][numPos+2] - '0');
+                    if (ver > 420) {
+                        patched[i].replace(numPos, 3, "420");
+                    }
+                }
+                // Inject extensions that became core in GL 4.3 but are
+                // available as ARB extensions in GLSL 4.20.  Declaring them
+                // multiple times is harmless.
+                const size_t eol = patched[i].find('\n', pos);
+                const size_t ins = (eol == std::string::npos) ? patched[i].size() : eol;
+                patched[i].insert(ins,
+                    "\n#extension GL_ARB_explicit_uniform_location : enable"
+                    "\n#extension GL_ARB_explicit_attrib_location  : enable"
+                    "\n#extension GL_ARB_separate_shader_objects   : enable");
+            }
+            ptrs[i] = patched[i].c_str();
+        } else {
+            ptrs[i] = nullptr;
+        }
+    }
+    // If the caller supplied explicit lengths, rebuild them from the patched
+    // strings — the injected text made them longer than the originals.
+    if (lengths) {
+        std::vector<int> newLengths(static_cast<size_t>(count));
+        for (int i = 0; i < count; ++i)
+            newLengths[i] = static_cast<int>(patched[i].size());
+        glShaderSource_real_(shader, count, ptrs.data(), newLengths.data());
+    } else {
+        glShaderSource_real_(shader, count, ptrs.data(), nullptr);
+    }
+}
 
 std::string Libretro3DSBackend::resolveCorePath()
 {
@@ -262,10 +328,12 @@ Libretro3DSBackend::Libretro3DSBackend()
 
     s_instance = this;
     ensureLibretroDirectories();
-    // Force Mesa's llvmpipe software renderer so Citra's #version 430 shaders
-    // compile on hosts whose GPU driver only supports GLSL 4.20.  llvmpipe
-    // supports GLSL 4.60 natively, so this is sufficient.
-    setenv("LIBGL_ALWAYS_SOFTWARE", "1", 1);
+    // Force Mesa's llvmpipe software renderer.  Also override the reported GL/
+    // GLSL version so llvmpipe advertises GLSL 4.30 (which Citra's shaders
+    // require) even on older Mesa builds that cap the default report at 4.20.
+    setenv("LIBGL_ALWAYS_SOFTWARE",      "1",   1);
+    setenv("MESA_GL_VERSION_OVERRIDE",   "4.5", 1);
+    setenv("MESA_GLSL_VERSION_OVERRIDE", "450", 1);
     initGLContext();   // Must happen before fn_init so SET_HW_RENDER can succeed
     fn_set_environment(s_envCb);
     fn_set_video_refresh(s_videoCb);
@@ -324,14 +392,16 @@ bool Libretro3DSBackend::loadSymbols()
 void Libretro3DSBackend::ensureLibretroDirectories()
 {
     const std::filesystem::path root    = std::filesystem::current_path() / "third_party" / "libretro";
-    const std::filesystem::path sysDir  = root / "system";
     const std::filesystem::path saveDir = root / "save";
     const std::filesystem::path contDir = root / "content";
     std::error_code ec;
-    std::filesystem::create_directories(sysDir,  ec);
     std::filesystem::create_directories(saveDir, ec);
     std::filesystem::create_directories(contDir, ec);
-    systemDirectory  = sysDir.string();
+    // Use the bundled BIOS user-directory so Citra can find sysdata/boot9.bin,
+    // sysdata/boot11.bin, aes_keys.txt, seeddb.bin, and shared_font.bin.
+    const std::filesystem::path biosUserDir =
+        std::filesystem::current_path() / "Misc BIOS" / "user_directory";
+    systemDirectory  = biosUserDir.string();
     saveDirectory    = saveDir.string();
     contentDirectory = contDir.string();
 }
@@ -345,8 +415,6 @@ bool Libretro3DSBackend::initGLContext()
     const Uint32 missing = needed & ~SDL_WasInit(0);
     if (missing) SDL_InitSubSystem(missing);
 
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 0);
     SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE,   24);
@@ -358,7 +426,17 @@ bool Libretro3DSBackend::initGLContext()
         std::cerr << "[3DS] Failed to create GL window: " << SDL_GetError() << "\n";
         return false;
     }
-    hwGLCtx = SDL_GL_CreateContext(hwWindow);
+
+    // Citra requires GL 4.3 functions (SSBOs, shader storage blocks, etc.).
+    // Try 4.3 first (works with llvmpipe / LIBGL_ALWAYS_SOFTWARE), fall back
+    // to 4.2 if the driver can't provide 4.3.
+    for (int minor : {3, 2, 1, 0}) {
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 4);
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, minor);
+        hwGLCtx = SDL_GL_CreateContext(hwWindow);
+        if (hwGLCtx) break;
+        std::cerr << "[3DS] GL 4." << minor << " context unavailable: " << SDL_GetError() << "\n";
+    }
     if (!hwGLCtx) {
         std::cerr << "[3DS] Failed to create GL context: " << SDL_GetError() << "\n";
         SDL_DestroyWindow(hwWindow); hwWindow = nullptr;
@@ -570,9 +648,10 @@ bool Libretro3DSBackend::loadRom(const std::string& path)
     if (av.timing.sample_rate > 1000.0)  coreSampleRate = static_cast<int>(av.timing.sample_rate);
     framePixels.assign(static_cast<size_t>(frameWidth * frameHeight) * 4, 0);
 
-    // Create the FBO at the reported resolution, then notify the core that the
-    // GL context is ready (context_reset).  This must happen after av_info so
-    // the FBO dimensions match what the core expects.
+    // Create the FBO at av_info dimensions and call context_reset a second
+    // time.  The system is now active so this call fully initialises the GL
+    // renderer against the correctly-sized FBO, replacing any stale state
+    // from the earlier GLAD-loading call.
     if (hwRenderActive && hwGLCtx) {
         SDL_GL_MakeCurrent(hwWindow, hwGLCtx);
         if (glViewport_) glViewport_(0, 0, frameWidth, frameHeight);
@@ -631,6 +710,14 @@ bool Libretro3DSBackend::onEnvironment(unsigned cmd, void* data)
         hwContextReset   = hw->context_reset;
         hwContextDestroy = hw->context_destroy;
         hwRenderActive   = true;
+        // Call context_reset now to populate GLAD.  Citra's context_reset checks
+        // IsSystemActive() and prints "system not on" then returns early — but
+        // GLAD loading happens before that check, so GL function pointers are
+        // available for the rest of retro_load_game even though the full
+        // renderer init is deferred.
+        SDL_GL_MakeCurrent(hwWindow, hwGLCtx);
+        createFbo();
+        if (hwContextReset) hwContextReset();
         return true;
     }
     if (cmd == libretro3DS::ENV_SET_VARIABLES)       { return true; }
@@ -643,6 +730,7 @@ bool Libretro3DSBackend::onEnvironment(unsigned cmd, void* data)
         const char* k = v->key;
         if      (!std::strcmp(k,"citra_use_cpu_jit"))          v->value = "enabled";
         else if (!std::strcmp(k,"citra_cpu_scale"))             v->value = "100%";
+        else if (!std::strcmp(k,"citra_renderer"))              v->value = "software";
         else if (!std::strcmp(k,"citra_use_hw_shaders"))        v->value = "disabled";
         else if (!std::strcmp(k,"citra_use_shader_jit"))        v->value = "enabled";
         else if (!std::strcmp(k,"citra_use_acc_mul"))           v->value = "enabled";
@@ -762,7 +850,12 @@ uintptr_t Libretro3DSBackend::s_getCurrentFramebuffer()
 }
 void* Libretro3DSBackend::s_getProcAddress(const char* sym)
 {
-    return SDL_GL_GetProcAddress(sym);
+    void* real = SDL_GL_GetProcAddress(sym);
+    if (sym && std::strcmp(sym, "glShaderSource") == 0 && real) {
+        glShaderSource_real_ = reinterpret_cast<void(*)(unsigned, int, const char**, const int*)>(real);
+        return reinterpret_cast<void*>(&Libretro3DSBackend::glShaderSource_patched_);
+    }
+    return real;
 }
 int16_t Libretro3DSBackend::s_inputStateCb(unsigned port, unsigned device, unsigned /*index*/, unsigned id)
 {
