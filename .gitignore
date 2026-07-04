@@ -1,2 +1,17 @@
 saves/saves.db
 Roms/
+
+# Large BIOS archives — keep bin files but ignore zip bundles
+*BIOS*.zip
+*_bios.zip
+PS2_BIOS.zip
+
+# PS3 ISO mount scratch directories (created at runtime)
+saves/ps3/mnt_*
+
+# Build artefacts
+omnicon_repl
+omnicon_debug
+oracle_test
+play
+
