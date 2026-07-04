@@ -31,8 +31,30 @@
 #include <mutex>
 #include <thread>
 
+// ── Controller bridge (WSL2 only) ─────────────────────────────────────────────
+// Starts the Windows→WSL uinput bridge once and keeps it alive for the full
+// program lifetime so the controller is available in the shell AND in every
+// emulator (including their control-rebinding screens).
+static bool isWSL2() {
+    std::ifstream pv("/proc/version");
+    std::string line;
+    return std::getline(pv, line) && line.find("icrosoft") != std::string::npos;
+}
 
-//./controller_bridge/start_bridge.sh
+static bool bridgeRunning() {
+    return std::system("pgrep -f uinput_client.py >/dev/null 2>&1") == 0;
+}
+
+// Start the bridge if needed.  Safe to call repeatedly; is a no-op when the
+// bridge is already running or the script is missing.
+void ensureControllerBridge() {
+    if (!isWSL2()) return;
+    if (!std::filesystem::exists("controller_bridge/start_bridge.sh")) return;
+    if (bridgeRunning()) return;
+    std::cerr << "[bridge] Starting controller bridge...\n";
+    std::system("modprobe uinput 2>/dev/null; bash controller_bridge/start_bridge.sh >/dev/null 2>&1 &");
+}
+
 namespace {
 
 struct DatabaseConfig {
@@ -988,6 +1010,8 @@ void printHelp()
               << "  scrape-covers   Download missing box art for all games in the library\n"
               << "  controls        Configure controls for all systems (keyboard + controller)\n"
               << "  controls-csv    Parse Controls.csv and set controls for all systems\n"
+              << "  remap           Open the interactive controller button-mapping screen\n"
+              << "  remap <console> Remap controller buttons for a specific console (nes/snes/gb/gba/nds/3ds/n64/ps1/ps2/gamecube/genesis/atari2600/atari5200/atari800/odyssey/all)\n"
               << "  db-rename-from-url  Rename every DB entry to the clean title decoded from its download URL\n"
               << "  config          Re-enter database password\n"
               << "  help            Show this message\n"
@@ -1297,6 +1321,13 @@ int main()
     // Always set controls from Controls.csv at startup
     setControlsFromCSV();
 
+    // Start the controller bridge early so it is available for both the shell
+    // UI and every emulator launched from it (including rebind screens).
+    ensureControllerBridge();
+
+    // Load any per-console button bindings saved from previous remap sessions.
+    GameShell::loadConsoleBindings();
+
     if (!hasCommand("curl")) {
         std::cerr << "curl is required but was not found in PATH.\n";
         return 1;
@@ -1360,6 +1391,22 @@ int main()
 
         if (input == "config") {
             config = promptDatabaseConfig();
+            continue;
+        }
+
+        if (input == "remap" || input == "remap controller" || input == "rebind") {
+            ensureControllerBridge();
+            GameShell rs;
+            rs.remap();
+            continue;
+        }
+
+        // Per-console remap: "remap nes", "remap snes", "remap all", etc.
+        if (input.size() > 6 && input.substr(0, 6) == "remap ") {
+            std::string sys = input.substr(6);
+            ensureControllerBridge();
+            GameShell rs;
+            rs.remapConsole(sys);
             continue;
         }
 

@@ -14,6 +14,7 @@
 #include "N64.hpp"
 #include "PS1.hpp"
 #include "PS2.hpp"
+#include "PS3.hpp"
 #include "GameCube.hpp"
 #include "Odyssey.hpp"
 #include "SaveManager.hpp"
@@ -28,7 +29,7 @@ namespace fs = std::filesystem;
 
 // ─── Static members ───────────────────────────────────────────────────────────
 
-const SystemType GameShell::kSystems[17] = {
+const SystemType GameShell::kSystems[18] = {
     SystemType::NES,
     SystemType::SNES,
     SystemType::GameBoy,
@@ -43,13 +44,14 @@ const SystemType GameShell::kSystems[17] = {
     SystemType::N64,
     SystemType::PS1,
     SystemType::PS2,
+    SystemType::PS3,
     SystemType::GameCube,
     SystemType::Odyssey,
     SystemType::Steam,
 };
 
-const char* const GameShell::kSysAbbrev[17] = {
-    "NES", "SNES", "GB", "GBC", "GBA", "NDS", "3DS", "2600", "5200", "800", "GEN", "N64", "PS1", "PS2", "GCN", "ODY", "STM"
+const char* const GameShell::kSysAbbrev[18] = {
+    "NES", "SNES", "GB", "GBC", "GBA", "NDS", "3DS", "2600", "5200", "800", "GEN", "N64", "PS1", "PS2", "PS3", "GCN", "ODY", "STM"
 };
 
 // ─── Colour palette ───────────────────────────────────────────────────────────
@@ -83,6 +85,7 @@ static SDL_Color sysBadgeColor(SystemType sys) {
         case SystemType::N64:           return {140,  20,  20, 255};   // N64 red
         case SystemType::PS1:           return { 10,  50, 140, 255};   // PS1 navy blue
         case SystemType::PS2:           return {  0,  70, 170, 255};   // PS2 blue
+        case SystemType::PS3:           return {  0,  40, 100, 255};   // PS3 dark blue
         case SystemType::GameCube:      return { 88,  76, 168, 255};   // GameCube indigo
         case SystemType::Odyssey:       return { 45, 160, 160, 255};   // teal
         case SystemType::Steam:         return { 23, 134, 192, 255};   // Steam blue
@@ -183,6 +186,18 @@ bool GameShell::init() {
         std::cerr << "[GameShell] TTF_OpenFont: " << TTF_GetError() << "\n";
         cleanup();
         return false;
+    }
+
+    // Load any saved SDL controller mapping so it's active before the first frame
+    {
+        std::ifstream mf("saves/controller_sdlmap.txt");
+        std::string   line;
+        if (std::getline(mf, line) && !line.empty()) {
+            if (SDL_GameControllerAddMapping(line.c_str()) >= 0)
+                std::cerr << "[GameShell] Controller SDL mapping loaded.\n";
+            else
+                std::cerr << "[GameShell] SDL mapping load failed: " << SDL_GetError() << "\n";
+        }
     }
 
     return true;
@@ -617,6 +632,30 @@ void GameShell::run(GameLibrary& library, const std::string& coversDir) {
         }
     }
 
+    // The bridge is started once in main() before SDL is initialised.
+    // Here we just wait up to 4 s for SDL to fire SDL_CONTROLLERDEVICEADDED
+    // in case the bridge was still spinning up when SDL first enumerated devices.
+    if (!ctrl_) {
+        bool wsl2 = false;
+        { std::ifstream pv("/proc/version"); std::string line;
+          if (std::getline(pv, line)) wsl2 = line.find("icrosoft") != std::string::npos; }
+        if (wsl2) {
+            Uint32 deadline = SDL_GetTicks() + 4000;
+            while (SDL_GetTicks() < deadline && !ctrl_) {
+                SDL_Delay(50);
+                SDL_Event ev;
+                while (SDL_PollEvent(&ev)) {
+                    if (ev.type == SDL_CONTROLLERDEVICEADDED && !ctrl_) {
+                        ctrl_ = SDL_GameControllerOpen(ev.cdevice.which);
+                        if (ctrl_) ctrlName_ = SDL_GameControllerName(ctrl_);
+                    }
+                }
+            }
+            if (ctrl_)
+                std::cerr << "[GameShell] Controller ready: " << ctrlName_ << "\n";
+        }
+    }
+
     // Re-apply after library load – by now the Wayland compositor has almost
     // certainly delivered its fullscreen configure.  This is also the fallback
     // if SDL_PumpEvents() in init() wasn't enough.
@@ -636,6 +675,15 @@ void GameShell::run(GameLibrary& library, const std::string& coversDir) {
     };
 
     bool quit = false;
+
+    // First-run: if a controller is connected but no saved mapping exists,
+    // auto-launch the rebind screen so the user can calibrate immediately.
+    if (ctrl_ && !std::filesystem::exists("saves/controller_sdlmap.txt")) {
+        std::cerr << "[GameShell] No controller mapping saved — launching setup.\n";
+        runRebindScreen();
+        rebuildFilter(); computeFilterRects();
+    }
+
     while (!quit) {
         SDL_Event ev;
         bool      pendingLaunch = false;
@@ -655,6 +703,11 @@ void GameShell::run(GameLibrary& library, const std::string& coversDir) {
             if (ev.type == SDL_KEYDOWN) {
                 int n = static_cast<int>(filteredGames_.size());
                 switch (ev.key.keysym.sym) {
+                    case SDLK_F1:
+                        // Open the interactive controller-rebind screen.
+                        runRebindScreen();
+                        rebuildFilter(); computeFilterRects();
+                        break;
                     case SDLK_ESCAPE:
                         if (searchActive_) {
                             if (!searchQuery_.empty()) {
@@ -802,15 +855,23 @@ void GameShell::run(GameLibrary& library, const std::string& coversDir) {
                         quit = true; break;
                     case SDL_CONTROLLER_BUTTON_DPAD_LEFT:
                         if (selectedIdx_ > 0) { --selectedIdx_; ensureVisible(); }
+                        ctrlRepeatBtn_ = SDL_CONTROLLER_BUTTON_DPAD_LEFT;
+                        ctrlRepeatNext_ = SDL_GetTicks() + 400;
                         break;
                     case SDL_CONTROLLER_BUTTON_DPAD_RIGHT:
                         if (selectedIdx_ < n - 1) { ++selectedIdx_; ensureVisible(); }
+                        ctrlRepeatBtn_ = SDL_CONTROLLER_BUTTON_DPAD_RIGHT;
+                        ctrlRepeatNext_ = SDL_GetTicks() + 400;
                         break;
                     case SDL_CONTROLLER_BUTTON_DPAD_UP:
                         if (selectedIdx_ >= kCols) { selectedIdx_ -= kCols; ensureVisible(); }
+                        ctrlRepeatBtn_ = SDL_CONTROLLER_BUTTON_DPAD_UP;
+                        ctrlRepeatNext_ = SDL_GetTicks() + 400;
                         break;
                     case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
                         if (selectedIdx_ + kCols < n) { selectedIdx_ += kCols; ensureVisible(); }
+                        ctrlRepeatBtn_ = SDL_CONTROLLER_BUTTON_DPAD_DOWN;
+                        ctrlRepeatNext_ = SDL_GetTicks() + 400;
                         break;
                     case SDL_CONTROLLER_BUTTON_LEFTSHOULDER: {
                         // Cycle filter backwards (All → systems → Downloaded → All)
@@ -827,6 +888,7 @@ void GameShell::run(GameLibrary& library, const std::string& coversDir) {
                         break;
                     }
                     case SDL_CONTROLLER_BUTTON_A:
+                    case SDL_CONTROLLER_BUTTON_START:
                         if (!filteredGames_.empty()) {
                             launchTarget  = *filteredGames_[selectedIdx_];
                             pendingLaunch = true;
@@ -834,6 +896,11 @@ void GameShell::run(GameLibrary& library, const std::string& coversDir) {
                         break;
                     default: break;
                 }
+            }
+
+            if (ev.type == SDL_CONTROLLERBUTTONUP) {
+                if (ev.cbutton.button == static_cast<Uint8>(ctrlRepeatBtn_))
+                    ctrlRepeatBtn_ = -1;
             }
 
             if (ev.type == SDL_CONTROLLERDEVICEADDED && !ctrl_) {
@@ -846,6 +913,74 @@ void GameShell::run(GameLibrary& library, const std::string& coversDir) {
                 SDL_GameControllerClose(ctrl_);
                 ctrl_ = nullptr;
                 ctrlName_.clear();
+            }
+        }
+
+        // ── Controller: D-pad auto-repeat ─────────────────────────────────────
+        if (ctrlRepeatBtn_ >= 0) {
+            Uint32 now = SDL_GetTicks();
+            if (now >= ctrlRepeatNext_) {
+                int n = static_cast<int>(filteredGames_.size());
+                switch (ctrlRepeatBtn_) {
+                    case SDL_CONTROLLER_BUTTON_DPAD_LEFT:
+                        if (selectedIdx_ > 0) { --selectedIdx_; ensureVisible(); } break;
+                    case SDL_CONTROLLER_BUTTON_DPAD_RIGHT:
+                        if (selectedIdx_ < n - 1) { ++selectedIdx_; ensureVisible(); } break;
+                    case SDL_CONTROLLER_BUTTON_DPAD_UP:
+                        if (selectedIdx_ >= kCols) { selectedIdx_ -= kCols; ensureVisible(); } break;
+                    case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
+                        if (selectedIdx_ + kCols < n) { selectedIdx_ += kCols; ensureVisible(); } break;
+                }
+                ctrlRepeatNext_ = now + 150;
+            }
+        }
+
+        // ── Controller: left analogue stick navigation ────────────────────────
+        if (ctrl_) {
+            constexpr Sint16 kThresh = 12000;
+            Sint16 lx = SDL_GameControllerGetAxis(ctrl_, SDL_CONTROLLER_AXIS_LEFTX);
+            Sint16 ly = SDL_GameControllerGetAxis(ctrl_, SDL_CONTROLLER_AXIS_LEFTY);
+            // Diagonal: prefer the dominant axis
+            int stickDir = -1;
+            if (std::abs(lx) >= std::abs(ly)) {
+                if      (lx < -kThresh) stickDir = SDL_CONTROLLER_BUTTON_DPAD_LEFT;
+                else if (lx >  kThresh) stickDir = SDL_CONTROLLER_BUTTON_DPAD_RIGHT;
+            } else {
+                if      (ly < -kThresh) stickDir = SDL_CONTROLLER_BUTTON_DPAD_UP;
+                else if (ly >  kThresh) stickDir = SDL_CONTROLLER_BUTTON_DPAD_DOWN;
+            }
+
+            Uint32 now = SDL_GetTicks();
+            if (stickDir != ctrlStickDir_) {
+                ctrlStickDir_ = stickDir;
+                if (stickDir >= 0) {
+                    // Fire immediately on first entry into a new direction
+                    int n = static_cast<int>(filteredGames_.size());
+                    switch (stickDir) {
+                        case SDL_CONTROLLER_BUTTON_DPAD_LEFT:
+                            if (selectedIdx_ > 0) { --selectedIdx_; ensureVisible(); } break;
+                        case SDL_CONTROLLER_BUTTON_DPAD_RIGHT:
+                            if (selectedIdx_ < n - 1) { ++selectedIdx_; ensureVisible(); } break;
+                        case SDL_CONTROLLER_BUTTON_DPAD_UP:
+                            if (selectedIdx_ >= kCols) { selectedIdx_ -= kCols; ensureVisible(); } break;
+                        case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
+                            if (selectedIdx_ + kCols < n) { selectedIdx_ += kCols; ensureVisible(); } break;
+                    }
+                    ctrlStickNext_ = now + 400;
+                }
+            } else if (stickDir >= 0 && now >= ctrlStickNext_) {
+                int n = static_cast<int>(filteredGames_.size());
+                switch (stickDir) {
+                    case SDL_CONTROLLER_BUTTON_DPAD_LEFT:
+                        if (selectedIdx_ > 0) { --selectedIdx_; ensureVisible(); } break;
+                    case SDL_CONTROLLER_BUTTON_DPAD_RIGHT:
+                        if (selectedIdx_ < n - 1) { ++selectedIdx_; ensureVisible(); } break;
+                    case SDL_CONTROLLER_BUTTON_DPAD_UP:
+                        if (selectedIdx_ >= kCols) { selectedIdx_ -= kCols; ensureVisible(); } break;
+                    case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
+                        if (selectedIdx_ + kCols < n) { selectedIdx_ += kCols; ensureVisible(); } break;
+                }
+                ctrlStickNext_ = now + 150;
             }
         }
 
@@ -950,6 +1085,15 @@ void GameShell::run(GameLibrary& library, const std::string& coversDir) {
             } else {
                 if (ctrl_) { SDL_GameControllerClose(ctrl_); ctrl_ = nullptr; ctrlName_.clear(); }
                 cleanup();
+                // Ensure bridge is still alive before the emulator starts SDL.
+                // (bridge is a separate process so it normally survives, but
+                //  restart it if it crashed during a previous session.)
+                if (std::system("pgrep -f uinput_client.py >/dev/null 2>&1") != 0
+                        && std::filesystem::exists("controller_bridge/start_bridge.sh")) {
+                    std::cerr << "[GameShell] Bridge not running — restarting...\n";
+                    std::system("modprobe uinput 2>/dev/null; bash controller_bridge/start_bridge.sh >/dev/null 2>&1 &");
+                    SDL_Delay(1500); // brief pause so uinput device appears before emulator's SDL_Init
+                }
                 launchGame(launchTarget);
                 if (!init()) break;
                 // Re-apply logical size after renderer recreation for the same
@@ -1141,6 +1285,19 @@ void GameShell::launchGame(const GameEntry& game) {
             catch (const std::exception& e) { std::cerr << "PS2 error: " << e.what() << "\n"; }
             break;
         }
+        case SystemType::PS3: {
+            PS3Emulation ps3;
+            try {
+                if (ps3.loadRom(path)) {
+                    std::vector<unsigned char> data;
+                    if (SaveManager::instance().get(path, data)) ps3.restoreSaveData(data);
+                    ps3.runInteractive();
+                    SaveManager::instance().put(path, ps3.dumpSaveData());
+                }
+            }
+            catch (const std::exception& e) { std::cerr << "PS3 error: " << e.what() << "\n"; }
+            break;
+        }
         case SystemType::GameCube: {
             GameCubeEmulation gc;
             try {
@@ -1201,4 +1358,635 @@ void GameShell::launchGame(const GameEntry& game) {
     }
 }
 
+// ─── Controller helpers ───────────────────────────────────────────────────────
+
+std::string GameShell::joystickGUID() const {
+    if (!ctrl_) return "";
+    SDL_Joystick* joy = SDL_GameControllerGetJoystick(ctrl_);
+    if (!joy) return "";
+    char buf[64] = {};
+    SDL_JoystickGetGUIDString(SDL_JoystickGetGUID(joy), buf, sizeof(buf));
+    return buf;
+}
+
+// ─── Rebind screen ────────────────────────────────────────────────────────────
+// Press F1 from the shell, or triggered automatically on first run.
+// For each logical action the user presses the physical button/axis they want.
+// Saves an SDL GameController mapping to saves/controller_sdlmap.txt and
+// applies it immediately via SDL_GameControllerAddMapping().
+
+void GameShell::runRebindScreen() {
+    if (!renderer_) return;
+
+    // Helper: full-screen status message
+    auto showMsg = [&](const std::string& msg, SDL_Color col = {200,200,255,255}) {
+        SDL_SetRenderDrawColor(renderer_, 10, 10, 30, 255);
+        SDL_RenderClear(renderer_);
+        renderCenteredText(msg, 0, kH/2 - 14, kW, col, fontLg_);
+        SDL_RenderPresent(renderer_);
+    };
+
+    // ── Step 1: kill old bridge + restart with up-to-date xinput_server.py ───
+    showMsg("Restarting controller bridge...");
+    if (ctrl_) { SDL_GameControllerClose(ctrl_); ctrl_ = nullptr; ctrlName_.clear(); }
+    std::system("pkill -f uinput_client.py 2>/dev/null; pkill -f xinput_server.py 2>/dev/null");
+    { // drain events while bridge dies
+        Uint32 t = SDL_GetTicks() + 1500;
+        SDL_Event ev;
+        while (SDL_GetTicks() < t) { SDL_Delay(30); while (SDL_PollEvent(&ev)) {} }
+    }
+    if (std::filesystem::exists("controller_bridge/start_bridge.sh")) {
+        std::system("modprobe uinput 2>/dev/null; bash controller_bridge/start_bridge.sh >/dev/null 2>&1 &");
+    }
+    showMsg("Waiting for controller...");
+    {
+        Uint32 deadline = SDL_GetTicks() + 5000;
+        SDL_Event ev;
+        while (SDL_GetTicks() < deadline && !ctrl_) {
+            SDL_Delay(50);
+            while (SDL_PollEvent(&ev)) {
+                if (ev.type == SDL_CONTROLLERDEVICEADDED && !ctrl_) {
+                    ctrl_ = SDL_GameControllerOpen(ev.cdevice.which);
+                    if (ctrl_) ctrlName_ = SDL_GameControllerName(ctrl_);
+                }
+            }
+        }
+    }
+    if (!ctrl_) {
+        showMsg("No controller detected — press any key to cancel.", {240,80,80,255});
+        SDL_Event ev;
+        while (SDL_WaitEvent(&ev))
+            if (ev.type == SDL_KEYDOWN || ev.type == SDL_QUIT) break;
+        return;
+    }
+    showMsg("Controller ready: " + ctrlName_);
+    SDL_Delay(800);
+
+    // ── Step 2: capture each action ──────────────────────────────────────────
+    struct Action {
+        const char* label;      // shown on screen
+        const char* sdlKey;     // SDL mapping token (a, b, leftx, lefty, …)
+        bool        isAxis;     // false = SDL_JOYBUTTONDOWN, true = SDL_JOYAXISMOTION
+        int         rawIdx = -1;
+        bool        invert = false;
+    };
+    std::vector<Action> actions = {
+        // ── Face buttons ──────────────────────────────────────────────────
+        {"A  (bottom face / confirm)",      "a",             false},
+        {"B  (right face / cancel)",        "b",             false},
+        {"X  (left face)",                  "x",             false},
+        {"Y  (top face)",                   "y",             false},
+        // ── Shoulder / trigger ────────────────────────────────────────────
+        {"L  (left shoulder)",              "leftshoulder",  false},
+        {"R  (right shoulder)",             "rightshoulder", false},
+        {"ZL (left trigger — press fully)", "lefttrigger",   true },
+        {"ZR (right trigger — press fully)","righttrigger",  true },
+        // ── Menu ──────────────────────────────────────────────────────────
+        {"Back / \xe2\x88\x92 (Minus)",     "back",          false},
+        {"Start / + (Plus)",                "start",         false},
+        // ── Stick clicks ──────────────────────────────────────────────────
+        {"L3 (left stick click)",           "leftstick",     false},
+        {"R3 (right stick click)",          "rightstick",    false},
+        // ── Axes: ask for a specific direction to detect sign ─────────────
+        {"Left Stick \xe2\x86\x92  RIGHT (then return to centre)",  "leftx",  true},
+        {"Left Stick \xe2\x86\x93  DOWN  (then return to centre)",  "lefty",  true},
+        {"Right Stick \xe2\x86\x92 RIGHT (then return to centre)",  "rightx", true},
+        {"Right Stick \xe2\x86\x93 DOWN  (then return to centre)",  "righty", true},
+    };
+
+    SDL_JoystickID joyId = -1;
+    SDL_Joystick*  joy   = ctrl_ ? SDL_GameControllerGetJoystick(ctrl_) : nullptr;
+    if (joy) joyId = SDL_JoystickInstanceID(joy);
+
+    // Snapshot axis centres for deflection detection
+    std::array<Sint16, 32> axisCenter = {};
+    if (joy) {
+        int n = std::min(SDL_JoystickNumAxes(joy), 32);
+        for (int i = 0; i < n; ++i)
+            axisCenter[i] = SDL_JoystickGetAxis(joy, i);
+    }
+
+    int  idx  = 0;
+    bool done = false;
+
+    auto drawRebind = [&]() {
+        SDL_SetRenderDrawColor(renderer_, 10, 10, 30, 255);
+        SDL_RenderClear(renderer_);
+
+        // Title bar
+        renderCenteredText(
+            "Controller Setup   \xe2\x80\x94   F1 to re-open   \xe2\x80\x94   ESC to cancel   \xe2\x80\x94   Backspace = redo last",
+            0, 6, kW, {140,140,200,255}, fontMd_);
+
+        // Left column: already-mapped
+        int listY = 32;
+        for (int i = 0; i < idx && i < (int)actions.size(); ++i) {
+            std::string txt = std::string(actions[i].label) + "  \xe2\x86\x92  ";
+            if (actions[i].isAxis)
+                txt += "axis " + std::to_string(actions[i].rawIdx)
+                     + (actions[i].invert ? "~" : "");
+            else
+                txt += "btn " + std::to_string(actions[i].rawIdx);
+            renderText(txt, 30, listY, {80,200,80,255}, fontSm_, kW/2 - 50);
+            listY += 20;
+        }
+
+        // Right half: current prompt
+        if (idx < (int)actions.size()) {
+            int py = kH/2 - 50;
+            renderCenteredText(actions[idx].isAxis ? "Push:" : "Press:",
+                               kW/2, py, kW/2, {160,160,200,255}, fontMd_);
+            renderCenteredText(actions[idx].label,
+                               kW/2, py + 26, kW/2, {255,220,60,255}, fontLg_);
+            std::string progress = std::to_string(idx+1) + " / "
+                                 + std::to_string(actions.size());
+            renderCenteredText(progress, kW/2, py + 70, kW/2, {110,110,150,255}, fontMd_);
+        }
+
+        SDL_RenderPresent(renderer_);
+    };
+
+    while (!done && idx < (int)actions.size()) {
+        drawRebind();
+        SDL_Event ev;
+        while (SDL_PollEvent(&ev)) {
+            if (ev.type == SDL_QUIT)  { done = true; break; }
+            if (ev.type == SDL_KEYDOWN) {
+                if (ev.key.keysym.sym == SDLK_ESCAPE)    { done = true; break; }
+                if (ev.key.keysym.sym == SDLK_BACKSPACE && idx > 0) { --idx; break; }
+            }
+
+            auto& act = actions[idx];
+            if (!act.isAxis && ev.type == SDL_JOYBUTTONDOWN
+                    && ev.jbutton.which == joyId) {
+                act.rawIdx = ev.jbutton.button;
+                ++idx;
+            }
+            else if (act.isAxis && ev.type == SDL_JOYAXISMOTION
+                     && ev.jaxis.which == joyId) {
+                int ai    = std::min((int)ev.jaxis.axis, 31);
+                // Use int arithmetic to avoid Sint16 overflow when a trigger
+                // goes from its idle value (−32768) to fully pressed (+32767).
+                int delta = (int)ev.jaxis.value - (int)axisCenter[ai];
+                if (std::abs(delta) > 14000) {
+                    act.rawIdx = ev.jaxis.axis;
+                    act.invert = (ev.jaxis.value < 0);
+                    ++idx;
+
+                    // ── Wait for axis to return to centre ─────────────────
+                    // Drain events until the captured axis is back near idle,
+                    // so the deflection doesn't bleed into the next prompt.
+                    {
+                        Uint32 deadline = SDL_GetTicks() + 1500;
+                        SDL_SetRenderDrawColor(renderer_, 10, 10, 30, 255);
+                        SDL_RenderClear(renderer_);
+                        renderCenteredText("Release...",
+                            0, kH/2 - 14, kW, {160,160,200,255}, fontMd_);
+                        SDL_RenderPresent(renderer_);
+
+                        bool released = false;
+                        while (!released && SDL_GetTicks() < deadline) {
+                            SDL_Event re;
+                            while (SDL_PollEvent(&re)) {
+                                if (re.type == SDL_JOYAXISMOTION
+                                        && re.jaxis.which == joyId
+                                        && re.jaxis.axis == act.rawIdx) {
+                                    int cur = (int)re.jaxis.value - (int)axisCenter[ai];
+                                    if (std::abs(cur) < 6000) released = true;
+                                }
+                            }
+                            SDL_Delay(16);
+                        }
+                        // Extra 150 ms gap before showing the next prompt
+                        SDL_Delay(150);
+                    }
+                }
+            }
+        }
+        SDL_Delay(16);
+    }
+    if (done) return;
+
+    // ── Step 3: build SDL mapping string ─────────────────────────────────────
+    std::string guid = joystickGUID();
+    if (guid.empty()) {
+        std::cerr << "[rebind] Failed to get joystick GUID\n";
+        return;
+    }
+    std::string mapping = guid + ",OmniCon Controller,";
+    for (const auto& act : actions) {
+        if (act.rawIdx < 0) continue;
+        mapping += std::string(act.sdlKey) + ":";
+        if (act.isAxis) {
+            mapping += "a" + std::to_string(act.rawIdx);
+            if (act.invert) mapping += "~";
+        } else {
+            mapping += "b" + std::to_string(act.rawIdx);
+        }
+        mapping += ",";
+    }
+    // D-pad always comes from the HAT (ABS_HAT0X/Y set by uinput_client.py)
+    mapping += "dpup:h0.1,dpdown:h0.4,dpleft:h0.8,dpright:h0.2,platform:Linux,";
+
+    // ── Step 4: apply ─────────────────────────────────────────────────────────
+    if (SDL_GameControllerAddMapping(mapping.c_str()) < 0)
+        std::cerr << "[rebind] SDL_GameControllerAddMapping: " << SDL_GetError() << "\n";
+
+    // Close + reopen so the running controller picks up the new mapping
+    if (ctrl_) { SDL_GameControllerClose(ctrl_); ctrl_ = nullptr; }
+    SDL_Delay(100);
+    for (int i = 0; i < SDL_NumJoysticks(); ++i) {
+        if (SDL_IsGameController(i)) {
+            ctrl_ = SDL_GameControllerOpen(i);
+            if (ctrl_) { ctrlName_ = SDL_GameControllerName(ctrl_); break; }
+        }
+    }
+
+    // ── Step 5: persist ───────────────────────────────────────────────────────
+    std::filesystem::create_directories("saves");
+    {
+        std::ofstream f("saves/controller_sdlmap.txt");
+        f << mapping << "\n";
+    }
+
+    showMsg("Saved!  Controller ready.", {80,230,80,255});
+    SDL_Delay(1500);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Per-console controller remapping
+// ═══════════════════════════════════════════════════════════════════════════════
+
+namespace {
+
+using BtnDef  = std::pair<std::string, SDL_GameControllerButton>;
+using BtnList = std::vector<BtnDef>;
+
+// ── conf file helpers ─────────────────────────────────────────────────────────
+static const std::string kConsoleBindFile = "saves/console_bindings.conf";
+
+// Write (or update) one [Section] in the INI file.
+void saveConsoleBind(const std::string& section, const BtnList& defs,
+                     const std::vector<SDL_GameControllerButton>& vals)
+{
+    // Read all existing sections
+    std::map<std::string, std::vector<std::pair<std::string,std::string>>> all;
+    std::vector<std::string> order;  // preserve section order
+    {
+        std::ifstream f(kConsoleBindFile);
+        std::string cur, line;
+        while (std::getline(f, line)) {
+            if (line.size() > 2 && line.front()=='[' && line.back()==']') {
+                cur = line.substr(1, line.size()-2);
+                if (all.find(cur) == all.end()) order.push_back(cur);
+            } else if (!cur.empty() && line.find('=') != std::string::npos) {
+                auto eq = line.find('=');
+                all[cur].emplace_back(line.substr(0,eq), line.substr(eq+1));
+            }
+        }
+    }
+    // Rebuild section
+    if (all.find(section) == all.end()) order.push_back(section);
+    all[section].clear();
+    for (size_t i = 0; i < defs.size() && i < vals.size(); ++i)
+        all[section].emplace_back(defs[i].first, std::to_string((int)vals[i]));
+
+    std::filesystem::create_directories("saves");
+    std::ofstream f(kConsoleBindFile);
+    for (const auto& sec : order) {
+        f << "[" << sec << "]\n";
+        for (const auto& kv : all[sec]) f << kv.first << "=" << kv.second << "\n";
+        f << "\n";
+    }
+}
+
+// Load one [Section]; returns defaults if section absent or file missing.
+std::vector<SDL_GameControllerButton> loadConsoleBind(const std::string& section,
+                                                       const BtnList& defs)
+{
+    std::vector<SDL_GameControllerButton> res;
+    res.reserve(defs.size());
+    for (auto& d : defs) res.push_back(d.second);  // start with defaults
+
+    std::ifstream f(kConsoleBindFile);
+    if (!f) return res;
+
+    std::string cur, line;
+    while (std::getline(f, line)) {
+        if (line.size() > 2 && line.front()=='[' && line.back()==']')
+            cur = line.substr(1, line.size()-2);
+        else if (cur == section) {
+            auto eq = line.find('=');
+            if (eq != std::string::npos) {
+                std::string key = line.substr(0, eq);
+                int val = 0;
+                try { val = std::stoi(line.substr(eq+1)); } catch (...) {}
+                for (size_t i = 0; i < defs.size(); ++i)
+                    if (defs[i].first == key)
+                        { res[i] = (SDL_GameControllerButton)val; break; }
+            }
+        }
+    }
+    return res;
+}
+
+// Apply a flat vector of buttons to a globalControllerBindings struct.
+// All ControllerBindings structs contain only SDL_GameControllerButton fields
+// so the reinterpret_cast is safe (standard-layout, no padding).
+void applyFlat(void* target, bool* configured,
+               const std::vector<SDL_GameControllerButton>& v)
+{
+    auto* arr = reinterpret_cast<SDL_GameControllerButton*>(target);
+    for (size_t i = 0; i < v.size(); ++i) arr[i] = v[i];
+    if (configured) *configured = true;
+}
+
+} // anonymous namespace
+
+// ── Console definitions table ─────────────────────────────────────────────────
+// Each entry: { section-name, button-list-with-defaults, &globalBindings, &globalConfigured }
+// Button list order MUST match the C++ struct field order.
+
+struct ConsoleCtrlDef {
+    const char* name;
+    BtnList     btns;
+    void*       globalBindPtr;
+    bool*       globalConfigured;
+};
+
+static std::vector<ConsoleCtrlDef> makeConsoleTable() {
+    using B = SDL_GameControllerButton;
+    constexpr B U  = SDL_CONTROLLER_BUTTON_DPAD_UP;
+    constexpr B D  = SDL_CONTROLLER_BUTTON_DPAD_DOWN;
+    constexpr B L  = SDL_CONTROLLER_BUTTON_DPAD_LEFT;
+    constexpr B R  = SDL_CONTROLLER_BUTTON_DPAD_RIGHT;
+    constexpr B A  = SDL_CONTROLLER_BUTTON_A;
+    constexpr B Bb = SDL_CONTROLLER_BUTTON_B;
+    constexpr B X  = SDL_CONTROLLER_BUTTON_X;
+    constexpr B Y  = SDL_CONTROLLER_BUTTON_Y;
+    constexpr B LS = SDL_CONTROLLER_BUTTON_LEFTSHOULDER;
+    constexpr B RS = SDL_CONTROLLER_BUTTON_RIGHTSHOULDER;
+    constexpr B BK = SDL_CONTROLLER_BUTTON_BACK;
+    constexpr B ST = SDL_CONTROLLER_BUTTON_START;
+    constexpr B L3 = SDL_CONTROLLER_BUTTON_LEFTSTICK;
+    constexpr B R3 = SDL_CONTROLLER_BUTTON_RIGHTSTICK;
+
+    return {
+        // ── NES ────────────────────────────────────────────────────────────────
+        { "NES",
+          BtnList{{"\xe2\x86\x91 Up",U},{"\xe2\x86\x93 Down",D},{"\xe2\x86\x90 Left",L},{"\xe2\x86\x92 Right",R},
+           {"A",A},{"B",Bb},{"Select",BK},{"Start",ST}},
+          &NESEmulation::globalControllerBindings, &NESEmulation::globalInputConfigured },
+
+        // ── SNES ───────────────────────────────────────────────────────────────
+        { "SNES",
+          BtnList{{"\xe2\x86\x91 Up",U},{"\xe2\x86\x93 Down",D},{"\xe2\x86\x90 Left",L},{"\xe2\x86\x92 Right",R},
+           {"A",A},{"B",Bb},{"X",X},{"Y",Y},{"L",LS},{"R",RS},{"Select",BK},{"Start",ST}},
+          &SNESEmulation::globalControllerBindings, &SNESEmulation::globalInputConfigured },
+
+        // ── Game Boy (GB + GBC share the same global) ──────────────────────────
+        { "GB",
+          BtnList{{"\xe2\x86\x91 Up",U},{"\xe2\x86\x93 Down",D},{"\xe2\x86\x90 Left",L},{"\xe2\x86\x92 Right",R},
+           {"A",A},{"B",Bb},{"Select",BK},{"Start",ST}},
+          &GameBoyEmulation::globalControllerBindings, &GameBoyEmulation::globalInputConfigured },
+
+        // ── GBA — struct order: a,b,select,start,right,left,up,down,r,l ────────
+        { "GBA",
+          BtnList{{"A",A},{"B",Bb},{"Select",BK},{"Start",ST},
+           {"\xe2\x86\x92 Right",R},{"\xe2\x86\x90 Left",L},{"\xe2\x86\x91 Up",U},{"\xe2\x86\x93 Down",D},
+           {"R",RS},{"L",LS}},
+          &GBAEmulation::globalControllerBindings, &GBAEmulation::globalInputConfigured },
+
+        // ── NDS — struct order: up,down,left,right,a,b,x,y,start,select,l,r ───
+        { "NDS",
+          BtnList{{"\xe2\x86\x91 Up",U},{"\xe2\x86\x93 Down",D},{"\xe2\x86\x90 Left",L},{"\xe2\x86\x92 Right",R},
+           {"A",A},{"B",Bb},{"X",X},{"Y",Y},{"Start",ST},{"Select",BK},{"L",LS},{"R",RS}},
+          &NDSEmulation::globalControllerBindings, &NDSEmulation::globalInputConfigured },
+
+        // ── 3DS — same as NDS + ZL, ZR ────────────────────────────────────────
+        { "3DS",
+          BtnList{{"\xe2\x86\x91 Up",U},{"\xe2\x86\x93 Down",D},{"\xe2\x86\x90 Left",L},{"\xe2\x86\x92 Right",R},
+           {"A",A},{"B",Bb},{"X",X},{"Y",Y},{"Start",ST},{"Select",BK},{"L",LS},{"R",RS},
+           {"ZL",L3},{"ZR",R3}},
+          &N3DSEmulation::globalControllerBindings, &N3DSEmulation::globalInputConfigured },
+
+        // ── N64 — up,down,left,right,a,b,c_up,c_down,c_left,c_right,l,r,z,start
+        { "N64",
+          BtnList{{"\xe2\x86\x91 Up",U},{"\xe2\x86\x93 Down",D},{"\xe2\x86\x90 Left",L},{"\xe2\x86\x92 Right",R},
+           {"A",A},{"B",Bb},{"C-Up",Y},{"C-Down",BK},{"C-Left",L3},{"C-Right",R3},
+           {"L",LS},{"R",RS},{"Z",X},{"Start",ST}},
+          &N64Emulation::globalControllerBindings, &N64Emulation::globalInputConfigured },
+
+        // ── PS1 — up,down,left,right,cross,circle,square,triangle,start,select,l1,r1
+        { "PS1",
+          BtnList{{"\xe2\x86\x91 Up",U},{"\xe2\x86\x93 Down",D},{"\xe2\x86\x90 Left",L},{"\xe2\x86\x92 Right",R},
+           {"Cross \xc3\x97",A},{"Circle \xe2\x97\x8b",Bb},{"Square \xe2\x96\xa1",X},{"Triangle \xe2\x96\xb3",Y},
+           {"Start",ST},{"Select",BK},{"L1",LS},{"R1",RS}},
+          &PS1Emulation::globalControllerBindings, &PS1Emulation::globalInputConfigured },
+
+        // ── PS2 — same struct layout as PS1 ────────────────────────────────────
+        { "PS2",
+          BtnList{{"\xe2\x86\x91 Up",U},{"\xe2\x86\x93 Down",D},{"\xe2\x86\x90 Left",L},{"\xe2\x86\x92 Right",R},
+           {"Cross \xc3\x97",A},{"Circle \xe2\x97\x8b",Bb},{"Square \xe2\x96\xa1",X},{"Triangle \xe2\x96\xb3",Y},
+           {"Start",ST},{"Select",BK},{"L1",LS},{"R1",RS}},
+          &PS2Emulation::globalControllerBindings, &PS2Emulation::globalInputConfigured },
+
+        // ── PS3 — same struct layout as PS1/PS2 ────────────────────────────────
+        { "PS3",
+          BtnList{{"\xe2\x86\x91 Up",U},{"\xe2\x86\x93 Down",D},{"\xe2\x86\x90 Left",L},{"\xe2\x86\x92 Right",R},
+           {"Cross \xc3\x97",A},{"Circle \xe2\x97\x8b",Bb},{"Square \xe2\x96\xa1",X},{"Triangle \xe2\x96\xb3",Y},
+           {"Start",ST},{"Select",BK},{"L1",LS},{"R1",RS}},
+          &PS3Emulation::globalControllerBindings, &PS3Emulation::globalInputConfigured },
+
+        // ── GameCube — same struct layout (cross→A,circle→B,square→X,triangle→Y)
+        { "GameCube",
+          BtnList{{"\xe2\x86\x91 Up",U},{"\xe2\x86\x93 Down",D},{"\xe2\x86\x90 Left",L},{"\xe2\x86\x92 Right",R},
+           {"A",A},{"B",Bb},{"X",X},{"Y",Y},
+           {"Start",ST},{"Select",BK},{"L",LS},{"R",RS}},
+          &GameCubeEmulation::globalControllerBindings, &GameCubeEmulation::globalInputConfigured },
+
+        // ── Sega Genesis — up,down,left,right,a,b,c,x,y,z,start,mode ──────────
+        { "Genesis",
+          BtnList{{"\xe2\x86\x91 Up",U},{"\xe2\x86\x93 Down",D},{"\xe2\x86\x90 Left",L},{"\xe2\x86\x92 Right",R},
+           {"A",X},{"B",A},{"C",Bb},{"X",Y},{"Y",LS},{"Z",RS},{"Start",ST},{"Mode",BK}},
+          &SegaGenesisEmulation::globalControllerBindings, &SegaGenesisEmulation::globalInputConfigured },
+
+        // ── Atari 2600 — up,down,left,right,fire,select,start,reset ───────────
+        { "Atari2600",
+          BtnList{{"\xe2\x86\x91 Up",U},{"\xe2\x86\x93 Down",D},{"\xe2\x86\x90 Left",L},{"\xe2\x86\x92 Right",R},
+           {"Fire",A},{"Select",BK},{"Start",ST},{"Reset",X}},
+          &Atari2600Emulation::globalControllerBindings, &Atari2600Emulation::globalInputConfigured },
+
+        // ── Atari 5200 — up,down,left,right,fire,secondary,select,start,reset ─
+        { "Atari5200",
+          BtnList{{"\xe2\x86\x91 Up",U},{"\xe2\x86\x93 Down",D},{"\xe2\x86\x90 Left",L},{"\xe2\x86\x92 Right",R},
+           {"Fire",A},{"Secondary",Bb},{"Select",BK},{"Start",ST},{"Reset",X}},
+          &Atari5200Emulation::globalControllerBindings, &Atari5200Emulation::globalInputConfigured },
+
+        // ── Atari 800 — up,down,left,right,fire,secondary,select,start,option ─
+        { "Atari800",
+          BtnList{{"\xe2\x86\x91 Up",U},{"\xe2\x86\x93 Down",D},{"\xe2\x86\x90 Left",L},{"\xe2\x86\x92 Right",R},
+           {"Fire",A},{"Secondary",Bb},{"Select",BK},{"Start",ST},{"Option",LS}},
+          &Atari800Emulation::globalControllerBindings, &Atari800Emulation::globalInputConfigured },
+
+        // ── Odyssey (Pong-style) — p1Up,p1Down,p2Up,p2Down,serve ─────────────
+        { "Odyssey",
+          BtnList{{"P1 Up",U},{"P1 Down",D},{"P2 Up",LS},{"P2 Down",RS},{"Serve",A}},
+          &OdysseyEmulation::globalControllerBindings, &OdysseyEmulation::globalInputConfigured },
+    };
+}
+
+// ── Per-console rebind UI ─────────────────────────────────────────────────────
+
+void GameShell::runConsoleRebindScreen(const std::string& sysName) {
+    if (!renderer_ || !ctrl_) return;
+
+    auto consoles = makeConsoleTable();
+
+    // Filter: "all" runs every console; otherwise match by name (case-insensitive)
+    bool runAll = (sysName.empty() || sysName == "all");
+    std::vector<const ConsoleCtrlDef*> todo;
+    for (const auto& c : consoles) {
+        if (runAll) { todo.push_back(&c); continue; }
+        std::string a = sysName, b = c.name;
+        for (auto& ch : a) ch = (char)std::tolower((unsigned char)ch);
+        for (auto& ch : b) ch = (char)std::tolower((unsigned char)ch);
+        if (a == b) todo.push_back(&c);
+    }
+
+    // Helper: draw the current state
+    auto drawConsole = [&](const ConsoleCtrlDef& con, int idx,
+                           const std::vector<SDL_GameControllerButton>& current) {
+        SDL_SetRenderDrawColor(renderer_, 10, 10, 30, 255);
+        SDL_RenderClear(renderer_);
+
+        // Title
+        std::string title = std::string(con.name) + " Controller Setup"
+            + "   \xe2\x80\x94   ESC=cancel   Backspace=redo last";
+        renderCenteredText(title, 0, 6, kW, {140,140,200,255}, fontMd_);
+
+        // Left column: completed
+        int listY = 32;
+        for (int i = 0; i < idx; ++i) {
+            std::string line = con.btns[i].first + "  \xe2\x86\x92  "
+                + SDL_GameControllerGetStringForButton(current[i]);
+            renderText(line, 30, listY, {80,200,80,255}, fontSm_, kW/2 - 50);
+            listY += 20;
+        }
+
+        // Right half: current prompt
+        if (idx < (int)con.btns.size()) {
+            int py = kH/2 - 50;
+            renderCenteredText("Press:", kW/2, py, kW/2, {160,160,200,255}, fontMd_);
+            renderCenteredText(con.btns[idx].first,
+                               kW/2, py + 26, kW/2, {255,220,60,255}, fontLg_);
+            renderCenteredText(std::to_string(idx+1) + " / "
+                               + std::to_string(con.btns.size()),
+                               kW/2, py + 70, kW/2, {110,110,150,255}, fontMd_);
+        }
+
+        SDL_RenderPresent(renderer_);
+    };
+
+    for (const auto* cp : todo) {
+        const auto& con = *cp;
+
+        // Load existing saved values as starting point
+        auto current = loadConsoleBind(con.name, con.btns);
+
+        int  idx  = 0;
+        bool skip = false;
+
+        while (!skip && idx < (int)con.btns.size()) {
+            drawConsole(con, idx, current);
+
+            SDL_Event ev;
+            while (SDL_PollEvent(&ev)) {
+                if (ev.type == SDL_QUIT)  { skip = true; break; }
+                if (ev.type == SDL_KEYDOWN) {
+                    if (ev.key.keysym.sym == SDLK_ESCAPE)    { skip = true; break; }
+                    if (ev.key.keysym.sym == SDLK_BACKSPACE && idx > 0) { --idx; break; }
+                }
+                // Accept any SDL controller button (includes DPAD_*)
+                if (ev.type == SDL_CONTROLLERBUTTONDOWN && ev.cbutton.which != -1) {
+                    current[idx] = (SDL_GameControllerButton)ev.cbutton.button;
+                    ++idx;
+                    break;
+                }
+            }
+            SDL_Delay(16);
+        }
+        if (skip) break;
+
+        // Save + apply
+        saveConsoleBind(con.name, con.btns, current);
+        applyFlat(con.globalBindPtr, con.globalConfigured, current);
+
+        // Brief confirmation before the next console
+        SDL_SetRenderDrawColor(renderer_, 10, 10, 30, 255);
+        SDL_RenderClear(renderer_);
+        renderCenteredText(std::string(con.name) + " saved!",
+                           0, kH/2 - 14, kW, {80,230,80,255}, fontLg_);
+        SDL_RenderPresent(renderer_);
+        SDL_Delay(700);
+    }
+}
+
+// ── remapConsole (public, stand-alone wrapper) ────────────────────────────────
+
+void GameShell::remapConsole(const std::string& sysName) {
+    if (!init()) { std::cerr << "[remapConsole] SDL init failed\n"; return; }
+
+    // Connect controller (bridge already running from startup)
+    for (int i = 0; i < SDL_NumJoysticks() && !ctrl_; ++i) {
+        if (SDL_IsGameController(i)) {
+            ctrl_ = SDL_GameControllerOpen(i);
+            if (ctrl_) ctrlName_ = SDL_GameControllerName(ctrl_);
+        }
+    }
+    if (!ctrl_) {
+        // Wait up to 4 s
+        Uint32 dl = SDL_GetTicks() + 4000;
+        SDL_Event ev;
+        while (SDL_GetTicks() < dl && !ctrl_) {
+            SDL_Delay(50);
+            while (SDL_PollEvent(&ev)) {
+                if (ev.type == SDL_CONTROLLERDEVICEADDED && !ctrl_) {
+                    ctrl_ = SDL_GameControllerOpen(ev.cdevice.which);
+                    if (ctrl_) ctrlName_ = SDL_GameControllerName(ctrl_);
+                }
+            }
+        }
+    }
+    if (!ctrl_) {
+        std::cerr << "[remapConsole] No controller found\n";
+        cleanup(); return;
+    }
+    runConsoleRebindScreen(sysName);
+    cleanup();
+}
+
+// ── loadConsoleBindings (static, called at startup) ───────────────────────────
+
+void GameShell::loadConsoleBindings() {
+    if (!std::filesystem::exists(kConsoleBindFile)) return;
+
+    auto consoles = makeConsoleTable();
+    for (const auto& con : consoles) {
+        auto vals = loadConsoleBind(con.name, con.btns);
+        // Only apply if the section exists in the file (loadConsoleBind returns
+        // defaults if the section is absent; skip those to avoid clobbering the
+        // emulator's own defaults with stale data).
+        bool hasSection = false;
+        {
+            std::ifstream f(kConsoleBindFile);
+            std::string line;
+            while (std::getline(f, line))
+                if (line == std::string("[") + con.name + "]")
+                    { hasSection = true; break; }
+        }
+        if (hasSection)
+            applyFlat(con.globalBindPtr, con.globalConfigured, vals);
+    }
+}
 

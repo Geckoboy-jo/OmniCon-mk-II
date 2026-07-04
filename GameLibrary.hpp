@@ -19,6 +19,7 @@ enum class SystemType {
     N64,
     PS1,
     PS2,
+    PS3,
     GameCube,
     Odyssey,
     Steam,

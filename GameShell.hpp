@@ -20,10 +20,27 @@ public:
     void run(GameLibrary& library, const std::string& coversDir);
     void setDBConfig(const OracleDBConfig& cfg) { dbCfg_ = cfg; }
 
+    // Initialise SDL, run the interactive controller-rebind screen, then clean
+    // up.  Safe to call stand-alone (e.g. from the REPL "remap" command).
+    void remap() {
+        if (init()) { runRebindScreen(); cleanup(); }
+    }
+
+    // Per-console button mapping.
+    // sysName: "NES","SNES","GB","GBA","NDS","3DS","N64","PS1","PS2",
+    //          "GameCube","Genesis","Atari2600","Atari5200","Atari800","Odyssey",
+    //          or "all" to step through every console in sequence.
+    // Safe to call stand-alone (init/cleanup handled internally).
+    void remapConsole(const std::string& sysName = "all");
+
+    // Load saves/console_bindings.conf and apply to every globalControllerBindings.
+    // Called once at program startup (no SDL required).
+    static void loadConsoleBindings();
+
     // Public so free functions in the .cpp can access them
-    static const SystemType  kSystems[17];
-    static const char* const kSysAbbrev[17];
-    static constexpr int     kNumSystems = 17;
+    static const SystemType  kSystems[18];
+    static const char* const kSysAbbrev[18];
+    static constexpr int     kNumSystems = 18;
 
 private:
     // SDL resources
@@ -66,6 +83,14 @@ private:
     SDL_GameController* ctrl_         = nullptr;
     std::string         ctrlName_;          // name of connected controller, or empty
 
+    // Controller navigation auto-repeat (D-pad held)
+    int    ctrlRepeatBtn_  = -1;   // SDL_CONTROLLER_BUTTON_* direction held, or -1
+    Uint32 ctrlRepeatNext_ = 0;    // SDL tick when the next repeat fires
+
+    // Left analogue stick navigation (per-frame polling)
+    int    ctrlStickDir_   = -1;   // current stick direction (SDL_CONTROLLER_BUTTON_DPAD_*) or -1
+    Uint32 ctrlStickNext_  = 0;    // SDL tick when stick repeat fires
+
     // Double-click tracking
     int    lastClickIdx_ = -1;
     Uint32 lastClickMs_  = 0;
@@ -105,4 +130,16 @@ private:
 
     // ── Launch ────────────────────────────────────────────────────────────────
     void launchGame(const GameEntry& game);
+
+    // ── Controller rebinding ──────────────────────────────────────────────────
+    // Interactive "press each button" screen.  Builds an SDL GameController
+    // mapping, applies it immediately, and saves to saves/controller_sdlmap.txt
+    // so it is reloaded on every future startup.
+    void runRebindScreen();
+
+    // Per-console binding UI (called by the public remapConsole()).
+    void runConsoleRebindScreen(const std::string& sysName);
+
+    // Returns the GUID string of the currently-open joystick, or "".
+    std::string joystickGUID() const;
 };

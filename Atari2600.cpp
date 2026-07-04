@@ -1268,6 +1268,11 @@ void Atari2600Emulation::runInteractive()
         return;
     }
 
+    for (int i = 0; i < SDL_NumJoysticks(); ++i)
+        if (SDL_IsGameController(i)) { openControllerByIndex(i); break; }
+    if (controller && inputMode == InputMode::KeyboardOnly)
+        inputMode = InputMode::KeyboardAndController;
+
     bool running = true;
     atari2600_input_t input{};
 
@@ -1299,6 +1304,8 @@ void Atari2600Emulation::runInteractive()
                 }
             } else if (event.type == SDL_CONTROLLERDEVICEADDED && controller == nullptr) {
                 openControllerByIndex(event.cdevice.which);
+                if (controller && inputMode == InputMode::KeyboardOnly)
+                    inputMode = InputMode::KeyboardAndController;
             } else if (event.type == SDL_CONTROLLERDEVICEREMOVED && controller != nullptr) {
                 if (SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(controller)) == event.cdevice.which) {
                     SDL_GameControllerClose(controller);

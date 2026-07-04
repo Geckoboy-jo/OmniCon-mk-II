@@ -1461,6 +1461,8 @@ void NESEmulation::runInteractive()
         std::cout << "Controller-only mode selected, but no controller is active. Falling back to keyboard.\n";
         inputMode = InputMode::KeyboardOnly;
     }
+    if (controller && inputMode == InputMode::KeyboardOnly)
+        inputMode = InputMode::KeyboardAndController;
     
     std::cout << "\n=== NES Emulator Running ===\n";
     std::cout << "ROM: " << romPath << "\n";

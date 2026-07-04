@@ -992,6 +992,11 @@ void PS2Emulation::runInteractive()
         std::cerr << "[PS2] Audio initialization failed.\n";
     }
 
+    for (int i = 0; i < SDL_NumJoysticks(); ++i)
+        if (SDL_IsGameController(i)) { openControllerByIndex(i); break; }
+    if (controller && inputMode == InputMode::KeyboardOnly)
+        inputMode = InputMode::KeyboardAndController;
+
     std::cout << "PlayStation 2: " << romPath << "\n";
     std::cout << "Press Escape or close the window to exit.\n";
     std::cout << "Default keys: Arrows=D-pad, Z=Cross, X=Circle, A=Square, S=Triangle\n";
@@ -1034,6 +1039,8 @@ void PS2Emulation::runInteractive()
                     handleControllerButtonEvent(event.cbutton.button, false, input, running);
             } else if (event.type == SDL_CONTROLLERDEVICEADDED && controller == nullptr) {
                 openControllerByIndex(event.cdevice.which);
+                if (controller && inputMode == InputMode::KeyboardOnly)
+                    inputMode = InputMode::KeyboardAndController;
             } else if (event.type == SDL_CONTROLLERDEVICEREMOVED && controller != nullptr) {
                 if (SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(controller)) == event.cdevice.which) {
                     SDL_GameControllerClose(controller); controller = nullptr;

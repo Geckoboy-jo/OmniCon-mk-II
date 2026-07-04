@@ -956,6 +956,8 @@ void SegaGenesisEmulation::runInteractive()
         std::cout << "No controller; falling back to keyboard.\n";
         inputMode = InputMode::KeyboardOnly;
     }
+    if (controller && inputMode == InputMode::KeyboardOnly)
+        inputMode = InputMode::KeyboardAndController;
 
     std::cout << "\n=== Sega Genesis ===\n"
               << "ROM: " << romPath << "\n"

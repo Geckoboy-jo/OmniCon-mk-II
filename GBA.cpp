@@ -891,6 +891,8 @@ void GBAEmulation::runInteractive()
         std::cout << "Controller-only mode but no controller active. Falling back to keyboard.\n";
         inputMode = InputMode::KeyboardOnly;
     }
+    if (controller && inputMode == InputMode::KeyboardOnly)
+        inputMode = InputMode::KeyboardAndController;
 
     std::cout << "\n=== GBA Emulator Running ===\n";
     std::cout << "ROM: " << romPath << "\n";

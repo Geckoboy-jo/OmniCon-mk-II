@@ -6,9 +6,13 @@
 #include <mupen64plus/m64p_common.h>
 #include <mupen64plus/m64p_plugin.h>
 
+#include <SDL2/SDL.h>
+#include <SDL2/SDL.h>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <atomic>
+#include <chrono>
 #include <thread>
 #include <vector>
 #include <cstdint>
@@ -36,7 +40,7 @@ class Mupen64PlusBackend {
             if (n64DebugEnabled()) std::cerr << "[N64][VERBOSE] " << msg << "\n";
         }
     static constexpr const char* CORE_SO  = "/usr/lib/x86_64-linux-gnu/libmupen64plus.so.2";
-    static constexpr const char* VIDEO_SO = "/usr/lib/x86_64-linux-gnu/mupen64plus/mupen64plus-video-rice.so";
+    static constexpr const char* VIDEO_SO = "/usr/lib/x86_64-linux-gnu/mupen64plus/mupen64plus-video-glide64mk2.so";
     static constexpr const char* AUDIO_SO = "/usr/lib/x86_64-linux-gnu/mupen64plus/mupen64plus-audio-sdl.so";
     static constexpr const char* INPUT_SO = "/usr/lib/x86_64-linux-gnu/mupen64plus/mupen64plus-input-sdl.so";
     static constexpr const char* RSP_SO   = "/usr/lib/x86_64-linux-gnu/mupen64plus/mupen64plus-rsp-hle.so";
@@ -55,7 +59,6 @@ class Mupen64PlusBackend {
     ptr_CoreDetachPlugin fnCoreDetachPlugin = nullptr;
     ptr_CoreDoCommand    fnCoreDoCommand    = nullptr;
 
-    std::thread       execThread;
     std::atomic<bool> emulRunning{false};
     std::string       configDir;
 
@@ -163,26 +166,113 @@ public:
                         }
                     }
                 }
-                fnConfigSaveFile();
-                logState("[N64] Runtime key remapping applied to all Input-SDL-Control* sections via config API");
-
-                // Set fullscreen via Video-General section
-                m64p_handle videoGenSection = nullptr;
-                if (fnConfigGetSection && fnConfigGetSection("Video-General", &videoGenSection) == M64ERR_SUCCESS && videoGenSection) {
-                    typedef m64p_error (*ptr_ConfigSetParamBool)(m64p_handle, const char*, m64p_type, const void*);
-                    auto fnConfigSetBool = (ptr_ConfigSetParamBool)dlsym(coreHandle, "ConfigSetParameter");
-                    if (fnConfigSetBool) {
+                // ─── Audio buffer: increase to prevent periodic freezes ──────────────
+                // ConfigGetSection fails for sections that don't exist yet; ConfigOpenSection
+                // creates the section if absent, which is necessary here because Video-General
+                // and Audio-SDL are only written by plugins on their first run.
+                typedef m64p_error (*ptr_ConfigOpenSection)(const char*, m64p_handle*);
+                typedef m64p_error (*ptr_ConfigSetParam)(m64p_handle, const char*, m64p_type, const void*);
+                auto fnConfigOpenSection = (ptr_ConfigOpenSection)dlsym(coreHandle, "ConfigOpenSection");
+                auto fnConfigSetParam    = (ptr_ConfigSetParam)dlsym(coreHandle, "ConfigSetParameter");
+                if (fnConfigOpenSection && fnConfigSetParam) {
+                    // SECONDARY_BUFFER_SIZE = 2048 (default) causes the SDL audio thread to
+                    // stall the emulation thread every ~60ms. 8192 eliminates those hitches.
+                    m64p_handle audioSection = nullptr;
+                    if (fnConfigOpenSection("Audio-SDL", &audioSection) == M64ERR_SUCCESS && audioSection) {
+                        int bufSize = 8192;
+                        fnConfigSetParam(audioSection, "SECONDARY_BUFFER_SIZE", M64TYPE_INT, &bufSize);
+                        logState("[N64] Audio-SDL SECONDARY_BUFFER_SIZE set to 8192");
+                    }
+                    // ─── Fullscreen ───────────────────────────────────────────────────────
+                    m64p_handle videoGenSection = nullptr;
+                    if (fnConfigOpenSection("Video-General", &videoGenSection) == M64ERR_SUCCESS && videoGenSection) {
                         int trueVal = 1;
-                        fnConfigSetBool(videoGenSection, "Fullscreen", M64TYPE_BOOL, &trueVal);
-                        fnConfigSaveFile();
+                        fnConfigSetParam(videoGenSection, "Fullscreen", M64TYPE_BOOL, &trueVal);
                         logState("[N64] Video-General Fullscreen set to true");
                     }
                 }
+
+                fnConfigSaveFile();
+                logState("[N64] Runtime key remapping applied to all Input-SDL-Control* sections via config API");
             } else {
                 logState("[N64] Failed to enumerate config sections for runtime remap");
             }
         } else {
             logState("[N64] Mupen64Plus config API not available for runtime remap");
+        }
+
+        // ─── Performance & display config ─────────────────────────────────────
+        // The block above is dead code (ConfigSectionCount is not a real symbol).
+        // This block uses only standard mupen64plus API symbols and always runs.
+        //
+        // ConfigSetParameter only works on EXISTING parameters.
+        // Audio-SDL params are registered by the audio plugin during PluginStartup
+        // (which runs later), so they don't exist yet — ConfigSetParameter silently
+        // fails.  The fix: call ConfigSetDefaultInt first (creates if absent), then
+        // ConfigSetParameter (overrides the value if it already existed on disk).
+        {
+            typedef m64p_error (*ptr_ConfigOpenSection)(const char*, m64p_handle*);
+            typedef m64p_error (*ptr_ConfigSetParam)   (m64p_handle, const char*, m64p_type, const void*);
+            typedef m64p_error (*ptr_ConfigSetDefInt)  (m64p_handle, const char*, int,  const char*);
+            typedef m64p_error (*ptr_ConfigSetDefBool) (m64p_handle, const char*, int,  const char*);
+            typedef m64p_error (*ptr_ConfigSaveFile)   (void);
+            auto fnOpen       = (ptr_ConfigOpenSection)dlsym(coreHandle, "ConfigOpenSection");
+            auto fnSet        = (ptr_ConfigSetParam)   dlsym(coreHandle, "ConfigSetParameter");
+            auto fnSetDefInt  = (ptr_ConfigSetDefInt)  dlsym(coreHandle, "ConfigSetDefaultInt");
+            auto fnSetDefBool = (ptr_ConfigSetDefBool) dlsym(coreHandle, "ConfigSetDefaultBool");
+            auto fnSave       = (ptr_ConfigSaveFile)   dlsym(coreHandle, "ConfigSaveFile");
+
+            // Helper lambdas: create-or-override for int and bool params.
+            auto setInt = [&](m64p_handle h, const char* name, int val) {
+                fnSetDefInt(h, name, val, "");   // creates with val if param is absent
+                fnSet(h, name, M64TYPE_INT, &val); // overrides if param already existed on disk
+            };
+            auto setBool = [&](m64p_handle h, const char* name, int val) {
+                fnSetDefBool(h, name, val, "");
+                fnSet(h, name, M64TYPE_BOOL, &val);
+            };
+
+            if (fnOpen && fnSet && fnSetDefInt && fnSetDefBool && fnSave) {
+                // ── Audio: disable emulation-thread stall ─────────────────────
+                // mupen64plus-audio-sdl stalls the emulation thread in AiLenChanged
+                // whenever primary_buffer_count > PRIMARY_BUFFER_TARGET.  On this
+                // system audio routes through PulseAudio → RDP Sink, which can block
+                // the audio callback for 10+ seconds.  Setting PRIMARY_BUFFER_TARGET
+                // strictly above PRIMARY_BUFFER_SIZE makes the condition impossible:
+                // the buffer can never exceed its own max size, so the stall never
+                // fires.  The core's timer-based limiter maintains correct 60 fps.
+                m64p_handle audio = nullptr;
+                if (fnOpen("Audio-SDL", &audio) == M64ERR_SUCCESS && audio) {
+                    setInt(audio, "PRIMARY_BUFFER_SIZE",   16384);
+                    setInt(audio, "PRIMARY_BUFFER_TARGET", 32768); // > SIZE → stall never triggers
+                    setInt(audio, "SECONDARY_BUFFER_SIZE", 4096);
+                }
+                // ── Video: fullscreen at native display resolution ────────────────
+                // Default ScreenWidth/ScreenHeight is 320×240 (N64 native). On a
+                // 2560×1440 display that renders a tiny square in the corner.
+                // SDL_GetCurrentDisplayMode gives us the real resolution at runtime.
+                m64p_handle video = nullptr;
+                if (fnOpen("Video-General", &video) == M64ERR_SUCCESS && video) {
+                    setBool(video, "Fullscreen",   1);
+                    setBool(video, "VerticalSync", 0);
+                    SDL_DisplayMode dm{};
+                    int w = 1920, h = 1080;
+                    if (SDL_GetCurrentDisplayMode(0, &dm) == 0 && dm.w > 0 && dm.h > 0) {
+                        w = dm.w; h = dm.h;
+                    }
+                    setInt(video, "ScreenWidth",  w);
+                    setInt(video, "ScreenHeight", h);
+                }
+                // ── glide64mk2: disable its own vsync flag ────────────────────────
+                m64p_handle glide = nullptr;
+                if (fnOpen("Video-Glide64mk2", &glide) == M64ERR_SUCCESS && glide) {
+                    setBool(glide, "vsync", 0);
+                }
+                fnSave();
+                logState("[N64] Audio and video config applied");
+            } else {
+                logState("[N64] Standard config API not available");
+            }
         }
 
         coreInited = true;
@@ -195,8 +285,63 @@ public:
         typedef m64p_error (*PluginStartupFn)(m64p_dynlib_handle, void*,
                                               void(*)(void*, int, const char*));
 
+        // ── Audio driver: prevent SDL_LockAudio → RDP Sink deadlock ──────────────
+        // mupen64plus-audio-sdl calls SDL_LockAudio() before every buffer write.
+        // SDL_LockAudio blocks the calling thread until the audio CALLBACK returns.
+        // On this system the callback writes to PulseAudio → RDP Sink → Windows
+        // audio.  When the RDP pipeline stalls (latency spike), the callback hangs
+        // for 10-30 s; SDL_LockAudio blocks the emulation thread for the same
+        // duration — video and audio both freeze simultaneously.
+        //
+        // Forcing SDL_AUDIODRIVER=dummy makes the callback a no-op that returns
+        // instantly, so SDL_LockAudio never blocks.  The game is silent but smooth.
+        // Set OMNICON_N64_AUDIO=pulseaudio (or any SDL driver name) to restore sound.
+        {
+            const char* n64audio = std::getenv("OMNICON_N64_AUDIO");
+            setenv("SDL_AUDIODRIVER", n64audio ? n64audio : "dummy", 1);
+            if (!n64audio) {
+                std::cerr << "[N64] Audio disabled to prevent RDP Sink freeze. "
+                             "Set OMNICON_N64_AUDIO=pulseaudio to enable sound.\n";
+            }
+        }
+
+        // ── Mesa GL environment (must be set before GL context creation inside PluginStartup)
+        // MESA_GLTHREAD: offloads GL command submission to a worker thread so the main
+        // emulation thread never blocks on GPU-side work.
+        setenv("MESA_GLTHREAD", "true", 0);
+        // vblank_mode=0: belt-and-suspenders vsync disable at the Mesa driver level.
+        setenv("vblank_mode", "0", 0);
+        // Ensure the Mesa shader/PSO disk cache lives on fast Linux-native storage.
+        // Without this, Mesa may try to write the cache to a Windows 9P mount which
+        // is slow.  Cached PSOs are reused on subsequent runs — only the first play
+        // of each game incurs compilation stalls.
+        if (!std::getenv("MESA_SHADER_CACHE_DIR")) {
+            static const std::string sCacheDir = [] {
+                std::string d = "/root/.cache/mesa_shader_cache_n64";
+                fs::create_directories(d);
+                return d;
+            }();
+            setenv("MESA_SHADER_CACHE_DIR", sCacheDir.c_str(), 1);
+        }
+
+        // ── Video plugin selection ─────────────────────────────────────────────────
+        // glide64mk2 generates one Mesa D3D12 PSO per N64 color-combiner mode.
+        // Paper Mario alone has hundreds of unique modes; each PSO compiles
+        // synchronously on the emulation thread and can block for 1-30+ seconds.
+        // Rice uses a small fixed set of GLSL programs → far fewer stalls.
+        // After the first play session the cache warms up; set
+        //   OMNICON_N64_VIDEO=glide64mk2
+        // to use the accurate renderer (stalls only on first run of each game).
+        const char* videoChoice = std::getenv("OMNICON_N64_VIDEO");
+        if (!videoChoice) videoChoice = "rice";
+        const std::string dynamicVideoSO =
+            std::string("/usr/lib/x86_64-linux-gnu/mupen64plus/mupen64plus-video-") +
+            videoChoice + ".so";
+        std::cerr << "[N64] Video: mupen64plus-video-" << videoChoice << ".so"
+                  << "  (OMNICON_N64_VIDEO=glide64mk2 for higher accuracy)\n";
+
         struct { const char* path; void** hdl; m64p_plugin_type type; } entries[] = {
-            {VIDEO_SO, &videoHandle, M64PLUGIN_GFX  },
+            {dynamicVideoSO.c_str(), &videoHandle, M64PLUGIN_GFX  },
             {AUDIO_SO, &audioHandle, M64PLUGIN_AUDIO},
             {INPUT_SO, &inputHandle, M64PLUGIN_INPUT},
             {RSP_SO,   &rspHandle,   M64PLUGIN_RSP  },
@@ -260,31 +405,42 @@ public:
         return true;
     }
 
-    void startExecution() {
-            logState("startExecution() called");
+    // Run emulation synchronously on the calling thread (must be the main thread).
+    // Mature frontends (mupen64plus-ui-console, RetroArch) all do this — SDL event
+    // pumping and OpenGL rendering in the plugins must happen on the main thread.
+    // Spawning a background thread caused the WSLg compositor to starve of events
+    // and freeze for 10+ seconds periodically.
+    void execute() {
+        logState("execute() called — running M64CMD_EXECUTE on calling thread");
         if (!fnCoreDoCommand) {
-            logState("startExecution() aborted: fnCoreDoCommand is null");
-            emulRunning = false;
+            logState("execute() aborted: fnCoreDoCommand is null");
             return;
         }
-        emulRunning = true;
-        execThread = std::thread([this]() {
-                        logState("Emulation thread started");
-            fnCoreDoCommand(M64CMD_EXECUTE, 0, nullptr);
-                        logState("fnCoreDoCommand(M64CMD_EXECUTE) returned");
-            emulRunning = false;
-                    logState("Emulation thread finished");
-        });
-    }
 
-    void waitForStop() {
-            logState("waitForStop() called");
-        if (execThread.joinable()) {
-            logState("Joining execThread");
-            execThread.join();
-        } else {
-            logState("execThread not joinable, skipping join");
-        }
+        // Watchdog: prints a heartbeat every second to stderr.
+        // During a freeze, watch the terminal output:
+        //   heartbeats STOP     → whole process suspended (WSL2/Hyper-V stall — OS-level)
+        //   heartbeats CONTINUE → main thread stuck in GL/emulation call (fixable in-process)
+        std::atomic<bool> wdStop{false};
+        std::thread watchdog([&]() {
+            using namespace std::chrono;
+            int tick = 0;
+            while (!wdStop.load(std::memory_order_relaxed)) {
+                std::this_thread::sleep_for(seconds(1));
+                if (!wdStop.load(std::memory_order_relaxed)) {
+                    std::cerr << "[N64-watchdog] " << ++tick << "s\n";
+                    std::cerr.flush();
+                }
+            }
+        });
+
+        emulRunning = true;
+        fnCoreDoCommand(M64CMD_EXECUTE, 0, nullptr);
+        emulRunning = false;
+
+        wdStop = true;
+        watchdog.join();
+        logState("execute() returned");
     }
 
     void requestStop() {
@@ -299,8 +455,11 @@ public:
             logState("teardown() called");
         requestStop();
             logState("requestStop() returned");
-        waitForStop();
-            logState("waitForStop() returned");
+        // No waitForStop() needed: execute() is synchronous, so emulation has
+        // already ended before teardown() is ever called.
+
+        // Restore SDL audio driver so other emulators choose their own backend.
+        unsetenv("SDL_AUDIODRIVER");
 
         if (romOpened && fnCoreDoCommand) {
                         logState("Closing ROM via fnCoreDoCommand(M64CMD_ROM_CLOSE)");
@@ -450,8 +609,7 @@ void N64Emulation::runInteractive() {
 
     std::cout << "[N64] Press ESC or close the game window to exit.\n";
     isRunning = true;
-    backend->startExecution();
-    backend->waitForStop();
+    backend->execute();  // blocks on this thread until the user closes the game
     isRunning = false;
     std::cout << "[N64] Emulation stopped.\n";
     if (n64Debug) std::cerr << "[N64][DEBUG] runInteractive finished\n";

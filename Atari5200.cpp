@@ -919,6 +919,8 @@ void Atari5200Emulation::runInteractive()
 
     std::cout << "Atari 5200: " << romPath << "\n";
     std::cout << "Press Escape or close the window to exit.\n";
+    if (controller && inputMode == InputMode::KeyboardOnly)
+        inputMode = InputMode::KeyboardAndController;
 
     bool running = true;
     atari5200_input_t input{};
@@ -950,6 +952,8 @@ void Atari5200Emulation::runInteractive()
             } else if (event.type == SDL_CONTROLLERDEVICEADDED && controller == nullptr) {
                 std::cerr << "[A5200] CONTROLLERDEVICEADDED index=" << event.cdevice.which << "\n";
                 openControllerByIndex(event.cdevice.which);
+                if (controller && inputMode == InputMode::KeyboardOnly)
+                    inputMode = InputMode::KeyboardAndController;
             } else if (event.type == SDL_CONTROLLERDEVICEREMOVED && controller != nullptr) {
                 if (SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(controller)) == event.cdevice.which) {
                     SDL_GameControllerClose(controller); controller = nullptr;

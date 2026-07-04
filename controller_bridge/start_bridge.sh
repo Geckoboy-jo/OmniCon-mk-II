@@ -6,10 +6,23 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VENV_PYTHON="$SCRIPT_DIR/../.venv/bin/python3"
 
-# Load uinput kernel module
-echo "Loading uinput module..."
-sudo modprobe uinput
-sudo chmod 666 /dev/uinput
+# Guard: exit silently if the bridge is already running
+if pgrep -f "uinput_client.py" > /dev/null 2>&1; then
+    echo "Controller bridge already running."
+    exit 0
+fi
+
+# Fall back to system python3 if the venv doesn't exist
+if [ ! -x "$VENV_PYTHON" ]; then
+    VENV_PYTHON="$(command -v python3)"
+    if [ -z "$VENV_PYTHON" ]; then
+        echo "ERROR: No Python 3 found. Install python3 or create a .venv."
+        exit 1
+    fi
+fi
+
+# Load uinput kernel module (no-op if already loaded; works as root)
+modprobe uinput 2>/dev/null || sudo modprobe uinput 2>/dev/null || true
 
 # Locate Windows Python
 WIN_PYTHON=""
@@ -25,17 +38,12 @@ if [ -z "$WIN_PYTHON" ]; then
     exit 1
 fi
 
-echo "Windows Python : $WIN_PYTHON"
-echo "WSL Python     : $VENV_PYTHON"
-
 WIN_SERVER="$(wslpath -w "$SCRIPT_DIR/xinput_server.py")"
-echo "XInput server  : $WIN_SERVER"
-echo ""
-echo "Bridge starting -- press Ctrl+C to stop."
-echo ""
+LOGFILE="/tmp/omnicon_bridge.log"
+echo "Controller bridge starting (XInput → uinput)..."  | tee -a "$LOGFILE"
+echo "[bridge] xinput_server : $WIN_SERVER"              >> "$LOGFILE"
+echo "[bridge] uinput_client : $VENV_PYTHON $SCRIPT_DIR/uinput_client.py" >> "$LOGFILE"
 
-# Auto-chmod the new event device after the bridge creates it
-(sleep 3 && sudo chmod 666 /dev/input/event* 2>/dev/null && echo "Input device permissions set.") &
-
-# Pipe: Windows XInput reader -> WSL uinput writer
-"$WIN_PYTHON" "$WIN_SERVER" 2>&1 | "$VENV_PYTHON" "$SCRIPT_DIR/uinput_client.py"
+# Pipe ONLY stdout (binary packets) from the Windows reader to the WSL writer.
+# Stderr is redirected to the log file so it never pollutes the binary stream.
+"$WIN_PYTHON" "$WIN_SERVER" 2>>"$LOGFILE" | "$VENV_PYTHON" "$SCRIPT_DIR/uinput_client.py" 2>>"$LOGFILE"
