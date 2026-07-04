@@ -69,33 +69,33 @@ public:
 
     StandalonePS3Backend() : binary_(resolveBinary()) {}
 
-    ~StandalonePS3Backend() { unmountIso(); }
-
     bool loadRom(const std::string& path) override {
         if (binary_.empty()) return false;
 
         std::string gamePath = path;
 
-        // RPCS3 cannot open ISO files directly; mount it and pass the folder.
+        // RPCS3 snap runs in a private mount namespace — loop mounts done by the
+        // host are NOT visible inside it.  For disc images we therefore copy the
+        // PS3_GAME folder to a real directory on first launch and cache it for
+        // subsequent launches.  .pkg files are passed directly.
         std::string ext = std::filesystem::path(path).extension().string();
         std::transform(ext.begin(), ext.end(), ext.begin(),
             [](unsigned char c){ return static_cast<char>(std::tolower(c)); });
-        if (ext == ".iso" || ext == ".bin") {
-            gamePath = mountAndResolve(path);
+        if (ext == ".iso" || ext == ".bin" || ext == ".chd") {
+            gamePath = prepareGame(path);
             if (gamePath.empty()) {
-                std::cerr << "[PS3] Failed to mount disc image: " << path << "\n";
+                std::cerr << "[PS3] Failed to prepare disc image: " << path << "\n";
                 return false;
             }
         }
 
         std::cout << "[PS3] Launching RPCS3: " << binary_ << " \"" << gamePath << "\"\n";
         pid_ = fork();
-        if (pid_ < 0) {
-            std::cerr << "[PS3] fork() failed\n";
-            unmountIso();
-            return false;
-        }
+        if (pid_ < 0) { std::cerr << "[PS3] fork() failed\n"; return false; }
         if (pid_ == 0) {
+            // Strip Wayland so RPCS3 snap uses X11 (WSLg / standard X server).
+            unsetenv("WAYLAND_DISPLAY");
+            setenv("QT_QPA_PLATFORM", "xcb", 1);
             execlp(binary_.c_str(), binary_.c_str(), "--no-gui", gamePath.c_str(), nullptr);
             std::cerr << "[PS3] exec failed\n";
             _exit(1);
@@ -111,7 +111,6 @@ public:
 
     void waitForExit() {
         if (pid_ > 0) { waitpid(pid_, nullptr, 0); pid_ = -1; }
-        unmountIso();
     }
 
     void setInput(const ps3_input_t&) override {}
@@ -119,77 +118,94 @@ public:
 
 private:
     std::string binary_;
-    pid_t       pid_        = -1;
-    std::string mountPoint_;   // non-empty when we own a loop-mounted ISO
+    pid_t       pid_ = -1;
 
-    // Mount the disc image at a temporary directory and return the EBOOT.BIN
-    // path that RPCS3 expects.  The mount base must be under $HOME (/root/)
-    // because the rpcs3-emulator snap only has the 'home' interface connected
-    // (removable-media is not connected, so /tmp/ and /mnt/ are inaccessible).
-    std::string mountAndResolve(const std::string& isoPath) {
-        // Use saves/ps3/ as the mount base so the path sits under /root/
-        std::filesystem::path mountBase =
-            std::filesystem::current_path() / "saves" / "ps3";
+    // Return the EBOOT.BIN path for a disc image, copying PS3_GAME/ out of the
+    // ISO on first launch and caching it under saves/ps3/games/<stem>/.
+    std::string prepareGame(const std::string& isoPath) {
+        const std::string stem = std::filesystem::path(isoPath).stem().string();
+        const std::filesystem::path cacheDir =
+            std::filesystem::current_path() / "saves" / "ps3" / "games" / stem;
+        const std::string eboot =
+            (cacheDir / "PS3_GAME" / "USRDIR" / "EBOOT.BIN").string();
+
         std::error_code ec;
-        std::filesystem::create_directories(mountBase, ec);
+        if (std::filesystem::exists(eboot, ec)) {
+            std::cout << "[PS3] Using cached game folder: " << cacheDir << "\n";
+            return eboot;
+        }
 
-        // mkdtemp needs a mutable char array
-        std::string tmplStr = (mountBase / "mnt_XXXXXX").string();
-        std::vector<char> tmpl(tmplStr.begin(), tmplStr.end());
-        tmpl.push_back('\0');
-
-        if (!mkdtemp(tmpl.data())) {
+        // ── Mount the ISO temporarily (host namespace, for copying) ──────────
+        char tmpl[] = "/tmp/omnicon_ps3_src_XXXXXX";
+        if (!mkdtemp(tmpl)) {
             std::cerr << "[PS3] mkdtemp failed\n";
             return "";
         }
-        mountPoint_ = tmpl.data();
+        const std::string mnt = tmpl;
 
-        // mount -o loop,ro <iso> <mountPoint>
+        auto doUnmount = [&]() {
+            pid_t u = fork();
+            if (u == 0) { execlp("umount", "umount", mnt.c_str(), nullptr); _exit(1); }
+            if (u > 0) waitpid(u, nullptr, 0);
+            rmdir(mnt.c_str());
+        };
+
         pid_t mpid = fork();
         if (mpid == 0) {
-            execlp("mount", "mount", "-o", "loop,ro",
-                   isoPath.c_str(), mountPoint_.c_str(), nullptr);
+            execlp("mount", "mount", "-o", "loop,ro", isoPath.c_str(), mnt.c_str(), nullptr);
             _exit(1);
         }
-        int st = 0;
-        waitpid(mpid, &st, 0);
-        if (!WIFEXITED(st) || WEXITSTATUS(st) != 0) {
-            std::cerr << "[PS3] mount failed (requires root / loop device)\n";
-            rmdir(mountPoint_.c_str());
-            mountPoint_.clear();
+        int mst = 0; waitpid(mpid, &mst, 0);
+        if (!WIFEXITED(mst) || WEXITSTATUS(mst) != 0) {
+            std::cerr << "[PS3] mount failed\n";
+            rmdir(mnt.c_str());
             return "";
         }
 
-        // Locate EBOOT.BIN — RPCS3 accepts the explicit file path most reliably
-        std::string eboot = mountPoint_ + "/PS3_GAME/USRDIR/EBOOT.BIN";
-        if (std::filesystem::exists(eboot, ec))
-            return eboot;
-
-        // Some discs nest one level deeper
-        for (const auto& entry :
-             std::filesystem::directory_iterator(mountPoint_, ec)) {
-            std::string nested = entry.path().string()
-                               + "/PS3_GAME/USRDIR/EBOOT.BIN";
-            if (std::filesystem::exists(nested, ec))
-                return nested;
+        // Locate PS3_GAME inside the mount
+        std::string srcGame = mnt + "/PS3_GAME";
+        if (!std::filesystem::exists(srcGame, ec)) {
+            // Try one directory level down
+            srcGame.clear();
+            for (const auto& entry : std::filesystem::directory_iterator(mnt, ec)) {
+                if (std::filesystem::exists(entry.path() / "PS3_GAME", ec)) {
+                    srcGame = (entry.path() / "PS3_GAME").string();
+                    break;
+                }
+            }
+        }
+        if (srcGame.empty()) {
+            std::cerr << "[PS3] PS3_GAME not found in disc image\n";
+            doUnmount();
+            return "";
         }
 
-        std::cerr << "[PS3] EBOOT.BIN not found in mounted image\n";
-        unmountIso();
-        return "";
-    }
+        // ── Copy PS3_GAME → cache (only on first launch) ─────────────────────
+        std::cout << "[PS3] First launch — copying game data to cache. "
+                     "This may take a few minutes...\n";
+        std::filesystem::create_directories(cacheDir, ec);
 
-    void unmountIso() {
-        if (mountPoint_.empty()) return;
-        // umount <mountPoint>
-        pid_t upid = fork();
-        if (upid == 0) {
-            execlp("umount", "umount", mountPoint_.c_str(), nullptr);
+        pid_t cpid = fork();
+        if (cpid == 0) {
+            execlp("cp", "cp", "-r", srcGame.c_str(),
+                   (cacheDir / "PS3_GAME").string().c_str(), nullptr);
             _exit(1);
         }
-        if (upid > 0) waitpid(upid, nullptr, 0);
-        rmdir(mountPoint_.c_str());
-        mountPoint_.clear();
+        int cst = 0; waitpid(cpid, &cst, 0);
+        doUnmount();   // unmount immediately after copy
+
+        if (!WIFEXITED(cst) || WEXITSTATUS(cst) != 0) {
+            std::cerr << "[PS3] Copy failed\n";
+            std::filesystem::remove_all(cacheDir, ec);
+            return "";
+        }
+        if (!std::filesystem::exists(eboot, ec)) {
+            std::cerr << "[PS3] EBOOT.BIN missing after copy\n";
+            std::filesystem::remove_all(cacheDir, ec);
+            return "";
+        }
+        std::cout << "[PS3] Game cached at: " << cacheDir << "\n";
+        return eboot;
     }
 };
 
