@@ -252,11 +252,14 @@ bool LibretroPS1Backend::loadSymbols()
 void LibretroPS1Backend::ensureLibretroDirectories()
 {
     const std::filesystem::path root    = std::filesystem::current_path() / "third_party" / "libretro";
-    const std::filesystem::path sysDir  = root / "system";
+    const std::filesystem::path bundledSysDir = root / "system";
+    const std::filesystem::path miscBiosDir = std::filesystem::current_path() / "Misc BIOS";
+    const std::filesystem::path sysDir =
+        std::filesystem::is_directory(miscBiosDir) ? miscBiosDir : bundledSysDir;
     const std::filesystem::path saveDir = root / "save";
     const std::filesystem::path contDir = root / "content";
     std::error_code ec;
-    std::filesystem::create_directories(sysDir,  ec);
+    std::filesystem::create_directories(bundledSysDir, ec);
     std::filesystem::create_directories(saveDir, ec);
     std::filesystem::create_directories(contDir, ec);
     // Also ensure ps1 saves directory exists

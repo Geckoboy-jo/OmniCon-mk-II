@@ -133,7 +133,7 @@ static bool launchExternalChecked(const std::vector<std::string>& args) {
     close(statusPipe[0]);
     if (bytesRead == sizeof(error)) {
         waitpid(pid, nullptr, 0);
-        std::cerr << "[PC] Could not start " << args.front() << ": "
+        std::cerr << "[External] Could not start " << args.front() << ": "
                   << std::strerror(error) << "\n";
         return false;
     }
@@ -1491,7 +1491,32 @@ void GameShell::launchGame(const GameEntry& game) {
             const std::string core = coreEnv && *coreEnv
                                    ? coreEnv
                                    : "third_party/libretro/flycast_libretro.so";
-            if (!launchExternal({launcher, "-L", core, path}))
+            if (!fs::exists(core)) {
+                std::cerr << "[Dreamcast] Flycast core not found: " << core << "\n"
+                          << "             Set OMNICON_FLYCAST_CORE to an installed "
+                             "flycast_libretro.so.\n";
+                break;
+            }
+            const std::string corePath = fs::absolute(core).string();
+            const std::string configPath = fs::absolute("retroarch_flycast.cfg").string();
+            if (!fs::exists(configPath)) {
+                std::cerr << "[Dreamcast] RetroArch configuration not found: "
+                          << configPath << "\n";
+                break;
+            }
+            const std::string contentPath = fs::absolute(path).string();
+            std::cerr << "[Dreamcast] Launching " << launcher
+                      << " with core " << corePath
+                      << " and content " << contentPath << "\n";
+            std::string libraryPath = "/usr/lib/x86_64-linux-gnu:/lib/x86_64-linux-gnu";
+            if (const char* existing = std::getenv("LD_LIBRARY_PATH");
+                existing && *existing) {
+                libraryPath += ":";
+                libraryPath += existing;
+            }
+            if (!launchExternalChecked({"env", "LD_LIBRARY_PATH=" + libraryPath,
+                                        launcher, "--appendconfig", configPath,
+                                        "-L", corePath, contentPath}))
                 std::cerr << "[Dreamcast] Failed to start " << launcher
                           << ". Install RetroArch/Flycast or set OMNICON_DREAMCAST_LAUNCHER.\n";
             break;

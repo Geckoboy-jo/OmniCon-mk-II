@@ -1,5 +1,6 @@
 #include "GameLibrary.hpp"
 #include "OracleDB.hpp"
+#include "DownloadManager.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -46,7 +47,8 @@ SystemType GameLibrary::systemFromUrl(const std::string& url) {
     if (has("/roms_gamecube") || has("/gamecube_roms") || has("nintendo_gamecube") ||
         has("/roms_gcn") || has("/gcn_roms") || has("gamecube_iso"))
         return SystemType::GameCube;
-    if (has("/roms_dreamcast") || has("/dreamcast_roms") || has("sega_dreamcast"))
+    if (has("/roms_dreamcast") || has("/dreamcast_roms") ||
+        has("sega_dreamcast") || has("sega-dreamcast"))
         return SystemType::Dreamcast;
     if (has("/roms_pc") || has("/pc_games") || has("pc_game") || has("pc_redump"))
         return SystemType::PC;
@@ -578,6 +580,13 @@ void GameLibrary::loadFromDB(const OracleDBConfig& cfg) {
         // romExtension() strips archive wrappers (.zip, .gz, etc.) so that
         // "game.nes.zip" is correctly identified as NES.
         ge.system = systemFromName(row.systemName);
+        const SystemType urlSystem = systemFromUrl(row.downloadUrl);
+        const std::string sourceExtension = romExtension(
+            row.localPath.empty() ? row.downloadUrl : row.localPath);
+        if (urlSystem == SystemType::Dreamcast &&
+            (sourceExtension == ".chd" || sourceExtension == ".cdi" ||
+             sourceExtension == ".gdi"))
+            ge.system = SystemType::Dreamcast;
         if (ge.system == SystemType::Unknown) {
             const std::string& src = row.downloadUrl.empty() ? row.localPath : row.downloadUrl;
             ge.system = systemFromExtension(romExtension(src));
@@ -590,12 +599,37 @@ void GameLibrary::loadFromDB(const OracleDBConfig& cfg) {
         if (!row.localPath.empty() && fs::exists(row.localPath)) {
             ge.romPath = row.localPath;
             SystemType extSys = systemFromExtension(romExtension(row.localPath));
-            if (extSys != SystemType::Unknown)
+            const bool ambiguousDreamcastMedia =
+                ge.system == SystemType::Dreamcast &&
+                toLower(romExtension(row.localPath)) == ".chd";
+            if (extSys != SystemType::Unknown && !ambiguousDreamcastMedia)
                 ge.system = extSys;
+        }
+        if (ge.romPath.empty() && !row.localPath.empty()) {
+            const fs::path expectedName = fs::path(row.localPath).filename();
+            std::error_code searchEc;
+            for (const auto& entry : fs::recursive_directory_iterator("Roms", searchEc)) {
+                if (searchEc) break;
+                if (entry.is_regular_file(searchEc) &&
+                    entry.path().filename() == expectedName) {
+                    ge.romPath = entry.path().string();
+                    break;
+                }
+            }
+        }
+        if (ge.romPath.empty() && !row.downloadUrl.empty()) {
+            const std::string cachedPath =
+                DownloadManager::instance().localPath(row.downloadUrl);
+            if (!cachedPath.empty() && fs::exists(cachedPath))
+                ge.romPath = cachedPath;
         }
 
         std::cout << "[DB] + [" << systemName(ge.system) << "] " << ge.displayName
-                  << " (id=" << row.id << ")\n"; std::cout.flush();
+                  << " (id=" << row.id << ")";
+        if (!ge.romPath.empty())
+            std::cout << " [" << ge.romPath << "]";
+        std::cout << "\n";
+        std::cout.flush();
         games_.push_back(std::move(ge));
         ++added;
     }
