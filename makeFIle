@@ -1,5 +1,5 @@
 CC := g++
-CFLAGS := -std=c++17 -O2 -Wall -Wextra -pedantic -Imgba -Imupen64plus
+CFLAGS := -std=c++17 -O2 -Wall -Wextra -pedantic -Imgba -I.
 SDL_CFLAGS := $(shell sdl2-config --cflags 2>/dev/null || echo "-I/usr/include/SDL2")
 SDL_LIBS := $(shell sdl2-config --libs 2>/dev/null || echo "-lSDL2")
 MYSQL_CFLAGS := $(shell mysql_config --cflags 2>/dev/null || echo "-I/usr/include/mysql")

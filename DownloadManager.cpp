@@ -29,6 +29,27 @@ static const std::vector<std::string> kRomExts = {
     "a26","a52","atr","md","gen","smd","iso","cue","chd"
 };
 
+static std::string shellQuote(const std::string& s) {
+    std::string q = "'";
+    for (char c : s) {
+        if (c == '\'') q += "'\"'\"'";
+        else q += c;
+    }
+    return q + "'";
+}
+
+static std::string cookieOption(const std::string& cookieFile,
+                                const std::string& runtimeCookieFile) {
+    std::string options;
+    if (!cookieFile.empty()) {
+        options += " --cookie " + shellQuote(cookieFile);
+    }
+    if (!runtimeCookieFile.empty()) {
+        options += " --cookie-jar " + shellQuote(runtimeCookieFile);
+    }
+    return options;
+}
+
 // ─── URL helpers ─────────────────────────────────────────────────────────────
 static std::string urlDecode(const std::string& s) {
     std::string r;
@@ -64,14 +85,17 @@ static std::string urlEncode(const std::string& s) {
 // Case 2 — /download/FILENAME (no identifier) : use archive.org search to find
 //           an item, then query its metadata for the ROM file.
 // Returns "" if unresolvable.
-static std::string archiveOrgFixUrl(const std::string& url) {
+static std::string archiveOrgFixUrl(const std::string& url,
+                                    const std::string& cookieFile) {
     static const std::set<std::string> kAllowed(kRomExts.begin(), kRomExts.end());
     static const std::set<std::string> kArchives = {"zip","7z","gz","bz2","xz","rar"};
 
     // Run a curl GET and return stdout.
-    auto curlGet = [](const std::string& curlUrl) -> std::string {
+    auto curlGet = [&](const std::string& curlUrl) -> std::string {
         std::string cmd = "curl --silent --fail --location --max-time 15"
-                          " --user-agent 'Mozilla/5.0' '" + curlUrl + "'";
+                          " --user-agent 'Mozilla/5.0'" +
+                          cookieOption(cookieFile, cookieFile + ".runtime") +
+                          " " + shellQuote(curlUrl);
         FILE* f = popen(cmd.c_str(), "r");
         if (!f) return "";
         std::ostringstream ss;
@@ -339,6 +363,12 @@ DownloadManager& DownloadManager::instance() {
 void DownloadManager::init(const std::string& queuePath, const std::string& romsDir) {
     queuePath_     = queuePath;
     romsDir_       = romsDir;
+    const char* configuredCookieFile = std::getenv("OMNICON_COOKIE_FILE");
+    cookieFile_ = (configuredCookieFile && *configuredCookieFile)
+        ? configuredCookieFile
+        : (fs::path(queuePath).parent_path() / "archive_cookies.txt").string();
+    runtimeCookieFile_ = (fs::path(queuePath).parent_path() /
+                          "archive_cookies.runtime.txt").string();
 
     // downloaded.json lives next to the queue file
     fs::path qp(queuePath);
@@ -537,11 +567,21 @@ bool DownloadManager::ensureSpace(long long neededBytes) {
 // ─── Extraction ──────────────────────────────────────────────────────────────
 
 std::string DownloadManager::extractRom(const std::string& archivePath,
-                                         const std::string& destDir) {
+                                         const std::string& destDir,
+                                         bool allowGbaFallback) {
     std::string arcExt = fs::path(archivePath).extension().string();
     std::transform(arcExt.begin(), arcExt.end(), arcExt.begin(), ::tolower);
 
     std::string foundFile;
+    auto isRomCandidate = [&](const std::string& fname) {
+        std::string ext = fs::path(fname).extension().string();
+        if (!ext.empty()) ext = ext.substr(1);
+        std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+        if (std::find(kRomExts.begin(), kRomExts.end(), ext) != kRomExts.end()) {
+            return true;
+        }
+        return allowGbaFallback && (ext.empty() || ext == "bin");
+    };
 
     if (arcExt == ".7z" || arcExt == ".rar" || arcExt == ".gz" || arcExt == ".bz2" || arcExt == ".xz") {
         // ── 7z branch ──────────────────────────────────────────────────────
@@ -569,12 +609,7 @@ std::string DownloadManager::extractRom(const std::string& archivePath,
                 if (line.rfind("Path = ", 0) != 0) continue;
                 std::string fname = line.substr(7);
                 if (fname.empty() || fname.back() == '/') continue;
-                std::string ext = fs::path(fname).extension().string();
-                if (!ext.empty()) ext = ext.substr(1);
-                std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-                for (const auto& e : kRomExts) {
-                    if (ext == e) { foundFile = fname; break; }
-                }
+                if (isRomCandidate(fname)) foundFile = fname;
                 if (!foundFile.empty()) break;
             }
             pclose(f);
@@ -597,9 +632,11 @@ std::string DownloadManager::extractRom(const std::string& archivePath,
                 "import py7zr;"
                 "z=py7zr.SevenZipFile(sys.argv[1],mode='r');"
                 "exts={e for e in sys.argv[2].split(',')};"
-                "names=[n for n in z.getnames() if not n.endswith('/') and os.path.splitext(n)[1].lstrip('.').lower() in exts];"
+                "names=[n for n in z.getnames() if not n.endswith('/') and (os.path.splitext(n)[1].lstrip('.').lower() in exts or "
+                "(sys.argv[3]=='1' and os.path.splitext(n)[1].lstrip('.').lower() in ('','bin')))];"
                 "z.close();"
-                "print(names[0] if names else '')\" '" + archivePath + "' '" + extList + "' 2>/dev/null";
+                "print(names[0] if names else '')\" '" + archivePath + "' '" + extList +
+                "' '" + (allowGbaFallback ? "1" : "0") + "' 2>/dev/null";
             FILE* f = popen(pyList.c_str(), "r");
             if (!f) return "";
             char buf[2048] = {};
@@ -638,18 +675,13 @@ std::string DownloadManager::extractRom(const std::string& archivePath,
                 while (!fname.empty() && (fname.back() == '\n' || fname.back() == '\r'))
                     fname.pop_back();
                 if (fname.empty() || fname.back() == '/') continue;
-                std::string ext = fs::path(fname).extension().string();
-                if (!ext.empty()) ext = ext.substr(1);
-                std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-                for (const auto& e : kRomExts) {
-                    if (ext == e) { foundFile = fname; break; }
-                }
+                if (isRomCandidate(fname)) foundFile = fname;
                 if (!foundFile.empty()) break;
             }
             pclose(f);
             if (foundFile.empty()) return "";
 
-            std::string extractCmd = "unzip -o '" + archivePath + "' '" + foundFile +
+            std::string extractCmd = "unzip -j -o '" + archivePath + "' '" + foundFile +
                                      "' -d '" + destDir + "' 2>/dev/null";
             if (system(extractCmd.c_str()) != 0) return ""; // NOLINT
         } else {
@@ -666,8 +698,10 @@ std::string DownloadManager::extractRom(const std::string& archivePath,
                 "import zipfile,sys,os;"
                 "z=zipfile.ZipFile(sys.argv[1]);"
                 "exts={e for e in sys.argv[2].split(',')};"
-                "names=[n for n in z.namelist() if not n.endswith('/') and os.path.splitext(n)[1].lstrip('.').lower() in exts];"
-                "print(names[0] if names else '')\" '" + archivePath + "' '" + extList + "' 2>/dev/null";
+                "names=[n for n in z.namelist() if not n.endswith('/') and (os.path.splitext(n)[1].lstrip('.').lower() in exts or "
+                "(sys.argv[3]=='1' and os.path.splitext(n)[1].lstrip('.').lower() in ('','bin')))];"
+                "print(names[0] if names else '')\" '" + archivePath + "' '" + extList +
+                "' '" + (allowGbaFallback ? "1" : "0") + "' 2>/dev/null";
             FILE* f = popen(pyList.c_str(), "r");
             if (!f) return "";
             char buf[2048] = {};
@@ -690,7 +724,13 @@ std::string DownloadManager::extractRom(const std::string& archivePath,
         }
     }
 
-    return (fs::path(destDir) / fs::path(foundFile).filename()).string();
+    fs::path extractedPath = fs::path(destDir) / fs::path(foundFile).filename();
+    if (!fs::exists(extractedPath)) {
+        std::cerr << "[DL] Archive extraction completed but ROM was not found at "
+                  << extractedPath << "\n";
+        return "";
+    }
+    return extractedPath.string();
 }
 
 // ─── Download ────────────────────────────────────────────────────────────────
@@ -742,13 +782,6 @@ std::string DownloadManager::downloadBlocking(
     int pfd = mkstemp(progressTmp);
     if (pfd >= 0) close(pfd);
 
-    // Shell-safe single-quote escaping for both paths and URL
-    auto shellQuote = [](const std::string& s) -> std::string {
-        std::string q = "'";
-        for (char c : s) { if (c == '\'') q += "'\"'\"'"; else q += c; }
-        return q + "'";
-    };
-
     // Derive the URL origin for use as a Referer (satisfies hotlink-protection checks).
     std::string referer = entry.url;
     {
@@ -762,34 +795,12 @@ std::string DownloadManager::downloadBlocking(
     std::string curlCmd = "curl --location --fail --silent --show-error"
                           " --user-agent 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36"
                           " (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'"
+                          + cookieOption(cookieFile_, runtimeCookieFile_) +
                           " --referer " + shellQuote(referer) +
                           " --retry 3 --retry-delay 2"
                           " -o " + shellQuote(tmpPath) +
                           " " + shellQuote(entry.url) +
                           " 2>" + std::string(progressTmp);
-
-    // Try to get the real file size via a HEAD request so progress is accurate.
-    // If the server doesn't support HEAD or omits Content-Length, spaceNeeded
-    // (the pre-reserved estimate) is used as the fallback total.
-    {
-        std::string headCmd = "curl --silent --head --max-time 10 --location"
-                              " --user-agent 'Mozilla/5.0 (X11; Linux x86_64)'"
-                              " --referer " + shellQuote(referer) +
-                              " " + shellQuote(entry.url) +
-                              " 2>/dev/null"
-                              " | grep -i '^content-length:' | tail -1 | awk '{print $2}'";
-        FILE* hf = popen(headCmd.c_str(), "r");
-        if (hf) {
-            char hbuf[64] = {};
-            if (fgets(hbuf, sizeof(hbuf), hf)) {
-                try {
-                    long long cl = std::stoll(std::string(hbuf));
-                    if (cl > 0) spaceNeeded = cl;
-                } catch (...) {}
-            }
-            pclose(hf);
-        }
-    }
 
     if (progress) progress(0, spaceNeeded);
 
@@ -837,7 +848,7 @@ std::string DownloadManager::downloadBlocking(
         // not just 404 (some mirrors fail with other status/error text).
         bool fromArchiveOrg = (entry.url.find("archive.org") != std::string::npos);
         if (fromArchiveOrg) {
-            std::string altUrl = archiveOrgFixUrl(entry.url);
+            std::string altUrl = archiveOrgFixUrl(entry.url, cookieFile_);
             if (!altUrl.empty() && altUrl != entry.url) {
                 std::cout << "[DL] Retrying with corrected URL...\n";
                 // Re-use the same tmpPath; rebuild the command with the new URL
@@ -856,6 +867,7 @@ std::string DownloadManager::downloadBlocking(
                                      " --user-agent 'Mozilla/5.0 (X11; Linux x86_64)"
                                      " AppleWebKit/537.36 (KHTML, like Gecko)"
                                      " Chrome/124.0.0.0 Safari/537.36'"
+                                     + cookieOption(cookieFile_, runtimeCookieFile_) +
                                      " --referer " + shellQuote(altReferer) +
                                      " --retry 2 --retry-delay 2"
                                      " -o " + shellQuote(tmpPath) +
@@ -898,10 +910,13 @@ std::string DownloadManager::downloadBlocking(
     std::string finalPath;
     if (ext == ".zip" || ext == ".7z" || ext == ".rar" || ext == ".gz" || ext == ".bz2" || ext == ".xz") {
         std::cout << "[DL] Extracting " << tmpPath << "...\n";
-        finalPath = extractRom(tmpPath, romsDir_);
+        finalPath = extractRom(tmpPath, romsDir_, entry.system == "GBA");
         unlink(tmpPath.c_str());
         if (finalPath.empty()) {
             std::cerr << "[DL] No ROM found inside archive.\n";
+            if (errorOut) {
+                *errorOut = "Downloaded archive could not be extracted or contained no supported ROM.";
+            }
             return "";
         }
     } else {

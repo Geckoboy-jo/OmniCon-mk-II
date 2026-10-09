@@ -1,4 +1,6 @@
 saves/saves.db
+saves/archive_cookies.txt
+saves/archive_cookies.runtime.txt
 Roms/
 
 # Large BIOS archives — keep bin files but ignore zip bundles
@@ -14,4 +16,3 @@ omnicon_repl
 omnicon_debug
 oracle_test
 play
-

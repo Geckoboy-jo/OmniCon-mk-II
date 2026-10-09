@@ -71,12 +71,15 @@ private:
     void loadFromDisk();
     void saveToDisk();
     bool ensureSpace(long long neededBytes);
-    std::string extractRom(const std::string& archivePath, const std::string& destDir);
+    std::string extractRom(const std::string& archivePath, const std::string& destDir,
+                           bool allowGbaFallback);
     long long   usedStorageBytes() const;
 
     std::string queuePath_;
     std::string downloadedPath_;
     std::string romsDir_;
+    std::string cookieFile_;
+    std::string runtimeCookieFile_;
     std::vector<QueuedDownload>      queue_;
     std::map<std::string, std::string> urlToLocal_; // url → local rom path
 

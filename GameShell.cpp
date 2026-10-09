@@ -1060,9 +1060,17 @@ void GameShell::run(GameLibrary& library, const std::string& coversDir) {
                     // Show the error but keep the game in the library so the
                     // user can retry later once the URL is fixed or connectivity
                     // is restored.
-                    std::string msg = dlError.find("404") != std::string::npos
-                        ? "File not found (404). Check the game's download URL."
-                        : "Download failed. Check connection and try again.";
+                    std::string msg;
+                    if (dlError.find("404") != std::string::npos) {
+                        msg = "File not found (404). Check the game's download URL.";
+                    } else if (dlError.find("could not be extracted") != std::string::npos) {
+                        msg = "Download completed, but the archive contained no supported ROM.";
+                    } else if (dlError.find("401") != std::string::npos ||
+                               dlError.find("403") != std::string::npos) {
+                        msg = "Archive.org authorization failed. Refresh the cookie export.";
+                    } else {
+                        msg = "Download failed. Check the connection and log.";
+                    }
                     renderText(msg, (kW - 500) / 2, kH / 2 + 60,
                                {240, 80, 80, 255}, fontLg_, 500);
                     SDL_RenderPresent(renderer_);
@@ -1989,4 +1997,3 @@ void GameShell::loadConsoleBindings() {
             applyFlat(con.globalBindPtr, con.globalConfigured, vals);
     }
 }
-
