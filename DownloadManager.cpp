@@ -26,8 +26,40 @@ namespace fs = std::filesystem;
 // Allowed ROM extensions (lower-cased, without leading dot)
 static const std::vector<std::string> kRomExts = {
     "nes","sfc","smc","gb","gbc","gba","nds","3ds","z64","n64","v64",
-    "a26","a52","atr","md","gen","smd","iso","cue","chd"
+    "a26","a52","atr","md","gen","smd","iso","cue","chd","gdi","cdi","bin","exe"
 };
+
+bool DownloadManager::isPcSystem(const std::string& system) {
+    std::string normalized = system;
+    std::transform(normalized.begin(), normalized.end(), normalized.begin(), ::tolower);
+    return normalized == "pc" || normalized == "pc games";
+}
+
+bool DownloadManager::ensurePcCue(const std::string& path) {
+    fs::path binPath(path);
+    std::string ext = binPath.extension().string();
+    std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+    if (ext != ".bin" || !fs::is_regular_file(binPath)) return true;
+
+    fs::path cuePath = binPath;
+    cuePath.replace_extension(".cue");
+    if (fs::exists(cuePath)) return fs::is_regular_file(cuePath);
+
+    std::ofstream cue(cuePath, std::ios::trunc);
+    if (!cue) {
+        std::cerr << "[DL] Could not create PC cue descriptor: " << cuePath << "\n";
+        return false;
+    }
+    cue << "FILE \"" << binPath.filename().string() << "\" BINARY\n"
+        << "  TRACK 01 MODE1/2352\n"
+        << "    INDEX 01 00:00:00\n";
+    if (!cue) {
+        std::cerr << "[DL] Could not write PC cue descriptor: " << cuePath << "\n";
+        return false;
+    }
+    std::cout << "[DL] Created PC cue descriptor: " << cuePath << "\n";
+    return true;
+}
 
 static std::string shellQuote(const std::string& s) {
     std::string q = "'";
@@ -414,7 +446,15 @@ void DownloadManager::loadFromDisk() {
                  it != std::sregex_iterator(); ++it) {
                 std::string url  = (*it)[1].str();
                 std::string path = (*it)[2].str();
-                if (!url.empty()) urlToLocal_[url] = path;
+                if (url.empty()) continue;
+                urlToLocal_[url] = path;
+                std::string urlLower = url;
+                std::transform(urlLower.begin(), urlLower.end(), urlLower.begin(), ::tolower);
+                if (urlLower.find("pc_redump") != std::string::npos &&
+                    !ensurePcCue(path)) {
+                    std::cerr << "[DL] Existing PC download needs a valid cue descriptor: "
+                              << path << "\n";
+                }
             }
         }
     }
@@ -568,7 +608,8 @@ bool DownloadManager::ensureSpace(long long neededBytes) {
 
 std::string DownloadManager::extractRom(const std::string& archivePath,
                                          const std::string& destDir,
-                                         bool allowGbaFallback) {
+                                         bool allowGbaFallback,
+                                         bool preferPcContent) {
     std::string arcExt = fs::path(archivePath).extension().string();
     std::transform(arcExt.begin(), arcExt.end(), arcExt.begin(), ::tolower);
 
@@ -577,6 +618,7 @@ std::string DownloadManager::extractRom(const std::string& archivePath,
         std::string ext = fs::path(fname).extension().string();
         if (!ext.empty()) ext = ext.substr(1);
         std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+        if (preferPcContent) return ext == "bin" || ext == "exe";
         if (std::find(kRomExts.begin(), kRomExts.end(), ext) != kRomExts.end()) {
             return true;
         }
@@ -632,11 +674,14 @@ std::string DownloadManager::extractRom(const std::string& archivePath,
                 "import py7zr;"
                 "z=py7zr.SevenZipFile(sys.argv[1],mode='r');"
                 "exts={e for e in sys.argv[2].split(',')};"
-                "names=[n for n in z.getnames() if not n.endswith('/') and (os.path.splitext(n)[1].lstrip('.').lower() in exts or "
-                "(sys.argv[3]=='1' and os.path.splitext(n)[1].lstrip('.').lower() in ('','bin')))];"
+                "names=[n for n in z.getnames() if not n.endswith('/') and "
+                "((sys.argv[4]=='1' and os.path.splitext(n)[1].lstrip('.').lower() in ('bin','exe')) or "
+                "(sys.argv[4]!='1' and (os.path.splitext(n)[1].lstrip('.').lower() in exts or "
+                "(sys.argv[3]=='1' and os.path.splitext(n)[1].lstrip('.').lower() in ('','bin')))))];"
                 "z.close();"
                 "print(names[0] if names else '')\" '" + archivePath + "' '" + extList +
-                "' '" + (allowGbaFallback ? "1" : "0") + "' 2>/dev/null";
+                "' '" + (allowGbaFallback ? "1" : "0") + "' '" +
+                (preferPcContent ? "1" : "0") + "' 2>/dev/null";
             FILE* f = popen(pyList.c_str(), "r");
             if (!f) return "";
             char buf[2048] = {};
@@ -698,10 +743,13 @@ std::string DownloadManager::extractRom(const std::string& archivePath,
                 "import zipfile,sys,os;"
                 "z=zipfile.ZipFile(sys.argv[1]);"
                 "exts={e for e in sys.argv[2].split(',')};"
-                "names=[n for n in z.namelist() if not n.endswith('/') and (os.path.splitext(n)[1].lstrip('.').lower() in exts or "
-                "(sys.argv[3]=='1' and os.path.splitext(n)[1].lstrip('.').lower() in ('','bin')))];"
+                "names=[n for n in z.namelist() if not n.endswith('/') and "
+                "((sys.argv[4]=='1' and os.path.splitext(n)[1].lstrip('.').lower() in ('bin','exe')) or "
+                "(sys.argv[4]!='1' and (os.path.splitext(n)[1].lstrip('.').lower() in exts or "
+                "(sys.argv[3]=='1' and os.path.splitext(n)[1].lstrip('.').lower() in ('','bin')))))];"
                 "print(names[0] if names else '')\" '" + archivePath + "' '" + extList +
-                "' '" + (allowGbaFallback ? "1" : "0") + "' 2>/dev/null";
+                "' '" + (allowGbaFallback ? "1" : "0") + "' '" +
+                (preferPcContent ? "1" : "0") + "' 2>/dev/null";
             FILE* f = popen(pyList.c_str(), "r");
             if (!f) return "";
             char buf[2048] = {};
@@ -910,7 +958,8 @@ std::string DownloadManager::downloadBlocking(
     std::string finalPath;
     if (ext == ".zip" || ext == ".7z" || ext == ".rar" || ext == ".gz" || ext == ".bz2" || ext == ".xz") {
         std::cout << "[DL] Extracting " << tmpPath << "...\n";
-        finalPath = extractRom(tmpPath, romsDir_, entry.system == "GBA");
+        finalPath = extractRom(tmpPath, romsDir_, entry.system == "GBA",
+                               isPcSystem(entry.system));
         unlink(tmpPath.c_str());
         if (finalPath.empty()) {
             std::cerr << "[DL] No ROM found inside archive.\n";
@@ -932,6 +981,11 @@ std::string DownloadManager::downloadBlocking(
             std::cerr << "[DL] Failed to move file: " << ec.message() << "\n";
             return "";
         }
+    }
+
+    if (isPcSystem(entry.system) && !ensurePcCue(finalPath)) {
+        if (errorOut) *errorOut = "PC disc image downloaded, but its cue descriptor could not be created.";
+        return "";
     }
 
     // ── Locked: record result ────────────────────────────────────────────

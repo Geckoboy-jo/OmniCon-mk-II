@@ -20,16 +20,21 @@
 #include "SaveManager.hpp"
 
 #include <algorithm>
+#include <cerrno>
+#include <cstring>
+#include <cstdlib>
 #include <filesystem>
+#include <fcntl.h>
 #include <fstream>
 #include <iostream>
 #include <unistd.h>
+#include <sys/wait.h>
 
 namespace fs = std::filesystem;
 
 // ─── Static members ───────────────────────────────────────────────────────────
 
-const SystemType GameShell::kSystems[18] = {
+const SystemType GameShell::kSystems[20] = {
     SystemType::NES,
     SystemType::SNES,
     SystemType::GameBoy,
@@ -47,11 +52,13 @@ const SystemType GameShell::kSystems[18] = {
     SystemType::PS3,
     SystemType::GameCube,
     SystemType::Odyssey,
+    SystemType::PC,
+    SystemType::Dreamcast,
     SystemType::Steam,
 };
 
-const char* const GameShell::kSysAbbrev[18] = {
-    "NES", "SNES", "GB", "GBC", "GBA", "NDS", "3DS", "2600", "5200", "800", "GEN", "N64", "PS1", "PS2", "PS3", "GCN", "ODY", "STM"
+const char* const GameShell::kSysAbbrev[20] = {
+    "NES", "SNES", "GB", "GBC", "GBA", "NDS", "3DS", "2600", "5200", "800", "GEN", "N64", "PS1", "PS2", "PS3", "GCN", "ODY", "PC", "DC", "STM"
 };
 
 // ─── Colour palette ───────────────────────────────────────────────────────────
@@ -68,6 +75,107 @@ static const SDL_Color kColorTextPri   = {220, 230, 255, 255};
 static const SDL_Color kColorTextDim   = {100, 110, 155, 255};
 static const SDL_Color kColorFiltAct   = { 50, 120, 210, 255};
 static const SDL_Color kColorFiltInact = { 22,  22,  48, 255};
+
+static bool launchExternal(const std::vector<std::string>& args) {
+    if (args.empty()) return false;
+    pid_t pid = fork();
+    if (pid < 0) {
+        std::cerr << "[GameShell] Could not fork external launcher.\n";
+        return false;
+    }
+    if (pid == 0) {
+        setsid();
+        std::vector<char*> argv;
+        argv.reserve(args.size() + 1);
+        for (const auto& arg : args)
+            argv.push_back(const_cast<char*>(arg.c_str()));
+        argv.push_back(nullptr);
+        execvp(argv[0], argv.data());
+        _exit(127);
+    }
+    return true;
+}
+
+static bool launchExternalChecked(const std::vector<std::string>& args) {
+    if (args.empty()) return false;
+
+    int statusPipe[2] = {};
+    if (pipe(statusPipe) != 0) {
+        std::cerr << "[GameShell] Could not create launcher status pipe.\n";
+        return false;
+    }
+    fcntl(statusPipe[1], F_SETFD, fcntl(statusPipe[1], F_GETFD) | FD_CLOEXEC);
+
+    pid_t pid = fork();
+    if (pid < 0) {
+        close(statusPipe[0]);
+        close(statusPipe[1]);
+        std::cerr << "[GameShell] Could not fork external launcher.\n";
+        return false;
+    }
+    if (pid == 0) {
+        close(statusPipe[0]);
+        setsid();
+        std::vector<char*> argv;
+        argv.reserve(args.size() + 1);
+        for (const auto& arg : args)
+            argv.push_back(const_cast<char*>(arg.c_str()));
+        argv.push_back(nullptr);
+        execvp(argv[0], argv.data());
+        const int error = errno;
+        (void)!write(statusPipe[1], &error, sizeof(error));
+        _exit(127);
+    }
+
+    close(statusPipe[1]);
+    int error = 0;
+    const ssize_t bytesRead = read(statusPipe[0], &error, sizeof(error));
+    close(statusPipe[0]);
+    if (bytesRead == sizeof(error)) {
+        waitpid(pid, nullptr, 0);
+        std::cerr << "[PC] Could not start " << args.front() << ": "
+                  << std::strerror(error) << "\n";
+        return false;
+    }
+    return true;
+}
+
+static SystemType probeBinConsole(const std::string& path) {
+    std::cerr << "[BIN] Probing console backends in order (load-only, no saves).\n";
+
+    {
+        PS3Emulation candidate;
+        if (candidate.loadRom(path)) return SystemType::PS3;
+    }
+    {
+        PS2Emulation candidate;
+        if (candidate.loadRom(path)) return SystemType::PS2;
+    }
+    {
+        PS1Emulation candidate;
+        if (candidate.loadRom(path)) return SystemType::PS1;
+    }
+    {
+        Atari2600Emulation candidate;
+        if (candidate.loadRom(path)) return SystemType::Atari2600;
+    }
+    {
+        Atari5200Emulation candidate;
+        if (candidate.loadRom(path)) return SystemType::Atari5200;
+    }
+    {
+        Atari800Emulation candidate;
+        if (candidate.loadRom(path)) return SystemType::Atari800;
+    }
+
+    {
+        SegaGenesisEmulation candidate;
+        if (candidate.loadRom(path)) return SystemType::SegaGenesis;
+    }
+
+    std::cerr << "[BIN] No supported console backend accepted the image.\n";
+    return SystemType::Unknown;
+}
 
 static SDL_Color sysBadgeColor(SystemType sys) {
     switch (sys) {
@@ -334,12 +442,12 @@ void GameShell::ensureVisible() {
 // ─── Filter button layout ─────────────────────────────────────────────────────
 
 void GameShell::computeFilterRects() {
-    // "All" (50px) + 14 system buttons (68px) + "DL'd" (50px) separated by 5px gaps
+    // Fit all system buttons in the fixed-width header.
     const int btnH   = 30;
     const int allW   = 50;
-    const int sysW   = 68;
     const int dlW    = 50;
     const int gapX   = 5;
+    const int sysW   = std::max(42, (kW - allW - dlW - (kNumSystems + 1) * gapX) / kNumSystems);
     const int totalW = allW + gapX + kNumSystems * sysW + (kNumSystems - 1) * gapX + gapX + dlW;
     int       x      = (kW - totalW) / 2;
     const int btnY   = (kHeaderH - btnH) / 2;
@@ -1136,6 +1244,13 @@ void GameShell::launchGame(const GameEntry& game) {
         std::string ext = fs::path(path).extension().string();
         std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
         sys = GameLibrary::systemFromExtension(ext);
+        if (sys == SystemType::Unknown && ext == ".bin") {
+            sys = probeBinConsole(path);
+            if (sys == SystemType::Unknown) {
+                std::cerr << "[BIN] Console probes failed; treating the image as a PC CUE hypothesis.\n";
+                sys = SystemType::PC;
+            }
+        }
     }
     switch (sys) {
         case SystemType::NES: {
@@ -1327,6 +1442,58 @@ void GameShell::launchGame(const GameEntry& game) {
                 ody.runInteractive();
                 SaveManager::instance().put(path, ody.dumpSaveData());
             }
+            break;
+        }
+        case SystemType::PC: {
+            const std::string ext = [&]() {
+                std::string e = fs::path(path).extension().string();
+                std::transform(e.begin(), e.end(), e.begin(), ::tolower);
+                return e;
+            }();
+            const char* configured = std::getenv(
+                ext == ".exe" ? "OMNICON_PC_LAUNCHER" : "OMNICON_BIN_LAUNCHER");
+            std::string launcher = configured && *configured
+                                 ? configured
+                                 : (ext == ".exe" ? "wine" : "xdg-open");
+            std::string target = path;
+            if (ext == ".bin") {
+                fs::path cue = fs::path(path);
+                cue.replace_extension(".cue");
+                if (!fs::exists(cue)) {
+                    std::ofstream cueFile(cue);
+                    if (cueFile) {
+                        cueFile << "FILE \"" << fs::path(path).filename().string()
+                                << "\" BINARY\n"
+                                << "  TRACK 01 MODE1/2352\n"
+                                << "    INDEX 01 00:00:00\n";
+                    }
+                }
+                if (!fs::exists(cue)) {
+                    std::cerr << "[PC] Could not create a CUE hypothesis for: "
+                              << path << "\n";
+                    break;
+                }
+                target = cue.string();
+            }
+            if (!launchExternalChecked({launcher, target})) {
+                if (ext != ".bin") break;
+                std::cerr << "[PC] PC launcher did not start; trying the BIN with PS1 as a fallback.\n";
+                PS1Emulation ps1;
+                if (ps1.loadRom(path))
+                    ps1.runInteractive();
+            }
+            break;
+        }
+        case SystemType::Dreamcast: {
+            const char* configured = std::getenv("OMNICON_DREAMCAST_LAUNCHER");
+            const char* coreEnv = std::getenv("OMNICON_FLYCAST_CORE");
+            const std::string launcher = configured && *configured ? configured : "retroarch";
+            const std::string core = coreEnv && *coreEnv
+                                   ? coreEnv
+                                   : "third_party/libretro/flycast_libretro.so";
+            if (!launchExternal({launcher, "-L", core, path}))
+                std::cerr << "[Dreamcast] Failed to start " << launcher
+                          << ". Install RetroArch/Flycast or set OMNICON_DREAMCAST_LAUNCHER.\n";
             break;
         }
         case SystemType::Steam: {

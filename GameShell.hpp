@@ -38,9 +38,9 @@ public:
     static void loadConsoleBindings();
 
     // Public so free functions in the .cpp can access them
-    static const SystemType  kSystems[18];
-    static const char* const kSysAbbrev[18];
-    static constexpr int     kNumSystems = 18;
+    static const SystemType  kSystems[20];
+    static const char* const kSysAbbrev[20];
+    static constexpr int     kNumSystems = 20;
 
 private:
     // SDL resources
@@ -71,7 +71,7 @@ private:
     std::string                   coversDir_;
     OracleDBConfig                dbCfg_;
 
-    // -1 = All games shown, 0-8 = index into kSystems[]
+    // -1 = All games shown, non-negative values index into kSystems[]
     int                           currentFilter_ = -1;
     std::vector<const GameEntry*> filteredGames_;
 

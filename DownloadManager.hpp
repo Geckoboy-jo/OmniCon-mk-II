@@ -72,8 +72,10 @@ private:
     void saveToDisk();
     bool ensureSpace(long long neededBytes);
     std::string extractRom(const std::string& archivePath, const std::string& destDir,
-                           bool allowGbaFallback);
+                           bool allowGbaFallback, bool preferPcContent);
     long long   usedStorageBytes() const;
+    static bool isPcSystem(const std::string& system);
+    static bool ensurePcCue(const std::string& path);
 
     std::string queuePath_;
     std::string downloadedPath_;

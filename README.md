@@ -20,3 +20,35 @@ starting the program:
 ```sh
 export OMNICON_COOKIE_FILE=/path/to/archive-cookies.txt
 ```
+
+## PC and Dreamcast games
+
+Place Windows PC games under `Roms/pc` or use `.exe` files in `Roms/`.
+Executables are shown only in the PC Games category and launch with `wine` by
+default. Set `OMNICON_PC_LAUNCHER` to use another executable launcher.
+
+`.bin` files are not treated as PC games by extension alone. A matching `.cue`
+descriptor is used to distinguish PC `MODE1` media from PlayStation `MODE2`
+media; raw sector images without a descriptor fall back to PS1 detection.
+Files placed under `Roms/pc` are treated as PC content. Set
+`OMNICON_BIN_LAUNCHER` when the default desktop opener is not the appropriate
+emulator. If the PC BIN launcher cannot start, OmniCon tries the image with the
+PS1 backend as a fallback; a launcher that starts but later rejects a disc
+cannot be detected automatically.
+
+For database downloads classified as PC Games, OmniCon selects `.bin` or
+`.exe` content from the archive and automatically writes a missing `MODE1/2352`
+cue descriptor beside extracted BIN images. Existing cached `pc_redump` BIN
+downloads are repaired when the download cache is loaded.
+
+Dreamcast files can be placed under `Roms/dreamcast`. OmniCon launches them
+through RetroArch and the Flycast libretro core:
+
+```sh
+export OMNICON_FLYCAST_CORE=/path/to/flycast_libretro.so
+```
+
+The default core path is `third_party/libretro/flycast_libretro.so`. Set
+`OMNICON_DREAMCAST_LAUNCHER` if RetroArch is installed under another command.
+Dreamcast archive downloads should contain a `.gdi`, `.cdi`, or `.chd` entry
+and any required track files.

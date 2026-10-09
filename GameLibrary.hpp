@@ -22,6 +22,8 @@ enum class SystemType {
     PS3,
     GameCube,
     Odyssey,
+    PC,
+    Dreamcast,
     Steam,
     Unknown
 };

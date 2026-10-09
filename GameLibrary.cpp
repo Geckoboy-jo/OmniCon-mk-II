@@ -46,6 +46,10 @@ SystemType GameLibrary::systemFromUrl(const std::string& url) {
     if (has("/roms_gamecube") || has("/gamecube_roms") || has("nintendo_gamecube") ||
         has("/roms_gcn") || has("/gcn_roms") || has("gamecube_iso"))
         return SystemType::GameCube;
+    if (has("/roms_dreamcast") || has("/dreamcast_roms") || has("sega_dreamcast"))
+        return SystemType::Dreamcast;
+    if (has("/roms_pc") || has("/pc_games") || has("pc_game") || has("pc_redump"))
+        return SystemType::PC;
     if (has("/roms_genesis") || has("/genesis_roms") || has("/roms_sega") || has("sega_genesis"))
         return SystemType::SegaGenesis;
     if (has("/roms_ps1") || has("/ps1_roms") || has("playstation_roms") || has("psx_roms") || has("/roms_psx"))
@@ -109,6 +113,10 @@ SystemType GameLibrary::systemFromExtension(const std::string& ext) {
                                                                return SystemType::PS1;
     if (e == ".pkg")
                                                                return SystemType::PS3;
+    if (e == ".exe")
+                                                               return SystemType::PC;
+    if (e == ".gdi" || e == ".cdi" || e == ".chd")
+                                                               return SystemType::Dreamcast;
     if (e == ".odyssey")                                       return SystemType::Odyssey;
     return SystemType::Unknown;
 }
@@ -131,6 +139,8 @@ SystemType GameLibrary::systemFromName(const std::string& name) {
     if (name == "PlayStation 3" || name == "PS3") return SystemType::PS3;
     if (name == "Nintendo GameCube" || name == "GameCube" || name == "GCN") return SystemType::GameCube;
     if (name == "Magnavox Odyssey") return SystemType::Odyssey;
+    if (name == "PC" || name == "PC Games") return SystemType::PC;
+    if (name == "Dreamcast" || name == "Sega Dreamcast") return SystemType::Dreamcast;
     if (name == "Steam")            return SystemType::Steam;
     return SystemType::Unknown;
 }
@@ -154,6 +164,8 @@ std::string GameLibrary::systemName(SystemType sys) {
         case SystemType::PS3:          return "PlayStation 3";
         case SystemType::GameCube:     return "Nintendo GameCube";
         case SystemType::Odyssey:       return "Magnavox Odyssey";
+        case SystemType::PC:            return "PC Games";
+        case SystemType::Dreamcast:     return "Dreamcast";
         case SystemType::Steam:         return "Steam";
         default:                       return "Unknown";
     }
@@ -178,6 +190,8 @@ std::string GameLibrary::systemDirName(SystemType sys) {
         case SystemType::PS3:          return "ps3";
         case SystemType::GameCube:     return "gamecube";
         case SystemType::Odyssey:       return "odyssey";
+        case SystemType::PC:            return "pc";
+        case SystemType::Dreamcast:     return "dreamcast";
         case SystemType::Steam:         return "steam";
         default:                       return "unknown";
     }
@@ -202,6 +216,8 @@ int GameLibrary::screenscraper_systemId(SystemType sys) {
         case SystemType::PS3:          return 59;  // PlayStation 3
         case SystemType::GameCube:     return 13;  // Nintendo GameCube
         case SystemType::Odyssey:       return 0;   // no ROM dumps exist
+        case SystemType::PC:            return 0;
+        case SystemType::Dreamcast:     return 23;
         case SystemType::Steam:         return 0;   // not scraped
         default:                        return 0;
     }
@@ -241,9 +257,34 @@ void GameLibrary::scanDirectory(const fs::path& dir, SystemType forceSystem) {
         if (filename.find(':') != std::string::npos) continue;
 
         std::string ext = toLower(entry.path().extension().string());
+        if (forceSystem == SystemType::Unknown && ext == ".cue") {
+            fs::path binPath = entry.path();
+            binPath.replace_extension(".bin");
+            if (fs::exists(binPath)) continue;
+        }
         SystemType sys = (forceSystem != SystemType::Unknown)
                          ? forceSystem
                          : systemFromExtension(ext);
+        if (forceSystem == SystemType::PC &&
+            ext != ".exe" && ext != ".bin" && ext != ".cue")
+            continue;
+        if (forceSystem == SystemType::Dreamcast &&
+            ext != ".gdi" && ext != ".cdi" && ext != ".chd" &&
+            ext != ".cue" && ext != ".bin")
+            continue;
+        if (forceSystem == SystemType::Unknown && ext == ".bin") {
+            fs::path cuePath = entry.path();
+            cuePath.replace_extension(".cue");
+            if (fs::exists(cuePath)) {
+                std::ifstream cue(cuePath);
+                std::string cueText((std::istreambuf_iterator<char>(cue)),
+                                    std::istreambuf_iterator<char>());
+                std::transform(cueText.begin(), cueText.end(), cueText.begin(),
+                               [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+                sys = cueText.find("MODE2/") != std::string::npos
+                    ? SystemType::PS1 : SystemType::PC;
+            }
+        }
         if (sys == SystemType::Unknown) continue;
 
         GameEntry ge;
@@ -279,6 +320,8 @@ void GameLibrary::scan(const std::string& romsDir) {
         {"ps2",       SystemType::PS2},
         {"gamecube",  SystemType::GameCube},
         {"odyssey",   SystemType::Odyssey},
+        {"pc",        SystemType::PC},
+        {"dreamcast", SystemType::Dreamcast},
     };
     for (const auto& sd : subdirs)
         scanDirectory(root / sd.dir, sd.sys);
@@ -640,7 +683,7 @@ void GameLibrary::scanSteamOwned(const std::string& credFile) {
     std::string url = "http://api.steampowered.com/IPlayerService/GetOwnedGames/v0001/"
                       "?key=" + apiKey
                     + "&steamid=" + steamId
-                    + "&include_appinfo=1&format=json";
+                      + "&include_appinfo=1&include_played_free_games=1&format=json";
     std::string json = fetchString(url);
     if (json.empty()) {
         std::cerr << "[Steam] Failed to fetch owned games from Steam Web API.\n";
