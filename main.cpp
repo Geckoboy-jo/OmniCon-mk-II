@@ -29,7 +29,9 @@
 #include <chrono>
 #include <atomic>
 #include <mutex>
+#include <sstream>
 #include <thread>
+#include <vector>
 
 // ── Controller bridge (WSL2 only) ─────────────────────────────────────────────
 // Starts the Windows→WSL uinput bridge once and keeps it alive for the full
@@ -90,6 +92,54 @@ std::string readLine(const std::string& prompt)
     std::string value;
     std::getline(std::cin, value);
     return trim(value);
+}
+
+static std::string loadUrlSystemChoices()
+{
+    static const std::vector<SystemType> systems = {
+        SystemType::NES,
+        SystemType::SNES,
+        SystemType::GameBoy,
+        SystemType::GameBoyColor,
+        SystemType::GBA,
+        SystemType::NDS,
+        SystemType::ThreeDS,
+        SystemType::Atari2600,
+        SystemType::Atari5200,
+        SystemType::Atari800,
+        SystemType::Atari7800,
+        SystemType::AtariLynx,
+        SystemType::AtariJaguar,
+        SystemType::SegaMasterSystem,
+        SystemType::GameGear,
+        SystemType::SegaGenesis,
+        SystemType::SegaSaturn,
+        SystemType::N64,
+        SystemType::GameCube,
+        SystemType::Wii,
+        SystemType::WiiU,
+        SystemType::NintendoSwitch,
+        SystemType::PS1,
+        SystemType::PS2,
+        SystemType::PS3,
+        SystemType::PSP,
+        SystemType::PSVita,
+        SystemType::Xbox,
+        SystemType::Xbox360,
+        SystemType::Dreamcast,
+        SystemType::PCEngine,
+        SystemType::ColecoVision,
+        SystemType::Intellivision,
+        SystemType::Odyssey,
+        SystemType::PC,
+    };
+
+    std::ostringstream choices;
+    for (std::size_t i = 0; i < systems.size(); ++i) {
+        if (i > 0) choices << (i % 4 == 0 ? "\n  " : ", ");
+        choices << GameLibrary::systemName(systems[i]);
+    }
+    return choices.str();
 }
 
 bool hasCommand(const std::string& command)
@@ -1776,13 +1826,22 @@ int main()
                             std::cout << "Detected system: " << batchSysName << "\n";
                         } else {
                             std::cout << "Could not detect system from URL.\n"
-                                      << "Enter system (NES, SNES, GBA, GBC, GameBoy, NDS, N64,\n"
-                                      << "  SegaGenesis, Atari2600, Atari5200, Atari800, 3DS, Odyssey, PS1, PS2, GameCube)\n"
+                                      << "Enter system:\n  " << loadUrlSystemChoices() << "\n"
                                       << "or leave blank to skip unknowns: ";
                             std::cout.flush();
                             std::getline(std::cin, batchSysName);
-                            while (!batchSysName.empty() && (batchSysName.front()==' '||batchSysName.front()=='\t')) batchSysName.erase(batchSysName.begin());
-                            while (!batchSysName.empty() && (batchSysName.back()==' '||batchSysName.back()=='\t'||batchSysName.back()=='\r'||batchSysName.back()=='\n')) batchSysName.pop_back();
+                            batchSysName = trim(batchSysName);
+                            if (!batchSysName.empty()) {
+                                const SystemType selectedSystem =
+                                    GameLibrary::systemFromName(batchSysName);
+                                if (selectedSystem == SystemType::Unknown ||
+                                    selectedSystem == SystemType::Steam) {
+                                    std::cerr << "Unsupported system: " << batchSysName
+                                              << "\n";
+                                    continue;
+                                }
+                                batchSysName = GameLibrary::systemName(selectedSystem);
+                            }
                         }
 
                         int inserted = 0;

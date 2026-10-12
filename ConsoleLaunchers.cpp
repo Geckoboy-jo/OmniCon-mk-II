@@ -1,0 +1,96 @@
+#include "ConsoleLaunchers.hpp"
+
+#include <cerrno>
+#include <cstdlib>
+#include <cstring>
+#include <filesystem>
+#include <iostream>
+#include <string>
+#include <vector>
+
+#include <fcntl.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
+namespace fs = std::filesystem;
+
+static bool launchExternalChecked(const std::vector<std::string>& args) {
+    if (args.empty()) return false;
+
+    int statusPipe[2] = {};
+    if (pipe(statusPipe) != 0) {
+        std::cerr << "[ConsoleLauncher] Could not create launcher status pipe.\n";
+        return false;
+    }
+    fcntl(statusPipe[1], F_SETFD, fcntl(statusPipe[1], F_GETFD) | FD_CLOEXEC);
+
+    const pid_t pid = fork();
+    if (pid < 0) {
+        close(statusPipe[0]);
+        close(statusPipe[1]);
+        std::cerr << "[ConsoleLauncher] Could not fork external launcher.\n";
+        return false;
+    }
+    if (pid == 0) {
+        close(statusPipe[0]);
+        setsid();
+        std::vector<char*> argv;
+        argv.reserve(args.size() + 1);
+        for (const auto& arg : args)
+            argv.push_back(const_cast<char*>(arg.c_str()));
+        argv.push_back(nullptr);
+        execvp(argv[0], argv.data());
+        const int error = errno;
+        (void)!write(statusPipe[1], &error, sizeof(error));
+        _exit(127);
+    }
+
+    close(statusPipe[1]);
+    int error = 0;
+    const ssize_t bytesRead = read(statusPipe[0], &error, sizeof(error));
+    close(statusPipe[0]);
+    if (bytesRead == sizeof(error)) {
+        waitpid(pid, nullptr, 0);
+        std::cerr << "[ConsoleLauncher] Could not start " << args.front() << ": "
+                  << std::strerror(error) << "\n";
+        return false;
+    }
+    return true;
+}
+
+bool ConsoleLauncher::launchExternalApplication(
+        const std::string& launcher,
+        const std::vector<std::string>& arguments) {
+    std::vector<std::string> args;
+    args.reserve(arguments.size() + 1);
+    args.push_back(launcher);
+    args.insert(args.end(), arguments.begin(), arguments.end());
+    return launchExternalChecked(args);
+}
+
+bool RetroArchConsoleLauncher::launchRetroArch(
+        const std::string& systemName,
+        const char* coreEnvironmentVariable,
+        const char* defaultCore,
+        const std::string& contentPath) {
+    const char* configuredCore = std::getenv(coreEnvironmentVariable);
+    const std::string core = configuredCore && *configuredCore
+                           ? configuredCore
+                           : (fs::path("third_party/libretro") / defaultCore).string();
+    if (!fs::exists(core)) {
+        std::cerr << "[" << systemName << "] RetroArch core not found: " << core << "\n"
+                  << "Set " << coreEnvironmentVariable << " to the core's full path.\n";
+        return false;
+    }
+
+    const char* configuredLauncher = std::getenv("OMNICON_RETROARCH_LAUNCHER");
+    const std::string launcher = configuredLauncher && *configuredLauncher
+                               ? configuredLauncher : "retroarch";
+    if (!launchExternalApplication(launcher, {"-L", fs::absolute(core).string(),
+                                               fs::absolute(contentPath).string()})) {
+        std::cerr << "[" << systemName << "] Failed to start RetroArch. Set "
+                     "OMNICON_RETROARCH_LAUNCHER to its executable.\n";
+        return false;
+    }
+    return true;
+}

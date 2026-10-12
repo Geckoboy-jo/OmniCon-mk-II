@@ -66,3 +66,49 @@ media even when the CHD and firmware are valid. Set
 `OMNICON_DREAMCAST_LAUNCHER` if RetroArch is installed under another command.
 Dreamcast archive downloads should contain a `.gdi`, `.cdi`, or `.chd` entry
 and any required track files.
+
+## Additional console families
+
+The library also recognizes Sega Master System, Game Gear, Saturn; Nintendo
+Wii, Wii U, and Switch; PlayStation Portable and Vita; Xbox and Xbox 360; Atari
+7800, Lynx, and Jaguar; TurboGrafx-16 / PC Engine; ColecoVision; and
+Intellivision. Put games in the matching `Roms/` subfolder (for example
+`Roms/saturn`, `Roms/psp`, or `Roms/xbox360`) when the file extension is
+ambiguous, such as `.iso`, `.chd`, or `.pkg`.
+
+Each launcher-backed console has its own `*ConsoleLauncher.cpp` implementation.
+`GameShell` only selects the appropriate console launcher; shared RetroArch and
+external-process handling lives in `ConsoleLaunchers.cpp`.
+
+RetroArch systems use an installed core or a core placed in
+`third_party/libretro/`. Set `OMNICON_RETROARCH_LAUNCHER` if the RetroArch
+executable is not named `retroarch`. Per-system core paths can be overridden:
+
+| System | Core environment variable | Default core filename |
+| --- | --- | --- |
+| Master System | `OMNICON_SMS_CORE` | `genesis_plus_gx_libretro.so` |
+| Game Gear | `OMNICON_GAMEGEAR_CORE` | `genesis_plus_gx_libretro.so` |
+| Saturn | `OMNICON_SATURN_CORE` | `yabasanshiro_libretro.so` |
+| Wii | `OMNICON_WII_CORE` | `dolphin_libretro.so` |
+| PSP | `OMNICON_PSP_CORE` | `ppsspp_libretro.so` |
+| Atari 7800 | `OMNICON_ATARI7800_CORE` | `prosystem_libretro.so` |
+| Atari Lynx | `OMNICON_LYNX_CORE` | `handy_libretro.so` |
+| Atari Jaguar | `OMNICON_JAGUAR_CORE` | `virtualjaguar_libretro.so` |
+| TurboGrafx-16 / PC Engine | `OMNICON_PCENGINE_CORE` | `mednafen_pce_fast_libretro.so` |
+| ColecoVision | `OMNICON_COLECO_CORE` | `bluemsx_libretro.so` |
+| Intellivision | `OMNICON_INTELLIVISION_CORE` | `freeintv_libretro.so` |
+
+Wii U, Switch, Vita, Xbox, and Xbox 360 launch through external emulators:
+`cemu` (`OMNICON_WIIU_LAUNCHER`), `Ryujinx` (`OMNICON_SWITCH_LAUNCHER`),
+`Vita3K` (`OMNICON_VITA_LAUNCHER`), `xemu` (`OMNICON_XBOX_LAUNCHER`), and
+`xenia` (`OMNICON_XBOX360_LAUNCHER`) respectively. Install and configure those
+emulators, firmware, and keys as required by their projects. Xbox One and Xbox
+Series are not included because this project has no practical emulator launch
+backend for those platforms.
+
+For original Xbox games, install and configure Xemu (including its required
+MCPX ROM, flash ROM, EEPROM, and hard-disk image). If `xemu` is not on the
+launcher process `PATH`, set `OMNICON_XBOX_LAUNCHER` to its executable. From
+WSL, a Windows installation can be configured with a path such as
+`/mnt/c/Program Files/xemu/xemu.exe`. OmniCon also automatically detects an
+Xemu binary installed at `$HOME/.local/bin/xemu`.

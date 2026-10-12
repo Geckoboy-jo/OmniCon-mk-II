@@ -6,13 +6,13 @@ MYSQL_CFLAGS := $(shell mysql_config --cflags 2>/dev/null || echo "-I/usr/includ
 MYSQL_LIBS := $(shell mysql_config --libs 2>/dev/null || echo "-lmysqlclient")
 SAMEBOY_LIB := third_party/SameBoy/build/lib/libsameboy.a
 TARGET := omnicon_repl
-SOURCES := main.cpp NES.cpp SNES.cpp GameBoy.cpp GameBoyColor.cpp Atari2600.cpp Atari5200.cpp Atari800.cpp GBA.cpp NDS.cpp 3DS.cpp agnes.c GameLibrary.cpp GameShell.cpp Odyssey.cpp SegaGenesis.cpp N64.cpp PS1.cpp PS2.cpp PS3.cpp GameCube.cpp SaveManager.cpp OracleDB.cpp DownloadManager.cpp
+SOURCES := main.cpp NES.cpp SNES.cpp GameBoy.cpp GameBoyColor.cpp Atari2600.cpp Atari5200.cpp Atari800.cpp GBA.cpp NDS.cpp 3DS.cpp agnes.c GameLibrary.cpp GameShell.cpp Odyssey.cpp SegaGenesis.cpp N64.cpp PS1.cpp PS2.cpp PS3.cpp GameCube.cpp SaveManager.cpp OracleDB.cpp DownloadManager.cpp ConsoleLaunchers.cpp SegaMasterSystemConsoleLauncher.cpp GameGearConsoleLauncher.cpp SegaSaturnConsoleLauncher.cpp WiiConsoleLauncher.cpp WiiUConsoleLauncher.cpp NintendoSwitchConsoleLauncher.cpp PSPConsoleLauncher.cpp PSVitaConsoleLauncher.cpp XboxConsoleLauncher.cpp Xbox360ConsoleLauncher.cpp Atari7800ConsoleLauncher.cpp AtariLynxConsoleLauncher.cpp AtariJaguarConsoleLauncher.cpp PCEngineConsoleLauncher.cpp ColecoVisionConsoleLauncher.cpp IntellivisionConsoleLauncher.cpp
 
 .PHONY: all run clean reset save
 
 
 
-$(TARGET): $(SOURCES) NES.hpp SNES.hpp GameBoy.hpp GameBoyColor.hpp Atari2600.hpp Atari5200.hpp Atari800.hpp GBA.hpp NDS.hpp 3DS.hpp SegaGenesis.hpp N64.hpp PS1.hpp PS2.hpp PS3.hpp GameCube.hpp GameLibrary.hpp GameShell.hpp top.hpp agnes.h
+$(TARGET): $(SOURCES) NES.hpp SNES.hpp GameBoy.hpp GameBoyColor.hpp Atari2600.hpp Atari5200.hpp Atari800.hpp GBA.hpp NDS.hpp 3DS.hpp SegaGenesis.hpp N64.hpp PS1.hpp PS2.hpp PS3.hpp GameCube.hpp GameLibrary.hpp GameShell.hpp ConsoleLaunchers.hpp top.hpp agnes.h
 	$(CC) $(CFLAGS) $(SDL_CFLAGS) $(MYSQL_CFLAGS) $(SOURCES) -o $(TARGET) $(SAMEBOY_LIB) $(SDL_LIBS) -lSDL2_ttf -lSDL2_image -ldl -lmgba $(MYSQL_LIBS) -pthread
 
 oracle_test: OracleDB.cpp oracle_test.cpp OracleDB.hpp

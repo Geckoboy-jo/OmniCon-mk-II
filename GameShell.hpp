@@ -26,11 +26,9 @@ public:
         if (init()) { runRebindScreen(); cleanup(); }
     }
 
-    // Per-console button mapping.
-    // sysName: "NES","SNES","GB","GBA","NDS","3DS","N64","PS1","PS2",
-    //          "GameCube","Genesis","Atari2600","Atari5200","Atari800","Odyssey",
-    //          or "all" to step through every console in sequence.
-    // Safe to call stand-alone (init/cleanup handled internally).
+    // Per-console button mapping for built-in SDL emulator backends.
+    // External emulator systems use the input configuration of their launcher.
+    // Pass "all" to step through every built-in console mapping.
     void remapConsole(const std::string& sysName = "all");
 
     // Load saves/console_bindings.conf and apply to every globalControllerBindings.
@@ -38,9 +36,9 @@ public:
     static void loadConsoleBindings();
 
     // Public so free functions in the .cpp can access them
-    static const SystemType  kSystems[20];
-    static const char* const kSysAbbrev[20];
-    static constexpr int     kNumSystems = 20;
+    static const SystemType  kSystems[36];
+    static const char* const kSysAbbrev[36];
+    static constexpr int     kNumSystems = 36;
 
 private:
     // SDL resources
@@ -55,7 +53,7 @@ private:
     // ── Layout constants ──────────────────────────────────────────────────────
     static constexpr int kW        = 1280;
     static constexpr int kH        = 720;
-    static constexpr int kHeaderH  = 54;   // filter bar height
+    static constexpr int kHeaderH  = 78;   // two-row console filter bar
     static constexpr int kInfoH    = 46;   // bottom info bar height
     static constexpr int kGridH    = kH - kHeaderH - kInfoH;   // 620
     static constexpr int kCols     = 7;

@@ -1,4 +1,5 @@
 #include "GameShell.hpp"
+#include "ConsoleLaunchers.hpp"
 #include "DownloadManager.hpp"
 #include "NES.hpp"
 #include "SNES.hpp"
@@ -34,7 +35,7 @@ namespace fs = std::filesystem;
 
 // ─── Static members ───────────────────────────────────────────────────────────
 
-const SystemType GameShell::kSystems[20] = {
+const SystemType GameShell::kSystems[36] = {
     SystemType::NES,
     SystemType::SNES,
     SystemType::GameBoy,
@@ -55,10 +56,29 @@ const SystemType GameShell::kSystems[20] = {
     SystemType::PC,
     SystemType::Dreamcast,
     SystemType::Steam,
+    SystemType::SegaMasterSystem,
+    SystemType::GameGear,
+    SystemType::SegaSaturn,
+    SystemType::Wii,
+    SystemType::WiiU,
+    SystemType::NintendoSwitch,
+    SystemType::PSP,
+    SystemType::PSVita,
+    SystemType::Xbox,
+    SystemType::Xbox360,
+    SystemType::Atari7800,
+    SystemType::AtariLynx,
+    SystemType::AtariJaguar,
+    SystemType::PCEngine,
+    SystemType::ColecoVision,
+    SystemType::Intellivision,
 };
 
-const char* const GameShell::kSysAbbrev[20] = {
-    "NES", "SNES", "GB", "GBC", "GBA", "NDS", "3DS", "2600", "5200", "800", "GEN", "N64", "PS1", "PS2", "PS3", "GCN", "ODY", "PC", "DC", "STM"
+const char* const GameShell::kSysAbbrev[36] = {
+    "NES", "SNES", "GB", "GBC", "GBA", "NDS", "3DS", "2600", "5200",
+    "800", "GEN", "N64", "PS1", "PS2", "PS3", "GCN", "ODY", "PC", "DC",
+    "STM", "SMS", "GG", "SAT", "WII", "WIIU", "SW", "PSP", "VITA",
+    "XBOX", "360", "7800", "LYNX", "JAG", "PCE", "COLECO", "INTV"
 };
 
 // ─── Colour palette ───────────────────────────────────────────────────────────
@@ -75,26 +95,6 @@ static const SDL_Color kColorTextPri   = {220, 230, 255, 255};
 static const SDL_Color kColorTextDim   = {100, 110, 155, 255};
 static const SDL_Color kColorFiltAct   = { 50, 120, 210, 255};
 static const SDL_Color kColorFiltInact = { 22,  22,  48, 255};
-
-static bool launchExternal(const std::vector<std::string>& args) {
-    if (args.empty()) return false;
-    pid_t pid = fork();
-    if (pid < 0) {
-        std::cerr << "[GameShell] Could not fork external launcher.\n";
-        return false;
-    }
-    if (pid == 0) {
-        setsid();
-        std::vector<char*> argv;
-        argv.reserve(args.size() + 1);
-        for (const auto& arg : args)
-            argv.push_back(const_cast<char*>(arg.c_str()));
-        argv.push_back(nullptr);
-        execvp(argv[0], argv.data());
-        _exit(127);
-    }
-    return true;
-}
 
 static bool launchExternalChecked(const std::vector<std::string>& args) {
     if (args.empty()) return false;
@@ -197,6 +197,22 @@ static SDL_Color sysBadgeColor(SystemType sys) {
         case SystemType::GameCube:      return { 88,  76, 168, 255};   // GameCube indigo
         case SystemType::Odyssey:       return { 45, 160, 160, 255};   // teal
         case SystemType::Steam:         return { 23, 134, 192, 255};   // Steam blue
+        case SystemType::SegaMasterSystem: return { 30, 105, 180, 255};
+        case SystemType::GameGear:      return { 35, 150, 170, 255};
+        case SystemType::SegaSaturn:    return { 130, 130, 135, 255};
+        case SystemType::Wii:           return { 50, 155, 190, 255};
+        case SystemType::WiiU:          return { 0, 105, 190, 255};
+        case SystemType::NintendoSwitch:return { 210, 40, 55, 255};
+        case SystemType::PSP:           return { 25, 85, 175, 255};
+        case SystemType::PSVita:        return { 65, 85, 165, 255};
+        case SystemType::Xbox:          return { 70, 145, 65, 255};
+        case SystemType::Xbox360:       return { 45, 125, 50, 255};
+        case SystemType::Atari7800:     return { 175, 105, 35, 255};
+        case SystemType::AtariLynx:     return { 180, 125, 45, 255};
+        case SystemType::AtariJaguar:   return { 150, 145, 45, 255};
+        case SystemType::PCEngine:      return { 170, 45, 55, 255};
+        case SystemType::ColecoVision:  return { 45, 145, 140, 255};
+        case SystemType::Intellivision: return { 120, 80, 150, 255};
         default:                       return { 70,  70,  70, 255};
     }
 }
@@ -442,24 +458,22 @@ void GameShell::ensureVisible() {
 // ─── Filter button layout ─────────────────────────────────────────────────────
 
 void GameShell::computeFilterRects() {
-    // Fit all system buttons in the fixed-width header.
+    // Split system filters across two rows to keep every system selectable.
     const int btnH   = 30;
-    const int allW   = 50;
-    const int dlW    = 50;
-    const int gapX   = 5;
-    const int sysW   = std::max(42, (kW - allW - dlW - (kNumSystems + 1) * gapX) / kNumSystems);
-    const int totalW = allW + gapX + kNumSystems * sysW + (kNumSystems - 1) * gapX + gapX + dlW;
-    int       x      = (kW - totalW) / 2;
-    const int btnY   = (kHeaderH - btnH) / 2;
+    const int marginX = 8;
+    const int gapX = 4;
+    const int buttonsPerRow = (kNumSystems + 1) / 2 + 1;
+    const int btnW = (kW - 2 * marginX - (buttonsPerRow - 1) * gapX) / buttonsPerRow;
+    const int rowGap = 6;
+    const int firstRowY = (kHeaderH - (2 * btnH + rowGap)) / 2;
 
-    filterBtnRects_[0] = {x, btnY, allW, btnH};
-    x += allW + gapX;
-    for (int i = 0; i < kNumSystems; ++i) {
-        filterBtnRects_[i + 1] = {x, btnY, sysW, btnH};
-        x += sysW + gapX;
+    for (int i = 0; i < kNumSystems + 2; ++i) {
+        const int row = i < buttonsPerRow ? 0 : 1;
+        const int column = row == 0 ? i : i - buttonsPerRow;
+        const int x = marginX + column * (btnW + gapX);
+        const int y = firstRowY + row * (btnH + rowGap);
+        filterBtnRects_[i] = {x, y, btnW, btnH};
     }
-    // Downloaded button — last slot
-    filterBtnRects_[kNumSystems + 1] = {x, btnY, dlW, btnH};
 }
 
 // ─── Hit testing ──────────────────────────────────────────────────────────────
@@ -1148,7 +1162,12 @@ void GameShell::run(GameLibrary& library, const std::string& coversDir) {
                 std::string localRom = DownloadManager::instance().downloadBlocking(
                     qd,
                     [&](long long cur, long long tot) {
-                        renderOverlay("Downloading " + launchTarget.displayName + "...", cur, tot);
+                        const bool extracting = tot < 0;
+                        renderOverlay(
+                            (extracting ? "Extracting " : "Downloading ") +
+                                launchTarget.displayName + "...",
+                            extracting ? 0 : cur,
+                            extracting ? 0 : tot);
                         while (SDL_PollEvent(&ev)) {}
                     },
                     &dlError,
@@ -1163,6 +1182,8 @@ void GameShell::run(GameLibrary& library, const std::string& coversDir) {
                     updateGameDownloadUrl(dbCfg_, launchTarget.dbId, resolvedUrl);
                     launchTarget.downloadUrl = resolvedUrl;
                 }
+                if (!localRom.empty() && launchTarget.dbId > 0)
+                    updateGameLocalPath(dbCfg_, launchTarget.dbId, localRom);
 
                 if (localRom.empty()) {
                     // Show the error but keep the game in the library so the
@@ -1521,6 +1542,22 @@ void GameShell::launchGame(const GameEntry& game) {
                           << ". Install RetroArch/Flycast or set OMNICON_DREAMCAST_LAUNCHER.\n";
             break;
         }
+        case SystemType::SegaMasterSystem: SegaMasterSystemConsoleLauncher().launch(path); break;
+        case SystemType::GameGear:         GameGearConsoleLauncher().launch(path); break;
+        case SystemType::SegaSaturn:       SegaSaturnConsoleLauncher().launch(path); break;
+        case SystemType::Wii:              WiiConsoleLauncher().launch(path); break;
+        case SystemType::WiiU:             WiiUConsoleLauncher().launch(path); break;
+        case SystemType::NintendoSwitch:   NintendoSwitchConsoleLauncher().launch(path); break;
+        case SystemType::PSP:              PSPConsoleLauncher().launch(path); break;
+        case SystemType::PSVita:           PSVitaConsoleLauncher().launch(path); break;
+        case SystemType::Xbox:             XboxConsoleLauncher().launch(path); break;
+        case SystemType::Xbox360:          Xbox360ConsoleLauncher().launch(path); break;
+        case SystemType::Atari7800:        Atari7800ConsoleLauncher().launch(path); break;
+        case SystemType::AtariLynx:        AtariLynxConsoleLauncher().launch(path); break;
+        case SystemType::AtariJaguar:      AtariJaguarConsoleLauncher().launch(path); break;
+        case SystemType::PCEngine:         PCEngineConsoleLauncher().launch(path); break;
+        case SystemType::ColecoVision:     ColecoVisionConsoleLauncher().launch(path); break;
+        case SystemType::Intellivision:    IntellivisionConsoleLauncher().launch(path); break;
         case SystemType::Steam: {
             // game.romPath holds the numeric Steam AppID (validated all-digits at scan time)
             const std::string url = "steam://rungameid/" + path;

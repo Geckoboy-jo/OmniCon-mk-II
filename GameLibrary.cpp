@@ -60,6 +60,38 @@ SystemType GameLibrary::systemFromUrl(const std::string& url) {
         return SystemType::PS2;
     if (has("/roms_ps3") || has("/ps3_roms") || has("playstation3_roms") || has("ps3_iso"))
         return SystemType::PS3;
+    if (has("master_system") || has("mastersystem") || has("sms_roms") || has("/roms_sms"))
+        return SystemType::SegaMasterSystem;
+    if (has("game_gear") || has("gamegear") || has("/roms_gg") || has("gg_roms"))
+        return SystemType::GameGear;
+    if (has("saturn") || has("sega_saturn"))
+        return SystemType::SegaSaturn;
+    if (has("wii_u") || has("wiiu"))
+        return SystemType::WiiU;
+    if (has("nintendo_switch") || has("switch_roms") || has("/roms_switch"))
+        return SystemType::NintendoSwitch;
+    if (has("playstation_vita") || has("psvita") || has("vita_roms"))
+        return SystemType::PSVita;
+    if (has("psp_roms") || has("playstation_portable"))
+        return SystemType::PSP;
+    if (has("/roms_wii") || has("nintendo_wii") || has("wii_roms"))
+        return SystemType::Wii;
+    if (has("xbox_360") || has("xbox360"))
+        return SystemType::Xbox360;
+    if (has("xbox_roms") || has("/roms_xbox"))
+        return SystemType::Xbox;
+    if (has("atari_7800") || has("atari7800") || has("roms_7800"))
+        return SystemType::Atari7800;
+    if (has("atari_lynx") || has("atarilynx") || has("lynx_roms"))
+        return SystemType::AtariLynx;
+    if (has("atari_jaguar") || has("atarijaguar") || has("jaguar_roms"))
+        return SystemType::AtariJaguar;
+    if (has("turbografx") || has("turbo_grafx") || has("pc_engine") || has("pcengine"))
+        return SystemType::PCEngine;
+    if (has("colecovision") || has("coleco_vision"))
+        return SystemType::ColecoVision;
+    if (has("intellivision"))
+        return SystemType::Intellivision;
     if (has("/roms_gba") || has("gameboy_advance"))
         return SystemType::GBA;
     if (has("atari_2600") || has("roms_2600") || has("atari2600"))
@@ -95,6 +127,21 @@ SystemType GameLibrary::systemFromExtension(const std::string& ext) {
     std::string e = toLower(ext);
     if (e == ".nes")                                           return SystemType::NES;
     if (e == ".smc" || e == ".sfc")                            return SystemType::SNES;
+    if (e == ".sms")                                           return SystemType::SegaMasterSystem;
+    if (e == ".gg")                                            return SystemType::GameGear;
+    if (e == ".lnx")                                           return SystemType::AtariLynx;
+    if (e == ".a78")                                           return SystemType::Atari7800;
+    if (e == ".j64" || e == ".jag")                            return SystemType::AtariJaguar;
+    if (e == ".pce" || e == ".sgx")                            return SystemType::PCEngine;
+    if (e == ".col")                                           return SystemType::ColecoVision;
+    if (e == ".int")                                           return SystemType::Intellivision;
+    if (e == ".cso")                                           return SystemType::PSP;
+    if (e == ".vpk")                                           return SystemType::PSVita;
+    if (e == ".wbfs" || e == ".wad" || e == ".dol")            return SystemType::Wii;
+    if (e == ".wud" || e == ".wux" || e == ".rpx" || e == ".wua")
+                                                               return SystemType::WiiU;
+    if (e == ".nsp" || e == ".xci")                            return SystemType::NintendoSwitch;
+    if (e == ".xbe" || e == ".xiso")                           return SystemType::Xbox;
     if (e == ".gb")                                            return SystemType::GameBoy;
     if (e == ".gbc" || e == ".sgb")                            return SystemType::GameBoyColor;
     if (e == ".gba")                                           return SystemType::GBA;
@@ -144,6 +191,22 @@ SystemType GameLibrary::systemFromName(const std::string& name) {
     if (name == "PC" || name == "PC Games") return SystemType::PC;
     if (name == "Dreamcast" || name == "Sega Dreamcast") return SystemType::Dreamcast;
     if (name == "Steam")            return SystemType::Steam;
+    if (name == "Sega Master System" || name == "Master System" || name == "SMS") return SystemType::SegaMasterSystem;
+    if (name == "Game Gear" || name == "Sega Game Gear") return SystemType::GameGear;
+    if (name == "Sega Saturn" || name == "Saturn") return SystemType::SegaSaturn;
+    if (name == "Nintendo Wii" || name == "Wii") return SystemType::Wii;
+    if (name == "Nintendo Wii U" || name == "Wii U") return SystemType::WiiU;
+    if (name == "Nintendo Switch" || name == "Switch") return SystemType::NintendoSwitch;
+    if (name == "PlayStation Portable" || name == "PSP") return SystemType::PSP;
+    if (name == "PlayStation Vita" || name == "PS Vita" || name == "Vita") return SystemType::PSVita;
+    if (name == "Xbox") return SystemType::Xbox;
+    if (name == "Xbox 360" || name == "Xbox360") return SystemType::Xbox360;
+    if (name == "Atari 7800") return SystemType::Atari7800;
+    if (name == "Atari Lynx" || name == "Lynx") return SystemType::AtariLynx;
+    if (name == "Atari Jaguar" || name == "Jaguar") return SystemType::AtariJaguar;
+    if (name == "TurboGrafx-16" || name == "PC Engine" || name == "TurboGrafx 16") return SystemType::PCEngine;
+    if (name == "ColecoVision") return SystemType::ColecoVision;
+    if (name == "Intellivision") return SystemType::Intellivision;
     return SystemType::Unknown;
 }
 
@@ -169,6 +232,22 @@ std::string GameLibrary::systemName(SystemType sys) {
         case SystemType::PC:            return "PC Games";
         case SystemType::Dreamcast:     return "Dreamcast";
         case SystemType::Steam:         return "Steam";
+        case SystemType::SegaMasterSystem: return "Sega Master System";
+        case SystemType::GameGear:      return "Game Gear";
+        case SystemType::SegaSaturn:    return "Sega Saturn";
+        case SystemType::Wii:           return "Nintendo Wii";
+        case SystemType::WiiU:          return "Nintendo Wii U";
+        case SystemType::NintendoSwitch:return "Nintendo Switch";
+        case SystemType::PSP:           return "PlayStation Portable";
+        case SystemType::PSVita:        return "PlayStation Vita";
+        case SystemType::Xbox:          return "Xbox";
+        case SystemType::Xbox360:       return "Xbox 360";
+        case SystemType::Atari7800:     return "Atari 7800";
+        case SystemType::AtariLynx:     return "Atari Lynx";
+        case SystemType::AtariJaguar:   return "Atari Jaguar";
+        case SystemType::PCEngine:      return "TurboGrafx-16";
+        case SystemType::ColecoVision:  return "ColecoVision";
+        case SystemType::Intellivision: return "Intellivision";
         default:                       return "Unknown";
     }
 }
@@ -195,6 +274,22 @@ std::string GameLibrary::systemDirName(SystemType sys) {
         case SystemType::PC:            return "pc";
         case SystemType::Dreamcast:     return "dreamcast";
         case SystemType::Steam:         return "steam";
+        case SystemType::SegaMasterSystem: return "mastersystem";
+        case SystemType::GameGear:      return "gamegear";
+        case SystemType::SegaSaturn:    return "saturn";
+        case SystemType::Wii:           return "wii";
+        case SystemType::WiiU:          return "wiiu";
+        case SystemType::NintendoSwitch:return "switch";
+        case SystemType::PSP:           return "psp";
+        case SystemType::PSVita:        return "vita";
+        case SystemType::Xbox:          return "xbox";
+        case SystemType::Xbox360:       return "xbox360";
+        case SystemType::Atari7800:     return "atari7800";
+        case SystemType::AtariLynx:     return "atarilynx";
+        case SystemType::AtariJaguar:   return "atarijaguar";
+        case SystemType::PCEngine:      return "pcengine";
+        case SystemType::ColecoVision:  return "colecovision";
+        case SystemType::Intellivision: return "intellivision";
         default:                       return "unknown";
     }
 }
@@ -221,6 +316,22 @@ int GameLibrary::screenscraper_systemId(SystemType sys) {
         case SystemType::PC:            return 0;
         case SystemType::Dreamcast:     return 23;
         case SystemType::Steam:         return 0;   // not scraped
+        case SystemType::SegaMasterSystem: return 2;
+        case SystemType::GameGear:      return 20;
+        case SystemType::SegaSaturn:    return 22;
+        case SystemType::Wii:           return 16;
+        case SystemType::WiiU:          return 18;
+        case SystemType::NintendoSwitch:return 225;
+        case SystemType::PSP:           return 61;
+        case SystemType::PSVita:        return 62;
+        case SystemType::Xbox:          return 32;
+        case SystemType::Xbox360:       return 33;
+        case SystemType::Atari7800:     return 41;
+        case SystemType::AtariLynx:     return 28;
+        case SystemType::AtariJaguar:   return 27;
+        case SystemType::PCEngine:      return 31;
+        case SystemType::ColecoVision:  return 48;
+        case SystemType::Intellivision: return 115;
         default:                        return 0;
     }
 }
@@ -320,10 +431,27 @@ void GameLibrary::scan(const std::string& romsDir) {
         {"n64",       SystemType::N64},
         {"ps1",       SystemType::PS1},
         {"ps2",       SystemType::PS2},
+        {"ps3",       SystemType::PS3},
         {"gamecube",  SystemType::GameCube},
         {"odyssey",   SystemType::Odyssey},
         {"pc",        SystemType::PC},
         {"dreamcast", SystemType::Dreamcast},
+        {"mastersystem", SystemType::SegaMasterSystem},
+        {"gamegear",  SystemType::GameGear},
+        {"saturn",    SystemType::SegaSaturn},
+        {"wii",       SystemType::Wii},
+        {"wiiu",      SystemType::WiiU},
+        {"switch",    SystemType::NintendoSwitch},
+        {"psp",       SystemType::PSP},
+        {"vita",      SystemType::PSVita},
+        {"xbox",      SystemType::Xbox},
+        {"xbox360",   SystemType::Xbox360},
+        {"atari7800", SystemType::Atari7800},
+        {"atarilynx", SystemType::AtariLynx},
+        {"atarijaguar", SystemType::AtariJaguar},
+        {"pcengine",  SystemType::PCEngine},
+        {"colecovision", SystemType::ColecoVision},
+        {"intellivision", SystemType::Intellivision},
     };
     for (const auto& sd : subdirs)
         scanDirectory(root / sd.dir, sd.sys);
@@ -595,14 +723,12 @@ void GameLibrary::loadFromDB(const OracleDBConfig& cfg) {
         if (ge.system == SystemType::Unknown && !row.downloadUrl.empty())
             ge.system = systemFromUrl(row.downloadUrl);
 
-        // If already downloaded, point at the local file (extension may refine system)
+        // If already downloaded, point at the local file. An explicit database
+        // system label is authoritative for ambiguous formats such as .iso.
         if (!row.localPath.empty() && fs::exists(row.localPath)) {
             ge.romPath = row.localPath;
             SystemType extSys = systemFromExtension(romExtension(row.localPath));
-            const bool ambiguousDreamcastMedia =
-                ge.system == SystemType::Dreamcast &&
-                toLower(romExtension(row.localPath)) == ".chd";
-            if (extSys != SystemType::Unknown && !ambiguousDreamcastMedia)
+            if (ge.system == SystemType::Unknown && extSys != SystemType::Unknown)
                 ge.system = extSys;
         }
         if (ge.romPath.empty() && !row.localPath.empty()) {
@@ -622,6 +748,24 @@ void GameLibrary::loadFromDB(const OracleDBConfig& cfg) {
                 DownloadManager::instance().localPath(row.downloadUrl);
             if (!cachedPath.empty() && fs::exists(cachedPath))
                 ge.romPath = cachedPath;
+        }
+
+        // A previous flat-directory scan cannot infer the platform of an .iso.
+        // Merge that local entry with this database record so its explicit
+        // system label (for example, Xbox) controls the launcher.
+        if (!ge.romPath.empty()) {
+            const auto existing = std::find_if(
+                games_.begin(), games_.end(), [&](const GameEntry& game) {
+                    return game.romPath == ge.romPath;
+                });
+            if (existing != games_.end()) {
+                existing->downloadUrl = ge.downloadUrl;
+                existing->dbId = ge.dbId;
+                if (ge.system != SystemType::Unknown)
+                    existing->system = ge.system;
+                ++skipped;
+                continue;
+            }
         }
 
         std::cout << "[DB] + [" << systemName(ge.system) << "] " << ge.displayName
@@ -648,11 +792,18 @@ void GameLibrary::loadFromDB(const OracleDBConfig& cfg) {
 
 // ─── scanSteamOwned (Web API) ────────────────────────────────────────────────
 
+static std::string shellQuote(const std::string& value) {
+    std::string quoted = "'";
+    for (char c : value) {
+        if (c == '\'') quoted += "'\"'\"'";
+        else quoted += c;
+    }
+    return quoted + "'";
+}
+
 static std::string fetchString(const std::string& url) {
-    std::string q = "'";
-    for (char c : url) { if (c == '\'') q += "'\"'\"'"; else q += c; }
-    q += "'";
-    std::string cmd = "curl --location --fail --silent --show-error " + q;
+    std::string cmd = "curl --location --fail --silent --show-error " +
+                      shellQuote(url);
     FILE* f = popen(cmd.c_str(), "r");
     if (!f) return "";
     char buf[8192];
@@ -804,9 +955,11 @@ std::string GameLibrary::fetchCoverArt(const GameEntry& game, const std::string&
         for (const char* img : { "library_600x900.jpg", "header.jpg" }) {
             std::string url = "https://cdn.akamai.steamstatic.com/steam/apps/"
                               + game.romPath + "/" + img;
-            std::string cmd = "curl -s -f -L --max-time 10 -o '" + dest + "' '" + url + "' 2>/dev/null";
-            if (std::system(cmd.c_str()) == 0 && fs::exists(dest))
+            std::string cmd = "curl --location --fail --silent --show-error --max-time 10 -o " +
+                              shellQuote(dest) + " " + shellQuote(url) + " 2>/dev/null";
+            if (std::system(cmd.c_str()) == 0 && fs::is_regular_file(dest))
                 return dest;
+            fs::remove(dest);
         }
         return "";
     }
@@ -837,28 +990,32 @@ std::string GameLibrary::fetchCoverArt(const GameEntry& game, const std::string&
     std::string destPath = basePath + ".jpg";
 
     // Fetch metadata JSON
-    std::string apiCmd =
-        "curl -s --max-time 15 "
-        "'https://www.screenscraper.fr/api2/jeuInfos.php"
+    std::string apiUrl =
+        "https://www.screenscraper.fr/api2/jeuInfos.php"
         "?devid=" + std::string(devid) +
         "&devpassword=" + std::string(devpass) +
         "&softname=omnicon&output=json"
         "&systemeid=" + std::to_string(sysId) +
-        "&romnom=" + encoded +
-        "' -o '" + tmpJson + "' 2>/dev/null";
-    system(apiCmd.c_str());
-    if (!fs::exists(tmpJson)) return "";
+        "&romnom=" + encoded;
+    std::string apiCmd = "curl --location --fail --silent --show-error --max-time 15 " +
+                         shellQuote(apiUrl) + " -o " + shellQuote(tmpJson) +
+                         " 2>/dev/null";
+    if (system(apiCmd.c_str()) != 0 || !fs::is_regular_file(tmpJson)) {
+        fs::remove(tmpJson);
+        return "";
+    }
 
     // Extract box-2D URL via python3
     std::string pyScript =
         "import json,sys\n"
         "try:\n"
-        "    d=json.load(open('" + tmpJson + "'))\n"
+        "    d=json.load(open(sys.argv[1]))\n"
         "    ms=d.get('response',{}).get('jeu',{}).get('medias',[])\n"
         "    u=[m.get('url','') for m in ms if m.get('type')=='box-2D' and m.get('url','')]\n"
         "    print(u[0] if u else '')\n"
         "except: pass\n";
-    std::string pyCmd = "python3 -c \"" + pyScript + "\" 2>/dev/null";
+    std::string pyCmd = "python3 -c \"" + pyScript + "\" " +
+                        shellQuote(tmpJson) + " 2>/dev/null";
 
     FILE* fp = popen(pyCmd.c_str(), "r");
     std::string imageUrl;
@@ -876,9 +1033,14 @@ std::string GameLibrary::fetchCoverArt(const GameEntry& game, const std::string&
     if (imageUrl.empty()) return "";
 
     // Download image
-    std::string dlCmd = "curl -s --max-time 30 '" + imageUrl + "' -o '" + destPath + "' 2>/dev/null";
+    std::string dlCmd = "curl --location --fail --silent --show-error --max-time 30 -o " +
+                        shellQuote(destPath) + " " + shellQuote(imageUrl) +
+                        " 2>/dev/null";
     int rc = system(dlCmd.c_str());
-    if (rc != 0 || !fs::exists(destPath)) return "";
+    if (rc != 0 || !fs::is_regular_file(destPath)) {
+        fs::remove(destPath);
+        return "";
+    }
 
     return destPath;
 }

@@ -38,7 +38,8 @@ public:
     void dequeue(const std::string& url);
 
     // Download a specific entry right now, blocking until complete.
-    // progress(received, total) called periodically (total=0 if unknown).
+    // progress(received, total) is called periodically (total=0 if unknown;
+    // total < 0 while a downloaded archive is being extracted).
     // errorOut (optional) is set to the curl error message on failure.
     // resolvedUrlOut (optional) is set to the URL that actually succeeded;
     //   differs from entry.url when an archive.org fallback was used.

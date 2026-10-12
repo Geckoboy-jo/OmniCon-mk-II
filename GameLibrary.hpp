@@ -25,6 +25,22 @@ enum class SystemType {
     PC,
     Dreamcast,
     Steam,
+    SegaMasterSystem,
+    GameGear,
+    SegaSaturn,
+    Wii,
+    WiiU,
+    NintendoSwitch,
+    PSP,
+    PSVita,
+    Xbox,
+    Xbox360,
+    Atari7800,
+    AtariLynx,
+    AtariJaguar,
+    PCEngine,
+    ColecoVision,
+    Intellivision,
     Unknown
 };
 

@@ -1,8 +1,10 @@
 #include "DownloadManager.hpp"
+#include "GameLibrary.hpp"
 
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cstring>
 #include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
@@ -23,10 +25,52 @@
 
 namespace fs = std::filesystem;
 
+#if defined(_WIN32)
+#include <fcntl.h>
+#include <io.h>
+
+#define close _close
+#define pclose _pclose
+#define popen _popen
+#define unlink _unlink
+
+static std::tm* gmtime_r(const std::time_t* source, std::tm* destination) {
+    return gmtime_s(destination, source) == 0 ? destination : nullptr;
+}
+
+static int mkstemp(char* pathTemplate) {
+    const std::string original(pathTemplate);
+    for (int attempt = 0; attempt < 32; ++attempt) {
+        std::memcpy(pathTemplate, original.c_str(), original.size() + 1);
+        if (_mktemp_s(pathTemplate, original.size() + 1) != 0) return -1;
+        const int file = _open(pathTemplate, _O_CREAT | _O_EXCL | _O_RDWR | _O_BINARY,
+                               _S_IREAD | _S_IWRITE);
+        if (file >= 0) return file;
+    }
+    return -1;
+}
+
+static char* mkdtemp(char* pathTemplate) {
+    const std::string original(pathTemplate);
+    for (int attempt = 0; attempt < 32; ++attempt) {
+        std::memcpy(pathTemplate, original.c_str(), original.size() + 1);
+        if (_mktemp_s(pathTemplate, original.size() + 1) != 0) return nullptr;
+        std::error_code error;
+        if (fs::create_directory(pathTemplate, error)) return pathTemplate;
+        if (error && error != std::errc::file_exists) return nullptr;
+    }
+    return nullptr;
+}
+#endif
+
 // Allowed ROM extensions (lower-cased, without leading dot)
 static const std::vector<std::string> kRomExts = {
-    "nes","sfc","smc","gb","gbc","gba","nds","3ds","z64","n64","v64",
-    "a26","a52","atr","md","gen","smd","iso","cue","chd","gdi","cdi","bin","exe"
+    "nes","sfc","smc","gb","gbc","sgb","gba","nds","3ds","cci","cxi","3dsx","cia",
+    "z64","n64","v64","a26","a52","a78","atr","xfd","atx","xex","car","cas","com",
+    "lnx","j64","jag","md","gen","smd","68k","sgd","sms","gg","pce","sgx","col",
+    "int","cso","pbp","vpk","wbfs","wad","dol","wud","wux","rpx","wua","nsp","xci",
+    "xbe","xiso","gcm","gcz","rvz","ciso","iso","cue","chd","gdi","cdi","img","mdf","pkg",
+    "bin","exe","odyssey"
 };
 
 bool DownloadManager::isPcSystem(const std::string& system) {
@@ -118,7 +162,8 @@ static std::string urlEncode(const std::string& s) {
 //           an item, then query its metadata for the ROM file.
 // Returns "" if unresolvable.
 static std::string archiveOrgFixUrl(const std::string& url,
-                                    const std::string& cookieFile) {
+                                    const std::string& cookieFile,
+                                    const std::string& runtimeCookieFile) {
     static const std::set<std::string> kAllowed(kRomExts.begin(), kRomExts.end());
     static const std::set<std::string> kArchives = {"zip","7z","gz","bz2","xz","rar"};
 
@@ -126,7 +171,7 @@ static std::string archiveOrgFixUrl(const std::string& url,
     auto curlGet = [&](const std::string& curlUrl) -> std::string {
         std::string cmd = "curl --silent --fail --location --max-time 15"
                           " --user-agent 'Mozilla/5.0'" +
-                          cookieOption(cookieFile, cookieFile + ".runtime") +
+                          cookieOption(cookieFile, runtimeCookieFile) +
                           " " + shellQuote(curlUrl);
         FILE* f = popen(cmd.c_str(), "r");
         if (!f) return "";
@@ -365,6 +410,76 @@ static std::string isoTimestamp() {
     ss << std::put_time(&tm, "%Y-%m-%dT%H:%M:%SZ");
     return ss.str();
 }
+
+static fs::path uniqueDestinationPath(const fs::path& directory,
+                                      const fs::path& filename) {
+    fs::path candidate = directory / filename;
+    if (!fs::exists(candidate)) return candidate;
+
+    const std::string stem = filename.stem().string();
+    const std::string extension = filename.extension().string();
+    for (unsigned int suffix = 2; ; ++suffix) {
+        candidate = directory / (stem + " (" + std::to_string(suffix) + ")" + extension);
+        if (!fs::exists(candidate)) return candidate;
+    }
+}
+
+static bool isSafeArchiveMember(const std::string& member) {
+    const fs::path memberPath(member);
+    if (memberPath.is_absolute() || memberPath.has_root_name() ||
+        memberPath.has_root_directory())
+        return false;
+    for (const auto& component : memberPath)
+        if (component == "..") return false;
+    return true;
+}
+
+static std::string createTempFile(const fs::path& directory,
+                                  const std::string& suffix) {
+    std::string pattern = (directory / "_omnicon_XXXXXX").string();
+    std::vector<char> writablePattern(pattern.begin(), pattern.end());
+    writablePattern.push_back('\0');
+    const int fd = mkstemp(writablePattern.data());
+    if (fd < 0) return "";
+    close(fd);
+
+    std::string tempPath(writablePattern.data());
+    if (suffix.empty()) return tempPath;
+
+    const std::string suffixedPath = tempPath + suffix;
+    if (rename(tempPath.c_str(), suffixedPath.c_str()) != 0) {
+        unlink(tempPath.c_str());
+        return "";
+    }
+    return suffixedPath;
+}
+
+static std::string createTempDirectory(const fs::path& directory) {
+    std::string pattern = (directory / "_omnicon_extract_XXXXXX").string();
+    std::vector<char> writablePattern(pattern.begin(), pattern.end());
+    writablePattern.push_back('\0');
+    char* createdPath = mkdtemp(writablePattern.data());
+    return createdPath ? std::string(createdPath) : "";
+}
+
+static fs::path downloadDestinationDirectory(const std::string& romsDir,
+                                             const std::string& system) {
+    const SystemType systemType = GameLibrary::systemFromName(system);
+    if (systemType == SystemType::Unknown || systemType == SystemType::Steam)
+        return romsDir;
+
+    const fs::path directory = fs::path(romsDir) /
+                               GameLibrary::systemDirName(systemType);
+    std::error_code error;
+    fs::create_directories(directory, error);
+    if (error) {
+        std::cerr << "[DL] Could not create download directory " << directory
+                  << ": " << error.message() << "\n";
+        return {};
+    }
+    return directory;
+}
+
 // ─── Thread-pool helpers ───────────────────────────────────────────────────────────
 namespace {
 struct Semaphore {
@@ -406,6 +521,9 @@ void DownloadManager::init(const std::string& queuePath, const std::string& roms
     fs::path qp(queuePath);
     downloadedPath_ = (qp.parent_path() / "downloaded.json").string();
 
+    if (!qp.parent_path().empty())
+        fs::create_directories(qp.parent_path());
+    fs::create_directories(romsDir_);
     loadFromDisk();
 }
 
@@ -535,11 +653,17 @@ void DownloadManager::dequeue(const std::string& url) {
     // Delete the local file if one exists
     auto it = urlToLocal_.find(url);
     if (it != urlToLocal_.end() && !it->second.empty()) {
+        const std::string localFile = it->second;
         std::error_code ec;
-        fs::remove(it->second, ec);
+        fs::remove(localFile, ec);
         if (!ec)
-            std::cout << "[DL] Deleted local file: " << it->second << "\n";
-        urlToLocal_.erase(it);
+            std::cout << "[DL] Deleted local file: " << localFile << "\n";
+        for (auto mapIt = urlToLocal_.begin(); mapIt != urlToLocal_.end();) {
+            if (mapIt->second == localFile)
+                mapIt = urlToLocal_.erase(mapIt);
+            else
+                ++mapIt;
+        }
     }
 
     // Remove from the pending queue
@@ -593,7 +717,12 @@ bool DownloadManager::ensureSpace(long long neededBytes) {
             fs::remove(c.path, ec);
             if (!ec) {
                 used -= fileSize;
-                urlToLocal_.erase(c.url);
+                for (auto mapIt = urlToLocal_.begin(); mapIt != urlToLocal_.end();) {
+                    if (mapIt->second == c.path)
+                        mapIt = urlToLocal_.erase(mapIt);
+                    else
+                        ++mapIt;
+                }
                 // Do NOT remove from queue_ — the game entry stays in the library
                 // and can be re-downloaded when selected again.
                 std::cout << "[DL] Evicted " << c.path << " to free space.\n";
@@ -640,7 +769,8 @@ std::string DownloadManager::extractRom(const std::string& archivePath,
         if (!sevenZipCmd.empty()) {
             // "7z l -ba -slt" emits one block per entry; "Path = <name>" lines
             // contain the member filename without extra column formatting.
-            std::string listCmd = sevenZipCmd + " l -ba -slt '" + archivePath + "' 2>/dev/null";
+            std::string listCmd = sevenZipCmd + " l -ba -slt " +
+                                  shellQuote(archivePath) + " 2>/dev/null";
             FILE* f = popen(listCmd.c_str(), "r");
             if (!f) return "";
             char buf[2048];
@@ -656,10 +786,15 @@ std::string DownloadManager::extractRom(const std::string& archivePath,
             }
             pclose(f);
             if (foundFile.empty()) return "";
+            if (!isSafeArchiveMember(foundFile)) {
+                std::cerr << "[DL] Refusing unsafe archive member path: " << foundFile << "\n";
+                return "";
+            }
 
             // -aoa = overwrite all without prompt; -o<dir> has no space in 7z syntax
-            std::string extractCmd = sevenZipCmd + " e -aoa -o'" + destDir + "' '" +
-                                     archivePath + "' '" + foundFile + "' 2>/dev/null";
+            std::string extractCmd = sevenZipCmd + " e -aoa -o" +
+                                     shellQuote(destDir) + " " + shellQuote(archivePath) +
+                                     " " + shellQuote(foundFile) + " 2>/dev/null";
             if (system(extractCmd.c_str()) != 0) return ""; // NOLINT
         } else {
             std::string extList;
@@ -679,7 +814,7 @@ std::string DownloadManager::extractRom(const std::string& archivePath,
                 "(sys.argv[4]!='1' and (os.path.splitext(n)[1].lstrip('.').lower() in exts or "
                 "(sys.argv[3]=='1' and os.path.splitext(n)[1].lstrip('.').lower() in ('','bin')))))];"
                 "z.close();"
-                "print(names[0] if names else '')\" '" + archivePath + "' '" + extList +
+                "print(names[0] if names else '')\" " + shellQuote(archivePath) + " '" + extList +
                 "' '" + (allowGbaFallback ? "1" : "0") + "' '" +
                 (preferPcContent ? "1" : "0") + "' 2>/dev/null";
             FILE* f = popen(pyList.c_str(), "r");
@@ -693,6 +828,10 @@ std::string DownloadManager::extractRom(const std::string& archivePath,
             }
             pclose(f);
             if (foundFile.empty()) return "";
+            if (!isSafeArchiveMember(foundFile)) {
+                std::cerr << "[DL] Refusing unsafe archive member path: " << foundFile << "\n";
+                return "";
+            }
 
             std::string pyExtract =
                 "python3 -c \""
@@ -700,7 +839,8 @@ std::string DownloadManager::extractRom(const std::string& archivePath,
                 "import py7zr;"
                 "z=py7zr.SevenZipFile(sys.argv[1],mode='r');"
                 "z.extract(path=sys.argv[3], targets=[sys.argv[2]]);"
-                "z.close()\" '" + archivePath + "' '" + foundFile + "' '" + destDir + "' 2>/dev/null";
+                "z.close()\" " + shellQuote(archivePath) + " " + shellQuote(foundFile) +
+                " " + shellQuote(destDir) + " 2>/dev/null";
             if (system(pyExtract.c_str()) != 0) return ""; // NOLINT
         }
     } else {
@@ -711,7 +851,7 @@ std::string DownloadManager::extractRom(const std::string& archivePath,
         if (haveUnzip) {
             // Use "unzip -Z1" (zipinfo short format) to get one clean filename
             // per line, avoiding column-based parsing that breaks on names with spaces.
-            std::string listCmd = "unzip -Z1 '" + archivePath + "' 2>/dev/null";
+            std::string listCmd = "unzip -Z1 " + shellQuote(archivePath) + " 2>/dev/null";
             FILE* f = popen(listCmd.c_str(), "r");
             if (!f) return "";
             char buf[2048];
@@ -725,9 +865,14 @@ std::string DownloadManager::extractRom(const std::string& archivePath,
             }
             pclose(f);
             if (foundFile.empty()) return "";
+            if (!isSafeArchiveMember(foundFile)) {
+                std::cerr << "[DL] Refusing unsafe archive member path: " << foundFile << "\n";
+                return "";
+            }
 
-            std::string extractCmd = "unzip -j -o '" + archivePath + "' '" + foundFile +
-                                     "' -d '" + destDir + "' 2>/dev/null";
+            std::string extractCmd = "unzip -j -o " + shellQuote(archivePath) + " " +
+                                     shellQuote(foundFile) + " -d " + shellQuote(destDir) +
+                                     " 2>/dev/null";
             if (system(extractCmd.c_str()) != 0) return ""; // NOLINT
         } else {
             // ── Python zipfile fallback ───────────────────────────────────────
@@ -747,7 +892,7 @@ std::string DownloadManager::extractRom(const std::string& archivePath,
                 "((sys.argv[4]=='1' and os.path.splitext(n)[1].lstrip('.').lower() in ('bin','exe')) or "
                 "(sys.argv[4]!='1' and (os.path.splitext(n)[1].lstrip('.').lower() in exts or "
                 "(sys.argv[3]=='1' and os.path.splitext(n)[1].lstrip('.').lower() in ('','bin')))))];"
-                "print(names[0] if names else '')\" '" + archivePath + "' '" + extList +
+                "print(names[0] if names else '')\" " + shellQuote(archivePath) + " '" + extList +
                 "' '" + (allowGbaFallback ? "1" : "0") + "' '" +
                 (preferPcContent ? "1" : "0") + "' 2>/dev/null";
             FILE* f = popen(pyList.c_str(), "r");
@@ -761,19 +906,27 @@ std::string DownloadManager::extractRom(const std::string& archivePath,
             }
             pclose(f);
             if (foundFile.empty()) return "";
+            if (!isSafeArchiveMember(foundFile)) {
+                std::cerr << "[DL] Refusing unsafe archive member path: " << foundFile << "\n";
+                return "";
+            }
 
             std::string pyExtract =
                 "python3 -c \""
                 "import zipfile,sys;"
                 "z=zipfile.ZipFile(sys.argv[1]);"
-                "z.extract(sys.argv[2],sys.argv[3])\" '" + archivePath +
-                "' '" + foundFile + "' '" + destDir + "' 2>/dev/null";
+                "z.extract(sys.argv[2],sys.argv[3])\" " + shellQuote(archivePath) +
+                " " + shellQuote(foundFile) + " " + shellQuote(destDir) + " 2>/dev/null";
             if (system(pyExtract.c_str()) != 0) return ""; // NOLINT
         }
     }
 
     fs::path extractedPath = fs::path(destDir) / fs::path(foundFile).filename();
-    if (!fs::exists(extractedPath)) {
+    if (!fs::is_regular_file(extractedPath)) {
+        const fs::path nestedPath = fs::path(destDir) / fs::path(foundFile);
+        if (fs::is_regular_file(nestedPath)) extractedPath = nestedPath;
+    }
+    if (!fs::is_regular_file(extractedPath)) {
         std::cerr << "[DL] Archive extraction completed but ROM was not found at "
                   << extractedPath << "\n";
         return "";
@@ -813,12 +966,19 @@ std::string DownloadManager::downloadBlocking(
             safeName += (std::isalnum(static_cast<unsigned char>(c)) || c == '.' || c == '-' || c == '_') ? c : '_';
         }
         if (safeName.empty()) safeName = "download";
-        tmpPath = (fs::path(romsDir_) / ("_tmp_" + safeName)).string();
-
         // Reserve space (use sizeBytes hint if available, else 500 MB estimate)
         spaceNeeded = (entry.sizeBytes > 0) ? entry.sizeBytes : 500LL * 1024 * 1024;
         if (!ensureSpace(spaceNeeded)) {
             std::cerr << "[DL] Not enough disk space for " << entry.name << ".\n";
+            return "";
+        }
+
+        const std::string extension = fs::path(safeName).extension().string();
+        tmpPath = createTempFile(romsDir_, extension);
+        if (tmpPath.empty()) {
+            const std::string message = "Could not create a temporary download file in " + romsDir_;
+            std::cerr << "[DL] " << message << "\n";
+            if (errorOut) *errorOut = message;
             return "";
         }
     }
@@ -840,11 +1000,13 @@ std::string DownloadManager::downloadBlocking(
         }
     }
 
+    std::string downloadUrlUsed = entry.url;
     std::string curlCmd = "curl --location --fail --silent --show-error"
                           " --user-agent 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36"
                           " (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'"
                           + cookieOption(cookieFile_, runtimeCookieFile_) +
                           " --referer " + shellQuote(referer) +
+                          " --connect-timeout 30 --speed-limit 1024 --speed-time 90"
                           " --retry 3 --retry-delay 2"
                           " -o " + shellQuote(tmpPath) +
                           " " + shellQuote(entry.url) +
@@ -867,8 +1029,10 @@ std::string DownloadManager::downloadBlocking(
             long long current = 0;
             if (fs::exists(tmpPath, fsec))
                 current = static_cast<long long>(fs::file_size(tmpPath, fsec));
-            // Clamp so we never report more than 100 % before the final callback.
-            if (current > spaceNeeded) current = spaceNeeded;
+            // The database size is only a hint. Do not display 100% until curl
+            // has exited successfully, even if the actual file is larger.
+            if (spaceNeeded > 0 && current >= spaceNeeded)
+                current = spaceNeeded - 1;
             progress(current, spaceNeeded);
             std::this_thread::sleep_for(std::chrono::milliseconds(150));
         }
@@ -896,7 +1060,7 @@ std::string DownloadManager::downloadBlocking(
         // not just 404 (some mirrors fail with other status/error text).
         bool fromArchiveOrg = (entry.url.find("archive.org") != std::string::npos);
         if (fromArchiveOrg) {
-            std::string altUrl = archiveOrgFixUrl(entry.url, cookieFile_);
+            std::string altUrl = archiveOrgFixUrl(entry.url, cookieFile_, runtimeCookieFile_);
             if (!altUrl.empty() && altUrl != entry.url) {
                 std::cout << "[DL] Retrying with corrected URL...\n";
                 // Re-use the same tmpPath; rebuild the command with the new URL
@@ -917,6 +1081,7 @@ std::string DownloadManager::downloadBlocking(
                                      " Chrome/124.0.0.0 Safari/537.36'"
                                      + cookieOption(cookieFile_, runtimeCookieFile_) +
                                      " --referer " + shellQuote(altReferer) +
+                                     " --connect-timeout 30 --speed-limit 1024 --speed-time 90"
                                      " --retry 2 --retry-delay 2"
                                      " -o " + shellQuote(tmpPath) +
                                      " " + shellQuote(altUrl) +
@@ -933,6 +1098,7 @@ std::string DownloadManager::downloadBlocking(
                     // extraction logic below handle the downloaded file.
                     rc = 0;
                     curlError.clear();
+                    downloadUrlUsed = altUrl;
                     if (resolvedUrlOut) *resolvedUrlOut = altUrl;
                     goto download_succeeded; // NOLINT
                 } else {
@@ -952,38 +1118,127 @@ std::string DownloadManager::downloadBlocking(
     if (progress) progress(spaceNeeded, spaceNeeded);
 
     // Determine if it's an archive
-    std::string ext = fs::path(tmpPath).extension().string();
+    std::string successfulUrlPath = downloadUrlUsed;
+    const auto queryPos = successfulUrlPath.find_first_of("?#");
+    if (queryPos != std::string::npos) successfulUrlPath.resize(queryPos);
+    std::string ext = fs::path(successfulUrlPath).extension().string();
     std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+    std::string tempExt = fs::path(tmpPath).extension().string();
+    std::transform(tempExt.begin(), tempExt.end(), tempExt.begin(), ::tolower);
+    if (!ext.empty() && ext != tempExt) {
+        fs::path renamedTemp(tmpPath);
+        renamedTemp.replace_extension(ext);
+        std::error_code renameError;
+        fs::rename(tmpPath, renamedTemp, renameError);
+        if (renameError) {
+            unlink(tmpPath.c_str());
+            const std::string message =
+                "Could not prepare downloaded file for extraction: " + renameError.message();
+            std::cerr << "[DL] " << message << "\n";
+            if (errorOut) *errorOut = message;
+            return "";
+        }
+        tmpPath = renamedTemp.string();
+    }
 
     std::string finalPath;
     if (ext == ".zip" || ext == ".7z" || ext == ".rar" || ext == ".gz" || ext == ".bz2" || ext == ".xz") {
         std::cout << "[DL] Extracting " << tmpPath << "...\n";
-        finalPath = extractRom(tmpPath, romsDir_, entry.system == "GBA",
-                               isPcSystem(entry.system));
+        const std::string stagingDir = createTempDirectory(romsDir_);
+        if (stagingDir.empty()) {
+            unlink(tmpPath.c_str());
+            const std::string message = "Could not create a temporary extraction directory in " + romsDir_;
+            std::cerr << "[DL] " << message << "\n";
+            if (errorOut) *errorOut = message;
+            return "";
+        }
+        std::string extractedPath;
+        if (progress) {
+            std::atomic<bool> extractionDone{false};
+            std::thread extractionThread([&]() {
+                extractedPath = extractRom(
+                    tmpPath, stagingDir, entry.system == "GBA", isPcSystem(entry.system));
+                extractionDone.store(true);
+            });
+            while (!extractionDone.load()) {
+                progress(0, -1);
+                std::this_thread::sleep_for(std::chrono::milliseconds(150));
+            }
+            extractionThread.join();
+        } else {
+            extractedPath = extractRom(
+                tmpPath, stagingDir, entry.system == "GBA", isPcSystem(entry.system));
+        }
         unlink(tmpPath.c_str());
-        if (finalPath.empty()) {
+        if (extractedPath.empty()) {
+            std::error_code cleanupError;
+            fs::remove_all(stagingDir, cleanupError);
             std::cerr << "[DL] No ROM found inside archive.\n";
             if (errorOut) {
                 *errorOut = "Downloaded archive could not be extracted or contained no supported ROM.";
             }
             return "";
         }
+        {
+            std::lock_guard<std::recursive_mutex> lock(mutex_);
+            const fs::path extracted(extractedPath);
+            const fs::path destinationDirectory =
+                downloadDestinationDirectory(romsDir_, entry.system);
+            if (destinationDirectory.empty()) {
+                std::error_code cleanupError;
+                fs::remove_all(stagingDir, cleanupError);
+                if (errorOut) *errorOut = "Could not create the ROM system directory.";
+                return "";
+            }
+            const fs::path destination =
+                uniqueDestinationPath(destinationDirectory, extracted.filename());
+            std::error_code moveError;
+            fs::rename(extracted, destination, moveError);
+            if (moveError) {
+                std::error_code cleanupError;
+                fs::remove_all(stagingDir, cleanupError);
+                const std::string message = "Failed to move extracted ROM: " + moveError.message();
+                std::cerr << "[DL] " << message << "\n";
+                if (errorOut) *errorOut = message;
+                return "";
+            }
+            finalPath = destination.string();
+        }
+        std::error_code cleanupError;
+        fs::remove_all(stagingDir, cleanupError);
     } else {
-        // Move to romsDir
-        finalPath = (fs::path(romsDir_) / fs::path(tmpPath).filename()).string();
-        // strip "_tmp_" prefix from final name
-        std::string base = fs::path(tmpPath).filename().string();
-        if (base.rfind("_tmp_", 0) == 0) base = base.substr(5);
-        finalPath = (fs::path(romsDir_) / base).string();
-        std::error_code ec;
-        fs::rename(tmpPath, finalPath, ec);
-        if (ec) {
-            std::cerr << "[DL] Failed to move file: " << ec.message() << "\n";
-            return "";
+        std::string safeName;
+        for (char c : fs::path(successfulUrlPath).filename().string()) {
+            safeName += (std::isalnum(static_cast<unsigned char>(c)) ||
+                         c == '.' || c == '-' || c == '_') ? c : '_';
+        }
+        if (safeName.empty()) safeName = "download";
+        {
+            std::lock_guard<std::recursive_mutex> lock(mutex_);
+            const fs::path destinationDirectory =
+                downloadDestinationDirectory(romsDir_, entry.system);
+            if (destinationDirectory.empty()) {
+                unlink(tmpPath.c_str());
+                if (errorOut) *errorOut = "Could not create the ROM system directory.";
+                return "";
+            }
+            const fs::path destination = uniqueDestinationPath(destinationDirectory, safeName);
+            std::error_code moveError;
+            fs::rename(tmpPath, destination, moveError);
+            if (moveError) {
+                unlink(tmpPath.c_str());
+                const std::string message = "Failed to move downloaded file: " + moveError.message();
+                std::cerr << "[DL] " << message << "\n";
+                if (errorOut) *errorOut = message;
+                return "";
+            }
+            finalPath = destination.string();
         }
     }
 
     if (isPcSystem(entry.system) && !ensurePcCue(finalPath)) {
+        std::error_code cleanupError;
+        fs::remove(finalPath, cleanupError);
         if (errorOut) *errorOut = "PC disc image downloaded, but its cue descriptor could not be created.";
         return "";
     }
@@ -992,6 +1247,8 @@ std::string DownloadManager::downloadBlocking(
     {
         std::lock_guard<std::recursive_mutex> lock(mutex_);
         urlToLocal_[entry.url] = finalPath;
+        if (downloadUrlUsed != entry.url)
+            urlToLocal_[downloadUrlUsed] = finalPath;
         queue_.erase(std::remove_if(queue_.begin(), queue_.end(),
             [&](const QueuedDownload& q){ return q.url == entry.url; }), queue_.end());
         saveToDisk();
