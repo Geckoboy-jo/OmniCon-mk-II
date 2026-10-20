@@ -1535,9 +1535,14 @@ void GameShell::launchGame(const GameEntry& game) {
                 libraryPath += ":";
                 libraryPath += existing;
             }
-            if (!launchExternalChecked({"env", "LD_LIBRARY_PATH=" + libraryPath,
-                                        launcher, "--appendconfig", configPath,
-                                        "-L", corePath, contentPath}))
+            std::vector<std::string> dcCommand = {"env"};
+            const std::string systemWayland = "/usr/lib/x86_64-linux-gnu/libwayland-client.so.0";
+            if (fs::exists(systemWayland))
+                dcCommand.push_back("LD_PRELOAD=" + systemWayland);
+            dcCommand.insert(dcCommand.end(), {"LD_LIBRARY_PATH=" + libraryPath,
+                                               launcher, "--appendconfig", configPath,
+                                               "-L", corePath, contentPath});
+            if (!launchExternalChecked(dcCommand))
                 std::cerr << "[Dreamcast] Failed to start " << launcher
                           << ". Install RetroArch/Flycast or set OMNICON_DREAMCAST_LAUNCHER.\n";
             break;

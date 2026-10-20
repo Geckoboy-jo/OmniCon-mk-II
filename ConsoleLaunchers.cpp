@@ -86,8 +86,24 @@ bool RetroArchConsoleLauncher::launchRetroArch(
     const char* configuredLauncher = std::getenv("OMNICON_RETROARCH_LAUNCHER");
     const std::string launcher = configuredLauncher && *configuredLauncher
                                ? configuredLauncher : "retroarch";
-    if (!launchExternalApplication(launcher, {"-L", fs::absolute(core).string(),
-                                               fs::absolute(contentPath).string()})) {
+    // The RetroArch AppImage bundles an old libwayland-client that lacks
+    // wl_proxy_marshal_flags, which the system NVIDIA EGL library needs. Its
+    // AppRun overrides LD_LIBRARY_PATH, so preload the system copy instead.
+    std::vector<std::string> command = {"env"};
+    const std::string systemWayland = "/usr/lib/x86_64-linux-gnu/libwayland-client.so.0";
+    if (fs::exists(systemWayland))
+        command.push_back("LD_PRELOAD=" + systemWayland);
+    command.push_back(launcher);
+    // RetroArch has no autoconfig profile for the WSL controller bridge pad, so
+    // supply the player 1 bindings explicitly.
+    const fs::path controllerConfig = fs::absolute("retroarch_controller.cfg");
+    if (fs::exists(controllerConfig)) {
+        command.push_back("--appendconfig");
+        command.push_back(controllerConfig.string());
+    }
+    command.insert(command.end(), {"-L", fs::absolute(core).string(),
+                                   fs::absolute(contentPath).string()});
+    if (!launchExternalChecked(command)) {
         std::cerr << "[" << systemName << "] Failed to start RetroArch. Set "
                      "OMNICON_RETROARCH_LAUNCHER to its executable.\n";
         return false;

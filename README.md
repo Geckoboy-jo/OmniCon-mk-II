@@ -1,6 +1,13 @@
 # OmniCon-mk-II
 Private repo
 
+## Game Boy boot ROMs
+
+The native Game Boy emulator uses boot ROM binaries generated from the vendored
+SameBoy sources. The project build generates them automatically; this requires
+RGBDS (`rgbasm`, `rgblink`, and `rgbgfx`) to be installed. You can also build
+them directly with `make bootroms`.
+
 ## Archive.org download cookies
 
 The ROM downloader supports a Netscape-format cookie jar for Archive.org
