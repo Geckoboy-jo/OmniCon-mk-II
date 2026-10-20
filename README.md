@@ -95,7 +95,7 @@ executable is not named `retroarch`. Per-system core paths can be overridden:
 | --- | --- | --- |
 | Master System | `OMNICON_SMS_CORE` | `genesis_plus_gx_libretro.so` |
 | Game Gear | `OMNICON_GAMEGEAR_CORE` | `genesis_plus_gx_libretro.so` |
-| Saturn | `OMNICON_SATURN_CORE` | `yabasanshiro_libretro.so` |
+| Saturn | `OMNICON_SATURN_CORE` | `mednafen_saturn_libretro.so` |
 | Wii | `OMNICON_WII_CORE` | `dolphin_libretro.so` |
 | PSP | `OMNICON_PSP_CORE` | `ppsspp_libretro.so` |
 | Atari 7800 | `OMNICON_ATARI7800_CORE` | `prosystem_libretro.so` |
@@ -112,6 +112,26 @@ Wii U, Switch, Vita, Xbox, and Xbox 360 launch through external emulators:
 emulators, firmware, and keys as required by their projects. Xbox One and Xbox
 Series are not included because this project has no practical emulator launch
 backend for those platforms.
+
+### Wii U archives (Cemu)
+
+Wii U downloads from Archive.org are NUS dumps (`title.tmd`, `title.tik`, and
+encrypted `.app` files in a `.7z`). Cemu cannot start those directly, so
+OmniCon keeps the archive in `Roms/wiiu/` and converts it on first launch:
+
+1. `7z` unpacks the archive to a temporary folder next to it.
+2. The bundled `third_party/cdecrypt` (built automatically on first use, or
+   with `make cdecrypt`) decrypts it into Cemu's mlc folder as an installed
+   title (`usr/title/<type>/<id>`). No keys file is needed.
+3. The install is recorded in `saves/wiiu_converted.tsv`; later launches skip
+   straight to Cemu.
+
+To convert everything up front, run `convert-wiiu` (optionally with a folder,
+default `Roms/wiiu`) at the OmniCon prompt. Update and DLC archives install
+alongside their base game, but only the base game can be launched. Conversion
+needs temporary space of about two to three times the archive size, and the
+original archive is kept. Cemu's mlc folder defaults to
+`~/.local/share/Cemu/mlc01`; set `OMNICON_CEMU_MLC` to use another one.
 
 For original Xbox games, install and configure Xemu (including its required
 MCPX ROM, flash ROM, EEPROM, and hard-disk image). If `xemu` is not on the

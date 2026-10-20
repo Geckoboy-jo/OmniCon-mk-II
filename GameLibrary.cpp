@@ -66,9 +66,10 @@ SystemType GameLibrary::systemFromUrl(const std::string& url) {
         return SystemType::GameGear;
     if (has("saturn") || has("sega_saturn"))
         return SystemType::SegaSaturn;
-    if (has("wii_u") || has("wiiu"))
+    if (has("wii_u") || has("wii-u") || has("wiiu"))
         return SystemType::WiiU;
-    if (has("nintendo_switch") || has("switch_roms") || has("/roms_switch"))
+    if (has("nintendo_switch") || has("switch_roms") || has("/roms_switch") ||
+        has("_nsz") || has("nsz_") || has("/nsz"))
         return SystemType::NintendoSwitch;
     if (has("playstation_vita") || has("psvita") || has("vita_roms"))
         return SystemType::PSVita;
@@ -140,7 +141,7 @@ SystemType GameLibrary::systemFromExtension(const std::string& ext) {
     if (e == ".wbfs" || e == ".wad" || e == ".dol")            return SystemType::Wii;
     if (e == ".wud" || e == ".wux" || e == ".rpx" || e == ".wua")
                                                                return SystemType::WiiU;
-    if (e == ".nsp" || e == ".xci")                            return SystemType::NintendoSwitch;
+    if (e == ".nsp" || e == ".xci" || e == ".nsz" || e == ".xcz")                            return SystemType::NintendoSwitch;
     if (e == ".xbe" || e == ".xiso")                           return SystemType::Xbox;
     if (e == ".gb")                                            return SystemType::GameBoy;
     if (e == ".gbc" || e == ".sgb")                            return SystemType::GameBoyColor;

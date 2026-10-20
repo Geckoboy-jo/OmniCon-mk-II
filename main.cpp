@@ -19,6 +19,7 @@
 #include "OracleDB.hpp"
 #include "DownloadManager.hpp"
 #include "SaveManager.hpp"
+#include "WiiUConverter.hpp"
 
 #include <cstdlib>
 #include <cctype>
@@ -504,7 +505,7 @@ bool looksLikeDownloadableFileLink(const std::string& url)
         "zip", "7z", "rar", "tar", "gz", "bz2", "xz",
         "iso", "bin", "cue", "rom", "nes", "sfc", "smc",
         "n64", "z64", "v64", "gba", "gb", "gbc", "nds",
-        "chd", "wad", "cia", "rvz", "wbfs"
+        "chd", "wad", "cia", "rvz", "wbfs", "nsp", "nsz", "xci", "xcz"
     };
 
     static const std::set<std::string> blockedExtensions = {
@@ -569,6 +570,71 @@ std::vector<std::string> extractPageFileLinks(const std::string& pageUrl, const 
 
         if (unique.insert(resolved).second) {
             links.push_back(resolved);
+        }
+    }
+
+    // Some archive.org directory listings only show metadata files even though
+    // the item has many downloadable files; the metadata API lists them all.
+    if (links.empty() && !archiveBase.empty()) {
+        std::string json;
+        const std::string metaUrl = "https://archive.org/metadata/"
+            + archiveBase.substr(std::string("https://archive.org/download/").size());
+        const std::string metaUrlNoSlash = metaUrl.substr(0, metaUrl.size() - 1);
+        const std::size_t filesPos = downloadToString(metaUrlNoSlash, json)
+            ? json.find("\"files\"") : std::string::npos;
+        if (filesPos != std::string::npos) {
+            static const std::regex nameRe(R"re("name"\s*:\s*"((?:[^"\\]|\\.)*)")re");
+            std::sregex_iterator it(json.begin() + filesPos, json.end(), nameRe);
+            for (; it != end; ++it) {
+                // Decode JSON escapes, then percent-encode for the URL path.
+                const std::string raw = (*it)[1].str();
+                std::string name;
+                for (std::size_t i = 0; i < raw.size(); ++i) {
+                    if (raw[i] != '\\' || i + 1 >= raw.size()) { name += raw[i]; continue; }
+                    const char e = raw[++i];
+                    if (e == 'u' && i + 4 < raw.size()) {
+                        unsigned long cp = std::strtoul(raw.substr(i + 1, 4).c_str(), nullptr, 16);
+                        i += 4;
+                        if (cp >= 0xD800 && cp <= 0xDBFF && i + 6 < raw.size() &&
+                            raw[i + 1] == '\\' && raw[i + 2] == 'u') {
+                            const unsigned long lo = std::strtoul(raw.substr(i + 3, 4).c_str(), nullptr, 16);
+                            cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00);
+                            i += 6;
+                        }
+                        if (cp < 0x80) name += static_cast<char>(cp);
+                        else if (cp < 0x800) {
+                            name += static_cast<char>(0xC0 | (cp >> 6));
+                            name += static_cast<char>(0x80 | (cp & 0x3F));
+                        } else if (cp < 0x10000) {
+                            name += static_cast<char>(0xE0 | (cp >> 12));
+                            name += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+                            name += static_cast<char>(0x80 | (cp & 0x3F));
+                        } else {
+                            name += static_cast<char>(0xF0 | (cp >> 18));
+                            name += static_cast<char>(0x80 | ((cp >> 12) & 0x3F));
+                            name += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+                            name += static_cast<char>(0x80 | (cp & 0x3F));
+                        }
+                    } else if (e == 'n') name += '\n';
+                    else if (e == 't') name += '\t';
+                    else name += e;
+                }
+
+                std::string encoded;
+                for (unsigned char c : name) {
+                    if (std::isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~' || c == '/') {
+                        encoded += static_cast<char>(c);
+                    } else {
+                        char buf[4];
+                        std::snprintf(buf, sizeof(buf), "%%%02X", c);
+                        encoded += buf;
+                    }
+                }
+
+                const std::string link = archiveBase + encoded;
+                if (looksLikeDownloadableFileLink(link) && unique.insert(link).second)
+                    links.push_back(link);
+            }
         }
     }
 
@@ -1033,6 +1099,7 @@ void printHelp()
               << "  load url <url>  Fetch a page, parse ROM links, and add them to the Oracle DB\n"
               << "  download <url>  Download one file and store it as a block\n"
               << "  download-all <url>  Download file links from a page and store each as a block\n"
+              << "  convert-wiiu [dir]  Convert downloaded Wii U archives for Cemu (default Roms/wiiu)\n"
               << "  load-folder <path>  Upload every regular file in a local folder\n"
               << "  play <path>     Load and run a ROM by extension\n"
               << "                  .nes -> NES, .smc/.sfc -> SNES, .gb -> Game Boy\n"
@@ -1504,6 +1571,23 @@ int main()
             } else {
                 std::cout << "Aborted.\n";
             }
+            continue;
+        }
+
+        // convert-wiiu [dir]: convert downloaded Wii U NUS archives for Cemu now,
+        // instead of waiting for each title's first launch.
+        if (input == "convert-wiiu" || input.rfind("convert-wiiu ", 0) == 0) {
+            std::string directory = trim(input.substr(std::string("convert-wiiu").size()));
+            if (directory.empty()) directory = "Roms/wiiu";
+            if (!std::filesystem::is_directory(directory)) {
+                std::cout << "No Wii U archive folder at " << directory << ".\n";
+                continue;
+            }
+            int failures = 0;
+            const int converted = WiiUConverter::convertAll(
+                directory, [](const std::string& message) { std::cout << message << std::endl; },
+                &failures);
+            std::cout << "Wii U conversion done. Ready=" << converted << " Failed=" << failures << "\n";
             continue;
         }
 

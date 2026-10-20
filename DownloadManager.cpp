@@ -68,7 +68,7 @@ static const std::vector<std::string> kRomExts = {
     "nes","sfc","smc","gb","gbc","sgb","gba","nds","3ds","cci","cxi","3dsx","cia",
     "z64","n64","v64","a26","a52","a78","atr","xfd","atx","xex","car","cas","com",
     "lnx","j64","jag","md","gen","smd","68k","sgd","sms","gg","pce","sgx","col",
-    "int","cso","pbp","vpk","wbfs","wad","dol","wud","wux","rpx","wua","nsp","xci",
+    "int","cso","pbp","vpk","wbfs","wad","dol","wud","wux","rpx","wua","nsp","xci","nsz","xcz",
     "xbe","xiso","gcm","gcz","rvz","ciso","iso","cue","chd","gdi","cdi","img","mdf","pkg",
     "bin","exe","odyssey"
 };
@@ -460,6 +460,10 @@ static std::string createTempDirectory(const fs::path& directory) {
     writablePattern.push_back('\0');
     char* createdPath = mkdtemp(writablePattern.data());
     return createdPath ? std::string(createdPath) : "";
+}
+
+static bool isWiiUSystem(const std::string& system) {
+    return GameLibrary::systemFromName(system) == SystemType::WiiU;
 }
 
 static fs::path downloadDestinationDirectory(const std::string& romsDir,
@@ -1012,6 +1016,27 @@ std::string DownloadManager::downloadBlocking(
                           " " + shellQuote(entry.url) +
                           " 2>" + std::string(progressTmp);
 
+    // The database size is often missing or wrong (large Wii U archives are
+    // several GB), which pinned the bar at 99%. Ask the server for the real size.
+    {
+        std::string headCmd = "curl --location --silent --head --max-time 20"
+                              " --user-agent 'Mozilla/5.0 (X11; Linux x86_64)'"
+                              + cookieOption(cookieFile_, runtimeCookieFile_) +
+                              " " + shellQuote(entry.url) + " 2>/dev/null";
+        if (FILE* hp = popen(headCmd.c_str(), "r")) {
+            char line[1024];
+            long long realSize = 0;
+            while (fgets(line, sizeof line, hp)) {
+                std::string l(line);
+                for (auto& ch : l) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+                if (l.rfind("content-length:", 0) == 0)
+                    realSize = std::atoll(l.c_str() + 15); // last hop wins after redirects
+            }
+            pclose(hp);
+            if (realSize > 0) spaceNeeded = realSize;
+        }
+    }
+
     if (progress) progress(0, spaceNeeded);
 
     // Run curl in a background thread so we can poll the partial file size
@@ -1142,7 +1167,10 @@ std::string DownloadManager::downloadBlocking(
     }
 
     std::string finalPath;
-    if (ext == ".zip" || ext == ".7z" || ext == ".rar" || ext == ".gz" || ext == ".bz2" || ext == ".xz") {
+    // Wii U NUS archives hold no ROM file; keep them intact so the launcher can
+    // convert them for Cemu on first run.
+    if (!isWiiUSystem(entry.system) &&
+        (ext == ".zip" || ext == ".7z" || ext == ".rar" || ext == ".gz" || ext == ".bz2" || ext == ".xz")) {
         std::cout << "[DL] Extracting " << tmpPath << "...\n";
         const std::string stagingDir = createTempDirectory(romsDir_);
         if (stagingDir.empty()) {
@@ -1208,9 +1236,12 @@ std::string DownloadManager::downloadBlocking(
         fs::remove_all(stagingDir, cleanupError);
     } else {
         std::string safeName;
-        for (char c : fs::path(successfulUrlPath).filename().string()) {
+        std::string downloadedName = fs::path(successfulUrlPath).filename().string();
+        if (isWiiUSystem(entry.system)) downloadedName = urlDecode(downloadedName);
+        for (char c : downloadedName) {
             safeName += (std::isalnum(static_cast<unsigned char>(c)) ||
-                         c == '.' || c == '-' || c == '_') ? c : '_';
+                         c == '.' || c == '-' || c == '_' ||
+                         (isWiiUSystem(entry.system) && (c == ' ' || c == '[' || c == ']'))) ? c : '_';
         }
         if (safeName.empty()) safeName = "download";
         {

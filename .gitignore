@@ -16,3 +16,7 @@ omnicon_repl
 omnicon_debug
 oracle_test
 play
+third_party/cdecrypt/cdecrypt
+third_party/cdecrypt/*.o
+third_party/cdecrypt/*.d
+saves/wiiu_converted.tsv
