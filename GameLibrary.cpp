@@ -208,6 +208,29 @@ SystemType GameLibrary::systemFromName(const std::string& name) {
     if (name == "TurboGrafx-16" || name == "PC Engine" || name == "TurboGrafx 16") return SystemType::PCEngine;
     if (name == "ColecoVision") return SystemType::ColecoVision;
     if (name == "Intellivision") return SystemType::Intellivision;
+    if(name == "Namco System 246") return SystemType::NamcoSystem246;
+    if(name == "Namco System 256") return SystemType::NamcoSystem256;
+    if(name == "Sega RingEdge") return SystemType::SegaRingEdge;
+    if(name == "Sega RingWide") return SystemType::SegaRingWide;
+    if(name == "Sega Lindbergh") return SystemType::SegaLindbergh;
+    if(name == "Taito Type X+" || name == "Taito Type X Plus") return SystemType::TaitoTypeXPlus;
+    if(name == "Taito Type X3") return SystemType::TaitoTypeX3;
+    if(name == "Konami Bemani PC Platform") return SystemType::KonamiBemaniPCPlatform;
+    if(name == "Arcade") return SystemType::Arcade;
+    if(name == "Microvision") return SystemType::Microvision;
+    if(name == "Watara Supervision") return SystemType::WataraSupervision;
+    if(name == "Hartung Game Master") return SystemType::HartungGameMaster;
+    if(name == "GP32") return SystemType::GP32;
+    if(name == "GP2X") return SystemType::GP2X;
+    if(name == "Tapwave Zodiac") return SystemType::TapwaveZodiac;
+    if(name == "Adventure Vision") return SystemType::AdventureVision;
+    if(name == "LaserActive") return SystemType::LaserActive;
+    if(name == "Bandai RX-78") return SystemType::BandaiRX78;
+    if(name == "Gakken Compact Vision") return SystemType::GakkenCompactVision;
+    if(name == "Super A'Can") return SystemType::SuperACan;
+    if(name == "FM-7") return SystemType::FMM7;
+    if(name == "VM Labs NUON") return SystemType::VMLabsNUON;
+    if(name == "Capcom CPS Changer") return SystemType::CapcomCPSChanger;
     return SystemType::Unknown;
 }
 

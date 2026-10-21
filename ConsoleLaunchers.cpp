@@ -1,16 +1,7 @@
-#include "ConsoleLaunchers.hpp"
+#include "top.hpp"
+#include "RetroArchConsoleLauncher.hpp"
 
-#include <cerrno>
-#include <cstdlib>
-#include <cstring>
-#include <filesystem>
-#include <iostream>
-#include <string>
-#include <vector>
 
-#include <fcntl.h>
-#include <sys/wait.h>
-#include <unistd.h>
 
 namespace fs = std::filesystem;
 

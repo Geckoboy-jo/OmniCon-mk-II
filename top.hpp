@@ -7,7 +7,14 @@
 #include <fstream>
 #include <limits>
 #include <map>
-#include <string>
-
+#include <cerrno>
+#include <fcntl.h>
+#include <sys/wait.h>
+#include <unistd.h>
+#include <atomic>
+#include <memory>
+#include <mutex>
+#include <thread>
+#include <SDL2/SDL.h>
 
 using namespace std;

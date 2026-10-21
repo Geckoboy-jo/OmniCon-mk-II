@@ -1,13 +1,7 @@
 #pragma once
 
 #include "top.hpp"
-#include <atomic>
-#include <memory>
-#include <mutex>
-#include <string>
-#include <thread>
-#include <vector>
-#include <SDL2/SDL.h>
+
 
 class GenesisBackend;
 

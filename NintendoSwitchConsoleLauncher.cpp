@@ -1,7 +1,6 @@
 #include "ConsoleLaunchers.hpp"
-
-#include <cstdlib>
-#include <filesystem>
+#include "top.hpp"
+#include "NintendoSwitch.hpp"
 
 bool NintendoSwitchConsoleLauncher::launch(const std::string& contentPath) const {
     const char* configured = std::getenv("OMNICON_SWITCH_LAUNCHER");
