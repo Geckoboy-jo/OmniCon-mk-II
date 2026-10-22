@@ -2,37 +2,13 @@
 #define PS2_HPP
 
 #include "top.hpp"
+#include "ps2_input_t.hpp"
+#include "ps2_color_t.hpp"
 #include <memory>
 #include <vector>
 #include <mutex>
 #include <atomic>
 #include <SDL2/SDL.h>
-
-struct ps2_input_t {
-    bool cross;      // JOYPAD_B (0)
-    bool circle;     // JOYPAD_A (8)
-    bool square;     // JOYPAD_Y (1)
-    bool triangle;   // JOYPAD_X (9)
-    bool start;
-    bool select;
-    bool up;
-    bool down;
-    bool left;
-    bool right;
-    bool l1;
-    bool r1;
-    bool l2;
-    bool r2;
-    bool l3;
-    bool r3;
-};
-
-struct ps2_color_t {
-    unsigned char r;
-    unsigned char g;
-    unsigned char b;
-    unsigned char a;
-};
 
 class PS2Emulation
 {

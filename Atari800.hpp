@@ -2,6 +2,8 @@
 #define ATARI800_HPP
 
 #include "top.hpp"
+#include "atari800_input_t.hpp"
+#include "atari800_color_t.hpp"
 #include <memory>
 #include <vector>
 #include <thread>
@@ -10,25 +12,6 @@
 #include <SDL2/SDL.h>
 
 class Atari800Backend;
-
-struct atari800_input_t {
-    bool up;
-    bool down;
-    bool left;
-    bool right;
-    bool fire;
-    bool secondary;
-    bool select;
-    bool start;
-    bool option;
-};
-
-struct atari800_color_t {
-    unsigned char r;
-    unsigned char g;
-    unsigned char b;
-    unsigned char a;
-};
 
 class Atari800Emulation
 {

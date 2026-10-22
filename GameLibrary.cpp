@@ -1,6 +1,7 @@
 #include "GameLibrary.hpp"
 #include "OracleDB.hpp"
 #include "DownloadManager.hpp"
+#include "ExtraSystems.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -101,7 +102,7 @@ SystemType GameLibrary::systemFromUrl(const std::string& url) {
         return SystemType::Atari5200;
     if (has("atari_800") || has("roms_800") || has("atari800"))
         return SystemType::Atari800;
-    return SystemType::Unknown;
+    return extraSystemFromUrl(url);
 }
 
 // Return the ROM extension from a filename or URL path, stripping archive wrappers.
@@ -133,7 +134,7 @@ SystemType GameLibrary::systemFromExtension(const std::string& ext) {
     if (e == ".lnx")                                           return SystemType::AtariLynx;
     if (e == ".a78")                                           return SystemType::Atari7800;
     if (e == ".j64" || e == ".jag")                            return SystemType::AtariJaguar;
-    if (e == ".pce" || e == ".sgx")                            return SystemType::PCEngine;
+    if (e == ".pce")                                           return SystemType::PCEngine;
     if (e == ".col")                                           return SystemType::ColecoVision;
     if (e == ".int")                                           return SystemType::Intellivision;
     if (e == ".cso")                                           return SystemType::PSP;
@@ -168,7 +169,7 @@ SystemType GameLibrary::systemFromExtension(const std::string& ext) {
     if (e == ".gdi" || e == ".cdi" || e == ".chd")
                                                                return SystemType::Dreamcast;
     if (e == ".odyssey")                                       return SystemType::Odyssey;
-    return SystemType::Unknown;
+    return extraSystemFromExtension(e);
 }
 
 SystemType GameLibrary::systemFromName(const std::string& name) {
@@ -231,6 +232,7 @@ SystemType GameLibrary::systemFromName(const std::string& name) {
     if(name == "FM-7") return SystemType::FMM7;
     if(name == "VM Labs NUON") return SystemType::VMLabsNUON;
     if(name == "Capcom CPS Changer") return SystemType::CapcomCPSChanger;
+    if (const ExtraSystemInfo* info = findExtraSystemByName(name)) return info->type;
     return SystemType::Unknown;
 }
 
@@ -272,7 +274,9 @@ std::string GameLibrary::systemName(SystemType sys) {
         case SystemType::PCEngine:      return "TurboGrafx-16";
         case SystemType::ColecoVision:  return "ColecoVision";
         case SystemType::Intellivision: return "Intellivision";
-        default:                       return "Unknown";
+        default:
+            if (const ExtraSystemInfo* info = findExtraSystem(sys)) return info->name;
+            return "Unknown";
     }
 }
 
@@ -314,7 +318,9 @@ std::string GameLibrary::systemDirName(SystemType sys) {
         case SystemType::PCEngine:      return "pcengine";
         case SystemType::ColecoVision:  return "colecovision";
         case SystemType::Intellivision: return "intellivision";
-        default:                       return "unknown";
+        default:
+            if (const ExtraSystemInfo* info = findExtraSystem(sys)) return info->dir;
+            return "unknown";
     }
 }
 
@@ -356,7 +362,9 @@ int GameLibrary::screenscraper_systemId(SystemType sys) {
         case SystemType::PCEngine:      return 31;
         case SystemType::ColecoVision:  return 48;
         case SystemType::Intellivision: return 115;
-        default:                        return 0;
+        default:
+            if (const ExtraSystemInfo* info = findExtraSystem(sys)) return info->screenscraperId;
+            return 0;
     }
 }
 
@@ -402,6 +410,9 @@ void GameLibrary::scanDirectory(const fs::path& dir, SystemType forceSystem) {
         SystemType sys = (forceSystem != SystemType::Unknown)
                          ? forceSystem
                          : systemFromExtension(ext);
+        if (forceSystem != SystemType::Unknown && findExtraSystem(forceSystem) &&
+            !extraSystemAcceptsExtension(forceSystem, ext))
+            continue;
         if (forceSystem == SystemType::PC &&
             ext != ".exe" && ext != ".bin" && ext != ".cue")
             continue;
@@ -479,6 +490,8 @@ void GameLibrary::scan(const std::string& romsDir) {
     };
     for (const auto& sd : subdirs)
         scanDirectory(root / sd.dir, sd.sys);
+    for (const auto& info : extraSystems())
+        scanDirectory(root / info.dir, info.type);
 
     // Sort by system then display name
     std::stable_sort(games_.begin(), games_.end(), [](const GameEntry& a, const GameEntry& b) {

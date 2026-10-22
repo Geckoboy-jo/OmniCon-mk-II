@@ -1,5 +1,6 @@
 #include "DownloadManager.hpp"
 #include "GameLibrary.hpp"
+#include "ExtraSystems.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -755,6 +756,7 @@ std::string DownloadManager::extractRom(const std::string& archivePath,
         if (std::find(kRomExts.begin(), kRomExts.end(), ext) != kRomExts.end()) {
             return true;
         }
+        if (extraSystemKnowsExtension(ext)) return true;
         return allowGbaFallback && (ext.empty() || ext == "bin");
     };
 
@@ -1168,8 +1170,10 @@ std::string DownloadManager::downloadBlocking(
 
     std::string finalPath;
     // Wii U NUS archives hold no ROM file; keep them intact so the launcher can
-    // convert them for Cemu on first run.
+    // convert them for Cemu on first run. MAME romsets must also stay zipped.
+    const SystemType entrySystem = GameLibrary::systemFromName(entry.system);
     if (!isWiiUSystem(entry.system) &&
+        !(ext == ".zip" && extraSystemKeepsArchive(entrySystem)) &&
         (ext == ".zip" || ext == ".7z" || ext == ".rar" || ext == ".gz" || ext == ".bz2" || ext == ".xz")) {
         std::cout << "[DL] Extracting " << tmpPath << "...\n";
         const std::string stagingDir = createTempDirectory(romsDir_);

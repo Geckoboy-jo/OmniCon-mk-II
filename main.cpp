@@ -15,6 +15,7 @@
 #include "PS2.hpp"
 #include "GameCube.hpp"
 #include "GameLibrary.hpp"
+#include "ExtraSystems.hpp"
 #include "GameShell.hpp"
 #include "OracleDB.hpp"
 #include "DownloadManager.hpp"
@@ -140,6 +141,8 @@ static std::string loadUrlSystemChoices()
         if (i > 0) choices << (i % 4 == 0 ? "\n  " : ", ");
         choices << GameLibrary::systemName(systems[i]);
     }
+    for (const auto& info : extraSystems())
+        choices << (", ") << info.name;
     return choices.str();
 }
 
@@ -522,7 +525,8 @@ bool looksLikeDownloadableFileLink(const std::string& url)
         return false;
     }
 
-    return allowedExtensions.find(extension) != allowedExtensions.end();
+    return allowedExtensions.find(extension) != allowedExtensions.end() ||
+           extraSystemKnowsExtension(extension);
 }
 
 std::vector<std::string> extractPageFileLinks(const std::string& pageUrl, const std::string& html)
@@ -1097,6 +1101,8 @@ void printHelp()
 {
     std::cout << "Commands:\n"
               << "  load url <url>  Fetch a page, parse ROM links, and add them to the Oracle DB\n"
+              << "                  (works for every console in the shell, incl. MAME-backed ones;\n"
+              << "                   or drop files into Roms/<console>/ and run 'shell')\n"
               << "  download <url>  Download one file and store it as a block\n"
               << "  download-all <url>  Download file links from a page and store each as a block\n"
               << "  convert-wiiu [dir]  Convert downloaded Wii U archives for Cemu (default Roms/wiiu)\n"

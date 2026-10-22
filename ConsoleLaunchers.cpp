@@ -1,6 +1,9 @@
 #include "top.hpp"
 #include "RetroArchConsoleLauncher.hpp"
+#include "ShellMessage.hpp"
 
+#include <cstring>
+#include <sstream>
 
 
 namespace fs = std::filesystem;
@@ -59,6 +62,39 @@ bool ConsoleLauncher::launchExternalApplication(
     return launchExternalChecked(args);
 }
 
+bool RetroArchConsoleLauncher::launchRetroArchWithSystemFiles(
+        const std::string& systemName,
+        const char* coreEnvironmentVariable,
+        const char* defaultCore,
+        const std::string& contentPath,
+        const char* requiredFiles) {
+    static const char* const kSystemDirs[] = {"Misc BIOS", "third_party/libretro/system"};
+    auto present = [&](const std::string& name) {
+        for (const char* dir : kSystemDirs)
+            if (fs::exists(fs::path(dir) / name)) return true;
+        return false;
+    };
+
+    std::stringstream required(requiredFiles ? requiredFiles : "");
+    std::string entry;
+    while (std::getline(required, entry, ';')) {
+        if (entry.empty()) continue;
+        bool found = false;
+        std::stringstream alternatives(entry);
+        std::string name;
+        while (std::getline(alternatives, name, '|'))
+            found = found || present(name);
+        if (!found) {
+            std::cerr << "[" << systemName << "] Missing system file: "
+                      << entry << " (looked in Misc BIOS/ and third_party/libretro/system/)."
+                         " The game may not start without it.\n";
+            postShellMessage(systemName + ": missing BIOS/system file " + entry +
+                             " (put it in Misc BIOS/). The game may not start.");
+        }
+    }
+    return launchRetroArch(systemName, coreEnvironmentVariable, defaultCore, contentPath);
+}
+
 bool RetroArchConsoleLauncher::launchRetroArch(
         const std::string& systemName,
         const char* coreEnvironmentVariable,
@@ -71,6 +107,8 @@ bool RetroArchConsoleLauncher::launchRetroArch(
     if (!fs::exists(core)) {
         std::cerr << "[" << systemName << "] RetroArch core not found: " << core << "\n"
                   << "Set " << coreEnvironmentVariable << " to the core's full path.\n";
+        postShellMessage(systemName + ": libretro core not found (" +
+                         fs::path(core).filename().string() + "). Run scripts/fetch_emulators.sh.");
         return false;
     }
 

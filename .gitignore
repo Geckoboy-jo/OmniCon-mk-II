@@ -20,3 +20,6 @@ third_party/cdecrypt/cdecrypt
 third_party/cdecrypt/*.o
 third_party/cdecrypt/*.d
 saves/wiiu_converted.tsv
+
+third_party/libretro/*.so
+third_party/mame/

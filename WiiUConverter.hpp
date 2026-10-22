@@ -2,19 +2,13 @@
 
 #include <functional>
 #include <string>
+#include "WiiUConverterResult.hpp"
 
 // Converts Wii U NUS archives (title.tmd/title.tik/*.app inside a .7z or .zip)
 // into titles installed in Cemu's mlc folder. Conversion is lazy: it runs the
 // first time a title is launched (or via the `convert-wiiu` command) and is
 // recorded in saves/wiiu_converted.tsv so later runs skip it.
 namespace WiiUConverter {
-
-struct Result {
-    bool ok = false;
-    std::string titleId;   // 16 lowercase hex digits
-    std::string titleDir;  // installed directory inside the mlc folder
-    std::string error;
-};
 
 using Progress = std::function<void(const std::string&)>;
 

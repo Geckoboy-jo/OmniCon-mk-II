@@ -2,6 +2,7 @@
 #define GBA_HPP
 
 #include "top.hpp"
+#include "gba_input_t.hpp"
 #include <memory>
 #include <vector>
 #include <thread>
@@ -10,19 +11,6 @@
 #include <SDL2/SDL.h>
 
 struct mCore;
-
-struct gba_input_t {
-    bool a;
-    bool b;
-    bool select;
-    bool start;
-    bool right;
-    bool left;
-    bool up;
-    bool down;
-    bool r;
-    bool l;
-};
 
 class GBAEmulation
 {

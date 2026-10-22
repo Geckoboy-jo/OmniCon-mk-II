@@ -1,18 +1,11 @@
 #pragma once
 
 #include "top.hpp"
+#include "n64_input_t.hpp"
 #include <atomic>
 #include <memory>
 #include <string>
 #include <SDL2/SDL.h>
-
-struct n64_input_t {
-    bool up, down, left, right;
-    bool a, b;
-    bool c_up, c_down, c_left, c_right;
-    bool l, r, z;
-    bool start;
-};
 
 class Mupen64PlusBackend;
 

@@ -2,38 +2,13 @@
 #define N3DS_HPP
 
 #include "top.hpp"
+#include "n3ds_input_t.hpp"
+#include "n3ds_color_t.hpp"
 #include <memory>
 #include <vector>
 #include <mutex>
 #include <atomic>
 #include <SDL2/SDL.h>
-
-struct n3ds_input_t {
-    bool a;
-    bool b;
-    bool x;
-    bool y;
-    bool start;
-    bool select;
-    bool up;
-    bool down;
-    bool left;
-    bool right;
-    bool l;
-    bool r;
-    bool zl;
-    bool zr;
-    bool    touchPressed;
-    int16_t touchX;   // libretro pointer range: -0x7fff to +0x7fff
-    int16_t touchY;
-};
-
-struct n3ds_color_t {
-    unsigned char r;
-    unsigned char g;
-    unsigned char b;
-    unsigned char a;
-};
 
 class N3DSEmulation
 {

@@ -36,9 +36,9 @@ public:
     static void loadConsoleBindings();
 
     // Public so free functions in the .cpp can access them
-    static const SystemType  kSystems[36];
-    static const char* const kSysAbbrev[36];
-    static constexpr int     kNumSystems = 36;
+    static const SystemType  kSystems[105];
+    static const char* const kSysAbbrev[105];
+    static constexpr int     kNumSystems = 105;
 
 private:
     // SDL resources
@@ -53,7 +53,7 @@ private:
     // ── Layout constants ──────────────────────────────────────────────────────
     static constexpr int kW        = 1280;
     static constexpr int kH        = 720;
-    static constexpr int kHeaderH  = 78;   // two-row console filter bar
+    static constexpr int kHeaderH  = 50;   // single-row family filter bar
     static constexpr int kInfoH    = 46;   // bottom info bar height
     static constexpr int kGridH    = kH - kHeaderH - kInfoH;   // 620
     static constexpr int kCols     = 7;
@@ -97,8 +97,18 @@ private:
     bool        searchActive_ = false;
     std::string searchQuery_;
 
-    // Hit rects for filter buttons: [0]=All, [1..kNumSystems]=system 0..kNumSystems-1, [kNumSystems+1]=Downloaded
+    // Hit rects for header buttons: [0]=All, [1..kNumSystemFamilies]=family, [kNumSystemFamilies+1]=Downloaded
     SDL_Rect filterBtnRects_[kNumSystems + 2];
+
+    // Family dropdown: openFamily_ is -1 when closed, otherwise a SystemFamily index.
+    // Items hold the index into kSystems[] that a click selects.
+    int  openFamily_     = -1;
+    int  hoverDropdown_  = -1;
+    SDL_Rect dropdownPanel_ = {0, 0, 0, 0};
+    std::vector<std::pair<SDL_Rect, int>> dropdownItems_;
+    void layoutDropdown();
+    void renderDropdown();
+    int  dropdownItemAtMouse(int mx, int my) const;
 
     // ── Logic helpers ─────────────────────────────────────────────────────────
     void rebuildFilter();

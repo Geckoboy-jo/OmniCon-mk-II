@@ -2,36 +2,13 @@
 #define NDS_HPP
 
 #include "top.hpp"
+#include "nds_input_t.hpp"
+#include "nds_color_t.hpp"
 #include <memory>
 #include <vector>
 #include <mutex>
 #include <atomic>
 #include <SDL2/SDL.h>
-
-struct nds_input_t {
-    bool a;
-    bool b;
-    bool x;
-    bool y;
-    bool start;
-    bool select;
-    bool up;
-    bool down;
-    bool left;
-    bool right;
-    bool l;
-    bool r;
-    bool    touchPressed;
-    int16_t touchX;   // libretro pointer range: -0x7fff to +0x7fff
-    int16_t touchY;
-};
-
-struct nds_color_t {
-    unsigned char r;
-    unsigned char g;
-    unsigned char b;
-    unsigned char a;
-};
 
 class NDSEmulation
 {

@@ -2,6 +2,8 @@
 #define ATARI2600_HPP
 
 #include "top.hpp"
+#include "atari2600_input_t.hpp"
+#include "atari2600_color_t.hpp"
 #include <memory>
 #include <vector>
 #include <mutex>
@@ -9,24 +11,6 @@
 #include <SDL2/SDL.h>
 
 class Atari2600Backend;
-
-struct atari2600_input_t {
-    bool up;
-    bool down;
-    bool left;
-    bool right;
-    bool fire;
-    bool select;
-    bool start;
-    bool reset;
-};
-
-struct atari2600_color_t {
-    unsigned char r;
-    unsigned char g;
-    unsigned char b;
-    unsigned char a;
-};
 
 class Atari2600Emulation
 {

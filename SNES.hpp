@@ -2,6 +2,8 @@
 #define SNES_HPP
 
 #include "top.hpp"
+#include "superpy_input_t.hpp"
+#include "superpy_color_t.hpp"
 #include <array>
 #include <vector>
 #include <memory>
@@ -11,28 +13,6 @@
 #include <SDL2/SDL.h>
 
 class SuperPyBackend;
-
-struct superpy_input_t {
-    bool up;
-    bool down;
-    bool left;
-    bool right;
-    bool a;
-    bool b;
-    bool x;
-    bool y;
-    bool l;
-    bool r;
-    bool select;
-    bool start;
-};
-
-struct superpy_color_t {
-    unsigned char r;
-    unsigned char g;
-    unsigned char b;
-    unsigned char a;
-};
 
 class SNESEmulation
 {

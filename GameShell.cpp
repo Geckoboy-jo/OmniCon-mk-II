@@ -1,5 +1,7 @@
 #include "GameShell.hpp"
 #include "ConsoleLaunchers.hpp"
+#include "ExtraSystems.hpp"
+#include "ShellMessage.hpp"
 #include "DownloadManager.hpp"
 #include "NES.hpp"
 #include "SNES.hpp"
@@ -35,7 +37,7 @@ namespace fs = std::filesystem;
 
 // ─── Static members ───────────────────────────────────────────────────────────
 
-const SystemType GameShell::kSystems[36] = {
+const SystemType GameShell::kSystems[105] = {
     SystemType::NES,
     SystemType::SNES,
     SystemType::GameBoy,
@@ -72,13 +74,93 @@ const SystemType GameShell::kSystems[36] = {
     SystemType::PCEngine,
     SystemType::ColecoVision,
     SystemType::Intellivision,
+    SystemType::VirtualBoy,
+    SystemType::PokemonMini,
+    SystemType::FamicomDiskSystem,
+    SystemType::GameAndWatch,
+    SystemType::Satellaview,
+    SystemType::AtariXEGS,
+    SystemType::SegaCD,
+    SystemType::Sega32X,
+    SystemType::SegaPico,
+    SystemType::SG1000,
+    SystemType::NeoGeoAES,
+    SystemType::NeoGeoMVS,
+    SystemType::NeoGeoCD,
+    SystemType::NeoGeoPocket,
+    SystemType::NeoGeoPocketColor,
+    SystemType::PCFX,
+    SystemType::SuperGrafx,
+    SystemType::PCEngineCD,
+    SystemType::Panasonic3DO,
+    SystemType::AmigaCD32,
+    SystemType::WonderSwan,
+    SystemType::WonderswanColor,
+    SystemType::SwanCrystal,
+    SystemType::FairchildChannelF,
+    SystemType::Vectrex,
+    SystemType::WataraSupervision,
+    SystemType::Atomiswave,
+    SystemType::Naomi,
+    SystemType::Naomi2,
+    SystemType::CPS1,
+    SystemType::CPS2,
+    SystemType::CPS3,
+    SystemType::IGS_PGM,
+    SystemType::SegaSystem16,
+    SystemType::SegaSystem32,
+    SystemType::SegaModel3,
+    SystemType::Arcade,
+    SystemType::Odyssey2,
+    SystemType::CDi,
+    SystemType::CreatiVision,
+    SystemType::CasioLoopy,
+    SystemType::ApplePippin,
+    SystemType::EpochSuperCassetteVision,
+    SystemType::APFM1000,
+    SystemType::EmersonArcadia2001,
+    SystemType::IntertonVC4000,
+    SystemType::BallyAstrocade,
+    SystemType::RCAStudioII,
+    SystemType::TigerGameCom,
+    SystemType::AdventureVision,
+    SystemType::BandaiRX78,
+    SystemType::SuperACan,
+    SystemType::FMM7,
+    SystemType::FMTownsMarty,
+    SystemType::HartungGameMaster,
+    SystemType::GP32,
+    SystemType::SegaModel1,
+    SystemType::SegaModel2,
+    SystemType::NamcoSystem22,
+    SystemType::NamcoSystem23,
+    SystemType::NamcoSystem246,
+    SystemType::NamcoSystem256,
+    SystemType::CaveCV1000,
+    SystemType::KonamiGX,
+    SystemType::IGS_PGM2,
+    SystemType::SegaHikaru,
+    SystemType::SegaChihiro,
+    SystemType::Triforce,
+    SystemType::HyperNeoGeo64,
 };
 
-const char* const GameShell::kSysAbbrev[36] = {
+static_assert(sizeof(GameShell::kSystems) / sizeof(GameShell::kSystems[0]) == GameShell::kNumSystems,
+              "kSystems must list every filterable system");
+
+const char* const GameShell::kSysAbbrev[105] = {
     "NES", "SNES", "GB", "GBC", "GBA", "NDS", "3DS", "2600", "5200",
     "800", "GEN", "N64", "PS1", "PS2", "PS3", "GCN", "ODY", "PC", "DC",
     "STM", "SMS", "GG", "SAT", "WII", "WIIU", "SW", "PSP", "VITA",
-    "XBOX", "360", "7800", "LYNX", "JAG", "PCE", "COLECO", "INTV"
+    "XBOX", "360", "7800", "LYNX", "JAG", "PCE", "COLECO", "INTV",
+    "VB", "PMIN", "FDS", "G&W", "BSX", "XEGS", "SCD", "32X", "PICO", "SG1K",
+    "AES", "MVS", "NGCD", "NGP", "NGPC", "PCFX", "SGX", "PCCD", "3DO", "CD32",
+    "WS", "WSC", "CRYS", "CHF", "VECX", "SV", "AW", "NAO", "NAO2", "CPS1",
+    "CPS2", "CPS3", "PGM", "S16", "S32", "MDL3", "ARC",
+    "O2", "CDI", "CRV", "LOOP", "PIP", "SCV", "APF", "ARCD", "VC4K", "ASTR",
+    "ST2", "GCOM", "ADV", "RX78", "SACN", "FM7", "MRTY", "GMST", "GP32",
+    "MDL1", "MDL2", "N22", "N23", "N246", "N256", "CV1K", "KGX", "PGM2",
+    "HIK", "CHIH", "TRI", "HNG"
 };
 
 // ─── Colour palette ───────────────────────────────────────────────────────────
@@ -213,7 +295,10 @@ static SDL_Color sysBadgeColor(SystemType sys) {
         case SystemType::PCEngine:      return { 170, 45, 55, 255};
         case SystemType::ColecoVision:  return { 45, 145, 140, 255};
         case SystemType::Intellivision: return { 120, 80, 150, 255};
-        default:                       return { 70,  70,  70, 255};
+        default:
+            if (const ExtraSystemInfo* info = findExtraSystem(sys))
+                return {info->color[0], info->color[1], info->color[2], 255};
+            return { 70,  70,  70, 255};
     }
 }
 
@@ -458,21 +543,44 @@ void GameShell::ensureVisible() {
 // ─── Filter button layout ─────────────────────────────────────────────────────
 
 void GameShell::computeFilterRects() {
-    // Split system filters across two rows to keep every system selectable.
-    const int btnH   = 30;
+    // One row: All, one button per family, Downloaded.
+    const int count   = kNumSystemFamilies + 2;
+    const int btnH    = 32;
     const int marginX = 8;
-    const int gapX = 4;
-    const int buttonsPerRow = (kNumSystems + 1) / 2 + 1;
-    const int btnW = (kW - 2 * marginX - (buttonsPerRow - 1) * gapX) / buttonsPerRow;
-    const int rowGap = 6;
-    const int firstRowY = (kHeaderH - (2 * btnH + rowGap)) / 2;
+    const int gapX    = 6;
+    const int btnW    = (kW - 2 * marginX - (count - 1) * gapX) / count;
+    const int y       = (kHeaderH - btnH) / 2;
 
-    for (int i = 0; i < kNumSystems + 2; ++i) {
-        const int row = i < buttonsPerRow ? 0 : 1;
-        const int column = row == 0 ? i : i - buttonsPerRow;
-        const int x = marginX + column * (btnW + gapX);
-        const int y = firstRowY + row * (btnH + rowGap);
-        filterBtnRects_[i] = {x, y, btnW, btnH};
+    for (int i = 0; i < count; ++i)
+        filterBtnRects_[i] = {marginX + i * (btnW + gapX), y, btnW, btnH};
+    layoutDropdown();
+}
+
+void GameShell::layoutDropdown() {
+    dropdownItems_.clear();
+    dropdownPanel_ = {0, 0, 0, 0};
+    if (openFamily_ < 0) return;
+
+    constexpr int itemW = 230, itemH = 26, rowsPerCol = 12, pad = 6;
+    std::vector<int> members;
+    for (int i = 0; i < kNumSystems; ++i)
+        if (static_cast<int>(systemFamily(kSystems[i])) == openFamily_)
+            members.push_back(i);
+    if (members.empty()) return;
+
+    const int rows = std::min(rowsPerCol, static_cast<int>(members.size()));
+    const int cols = (static_cast<int>(members.size()) + rowsPerCol - 1) / rowsPerCol;
+    const int panelW = cols * itemW + 2 * pad;
+    const int panelH = rows * itemH + 2 * pad;
+    const int anchorX = filterBtnRects_[1 + openFamily_].x;
+    const int panelX = std::max(0, std::min(anchorX, kW - panelW));
+    dropdownPanel_ = {panelX, kHeaderH, panelW, panelH};
+
+    for (std::size_t k = 0; k < members.size(); ++k) {
+        const int col = static_cast<int>(k) / rowsPerCol;
+        const int row = static_cast<int>(k) % rowsPerCol;
+        dropdownItems_.push_back({{panelX + pad + col * itemW, kHeaderH + pad + row * itemH,
+                                   itemW, itemH}, members[k]});
     }
 }
 
@@ -488,13 +596,27 @@ int GameShell::gameAtMouse(int mx, int my) const {
     return idx;
 }
 
+// Returns -2 for no hit, -1 for All, kNumSystems for Downloaded, and
+// kNumSystems + 1 + family for a family button.
 int GameShell::filterBtnAtMouse(int mx, int my) const {
-    for (int i = 0; i < kNumSystems + 2; ++i) {
+    for (int i = 0; i < kNumSystemFamilies + 2; ++i) {
         const SDL_Rect& r = filterBtnRects_[i];
-        if (mx >= r.x && mx < r.x + r.w && my >= r.y && my < r.y + r.h)
-            return i - 1;   // [0]→-1=All, [1..kNumSystems]→0..kNumSystems-1, [kNumSystems+1]→kNumSystems=Downloaded
+        if (mx >= r.x && mx < r.x + r.w && my >= r.y && my < r.y + r.h) {
+            if (i == 0) return -1;
+            if (i == kNumSystemFamilies + 1) return kNumSystems;
+            return kNumSystems + i;
+        }
     }
-    return -2;   // no button hit
+    return -2;
+}
+
+int GameShell::dropdownItemAtMouse(int mx, int my) const {
+    for (const auto& item : dropdownItems_) {
+        const SDL_Rect& r = item.first;
+        if (mx >= r.x && mx < r.x + r.w && my >= r.y && my < r.y + r.h)
+            return item.second;
+    }
+    return -1;
 }
 
 // ─── Rendering ────────────────────────────────────────────────────────────────
@@ -508,35 +630,71 @@ void GameShell::renderHeader() {
     SDL_SetRenderDrawColor(renderer_, 30, 30, 65, 255);
     SDL_RenderDrawLine(renderer_, 0, kHeaderH - 1, kW - 1, kHeaderH - 1);
 
-    // Filter buttons — All + systems + Downloaded
-    for (int i = 0; i < kNumSystems + 2; ++i) {
-        int fi      = i - 1;   // -1=All, 0..kNumSystems-1=system, kNumSystems=Downloaded
-        bool active = (fi == currentFilter_);
+    const int selectedFamily = (currentFilter_ >= 0 && currentFilter_ < kNumSystems)
+        ? static_cast<int>(systemFamily(kSystems[currentFilter_])) : -1;
+
+    for (int i = 0; i < kNumSystemFamilies + 2; ++i) {
+        const bool isAll = (i == 0);
+        const bool isDownloaded = (i == kNumSystemFamilies + 1);
+        const int family = i - 1;
+        const bool active = isAll ? currentFilter_ == -1
+                          : isDownloaded ? currentFilter_ == kNumSystems
+                          : family == selectedFamily;
+        const bool open = !isAll && !isDownloaded && family == openFamily_;
         const SDL_Rect& r = filterBtnRects_[i];
 
-        SDL_Color bg;
-        if (active && fi == kNumSystems)
-            bg = {25, 110, 65, 255};   // green tint for Downloaded tab
-        else
-            bg = active ? kColorFiltAct : kColorFiltInact;
+        SDL_Color bg = isDownloaded && active ? SDL_Color{25, 110, 65, 255}
+                     : active ? kColorFiltAct
+                     : open   ? kColorBoxHover : kColorFiltInact;
         SDL_SetRenderDrawColor(renderer_, bg.r, bg.g, bg.b, 255);
         SDL_RenderFillRect(renderer_, &r);
 
-        if (active) {
-            SDL_Color ul = (fi == kNumSystems)
-                ? SDL_Color{70, 200, 120, 255}
-                : SDL_Color{100, 180, 255, 255};
+        if (active || open) {
+            SDL_Color ul = isDownloaded ? SDL_Color{70, 200, 120, 255}
+                                        : SDL_Color{100, 180, 255, 255};
             SDL_SetRenderDrawColor(renderer_, ul.r, ul.g, ul.b, 255);
             SDL_Rect ulr = {r.x, r.y + r.h - 2, r.w, 2};
             SDL_RenderFillRect(renderer_, &ulr);
         }
 
-        const char* label;
-        if (i == 0)                 label = "All";
-        else if (fi == kNumSystems) label = "DL'd";
-        else                        label = kSysAbbrev[fi];
-        SDL_Color tc = active ? SDL_Color{230, 240, 255, 255} : kColorTextDim;
+        std::string label;
+        if (isAll)             label = "All";
+        else if (isDownloaded) label = "Downloaded";
+        else {
+            label = systemFamilyName(static_cast<SystemFamily>(family));
+            if (active) label += ": " + std::string(kSysAbbrev[currentFilter_]);
+            label += open ? " \xe2\x96\xb4" : " \xe2\x96\xbe";
+        }
+        SDL_Color tc = (active || open) ? SDL_Color{230, 240, 255, 255} : kColorTextDim;
         renderCenteredText(label, r.x, r.y + (r.h - 14) / 2, r.w, tc, fontMd_);
+    }
+}
+
+void GameShell::renderDropdown() {
+    if (openFamily_ < 0 || dropdownItems_.empty()) return;
+
+    SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+    SDL_SetRenderDrawColor(renderer_, 12, 12, 28, 245);
+    SDL_RenderFillRect(renderer_, &dropdownPanel_);
+    SDL_SetRenderDrawColor(renderer_, 80, 150, 255, 255);
+    SDL_RenderDrawRect(renderer_, &dropdownPanel_);
+
+    for (const auto& item : dropdownItems_) {
+        const SDL_Rect& r = item.first;
+        const SystemType sys = kSystems[item.second];
+        const bool selected = item.second == currentFilter_;
+        const bool hovered  = item.second == hoverDropdown_;
+        if (selected || hovered) {
+            SDL_Color bg = selected ? kColorBoxSel : kColorBoxHover;
+            SDL_SetRenderDrawColor(renderer_, bg.r, bg.g, bg.b, 255);
+            SDL_RenderFillRect(renderer_, &r);
+        }
+        const SDL_Color badge = sysBadgeColor(sys);
+        SDL_SetRenderDrawColor(renderer_, badge.r, badge.g, badge.b, 255);
+        SDL_Rect swatch = {r.x + 6, r.y + 7, 12, 12};
+        SDL_RenderFillRect(renderer_, &swatch);
+        renderText(GameLibrary::systemName(sys), r.x + 26, r.y + 6,
+                   selected ? kColorTextPri : kColorTextDim, fontMd_, r.w - 32);
     }
 }
 
@@ -668,6 +826,15 @@ void GameShell::renderInfoBar() {
         "Ctrl+F = Search    Esc = Exit",
         20, barY + kInfoH - 16, kColorTextDim, fontSm_);
 
+    std::string toast;
+    if (currentShellMessage(toast)) {
+        SDL_Rect tr = {kW / 2 - 400, barY - 34, 800, 28};
+        SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+        SDL_SetRenderDrawColor(renderer_, 150, 60, 20, 235);
+        SDL_RenderFillRect(renderer_, &tr);
+        renderText(toast, tr.x + 10, tr.y + 6, {255, 235, 200, 255}, fontMd_, tr.w - 20);
+    }
+
     // Controller indicator (right-aligned)
     if (!ctrlName_.empty()) {
         std::string ctrlLabel = "\xf0\x9f\x8e\xae  " + ctrlName_;
@@ -686,6 +853,7 @@ void GameShell::render() {
     renderHeader();
     renderGrid();
     renderInfoBar();
+    renderDropdown();
     if (searchActive_) renderSearchBox();
     SDL_RenderPresent(renderer_);
 }
@@ -911,6 +1079,7 @@ void GameShell::run(GameLibrary& library, const std::string& coversDir) {
                 int lx, ly;
                 toLogical(ev.motion.x, ev.motion.y, &lx, &ly);
                 hoverIdx_ = gameAtMouse(lx, ly);
+                hoverDropdown_ = dropdownItemAtMouse(lx, ly);
             }
 
             // ── Text input (search) ───────────────────────────────────────────
@@ -937,11 +1106,24 @@ void GameShell::run(GameLibrary& library, const std::string& coversDir) {
                               << " gameAtMouse=" << gameAtMouse(mx, my) << "\n";
                 }
                 int fi = filterBtnAtMouse(mx, my);
-                if (fi >= -1) {
-                    // Filter button clicked
+                int di = dropdownItemAtMouse(mx, my);
+                if (di >= 0) {
+                    currentFilter_ = di;
+                    openFamily_ = -1;
+                    rebuildFilter();
+                    computeFilterRects();
+                } else if (fi >= kNumSystems + 1) {
+                    int fam = fi - kNumSystems - 1;
+                    openFamily_ = (openFamily_ == fam) ? -1 : fam;
+                    layoutDropdown();
+                } else if (fi >= -1) {
+                    openFamily_ = -1;
                     currentFilter_ = fi;
                     rebuildFilter();
                     computeFilterRects();
+                } else if (openFamily_ >= 0) {
+                    openFamily_ = -1;
+                    layoutDropdown();
                 } else {
                     // Game grid clicked
                     int gi = gameAtMouse(mx, my);
@@ -1595,7 +1777,8 @@ void GameShell::launchGame(const GameEntry& game) {
             break;
         }
         default:
-            std::cerr << "[GameShell] Unknown system for ROM: " << path << "\n";
+            if (!launchExtraSystem(sys, path))
+                std::cerr << "[GameShell] Unknown system for ROM: " << path << "\n";
             break;
     }
 }

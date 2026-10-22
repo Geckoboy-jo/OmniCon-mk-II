@@ -2,6 +2,8 @@
 #define GAMEBOY_HPP
 
 #include "top.hpp"
+#include "sameboy_input_t.hpp"
+#include "sameboy_color_t.hpp"
 #include <memory>
 #include <vector>
 #include <thread>
@@ -10,24 +12,6 @@
 #include <SDL2/SDL.h>
 
 class SameBoyBackend;
-
-struct sameboy_input_t {
-    bool up;
-    bool down;
-    bool left;
-    bool right;
-    bool a;
-    bool b;
-    bool select;
-    bool start;
-};
-
-struct sameboy_color_t {
-    unsigned char r;
-    unsigned char g;
-    unsigned char b;
-    unsigned char a;
-};
 
 class GameBoyEmulation
 {

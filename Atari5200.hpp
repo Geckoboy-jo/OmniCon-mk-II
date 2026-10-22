@@ -2,30 +2,13 @@
 #define ATARI5200_HPP
 
 #include "top.hpp"
+#include "atari5200_input_t.hpp"
+#include "atari5200_color_t.hpp"
 #include <memory>
 #include <vector>
 #include <mutex>
 #include <atomic>
 #include <SDL2/SDL.h>
-
-struct atari5200_input_t {
-    bool up;
-    bool down;
-    bool left;
-    bool right;
-    bool fire;
-    bool secondary;
-    bool select;
-    bool start;
-    bool reset;
-};
-
-struct atari5200_color_t {
-    unsigned char r;
-    unsigned char g;
-    unsigned char b;
-    unsigned char a;
-};
 
 class Atari5200Emulation
 {

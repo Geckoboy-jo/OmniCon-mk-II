@@ -1,7 +1,6 @@
 #pragma once
 
 #include "top.hpp"
-#include "RetroArchConsoleLauncher.hpp"
 class ConsoleLauncher {
 public:
     virtual ~ConsoleLauncher() = default;
@@ -11,3 +10,5 @@ protected:
     static bool launchExternalApplication(const std::string& launcher,
                                           const std::vector<std::string>& arguments);
 };
+
+#include "RetroArchConsoleLauncher.hpp"

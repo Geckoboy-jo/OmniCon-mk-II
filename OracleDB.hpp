@@ -2,24 +2,8 @@
 
 #include <string>
 #include <vector>
-
-struct OracleDBConfig {
-    std::string host;
-    int port = 13306;
-    std::string service; // MySQL database name (default: omnicon)
-    std::string user;
-    std::string password;
-};
-
-struct OracleGameRow {
-    int         id = 0;
-    std::string name;
-    std::string downloadUrl;
-    std::string coverUrl;
-    std::string systemName;
-    std::string status;    // 'remote' | 'downloaded' | 'queued' | 'failed'
-    std::string localPath;
-};
+#include "OracleDBConfig.hpp"
+#include "OracleGameRow.hpp"
 
 // Load DB config from env vars / interactive prompt.
 OracleDBConfig promptOracleConfig();
