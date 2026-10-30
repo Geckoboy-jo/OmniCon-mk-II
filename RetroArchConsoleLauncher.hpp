@@ -28,6 +28,7 @@ protected:
 #include "PsVita.hpp"
 #include "Xbox.hpp"
 #include "Xbox360.hpp"
+#include "XboxCloud.hpp"
 #include "Atari7800.hpp"
 #include "AtariLynx.hpp"
 #include "AtariJaguar.hpp"

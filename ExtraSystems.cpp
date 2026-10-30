@@ -118,6 +118,7 @@ SystemFamily systemFamily(SystemType t) {
         case SystemType::PSP: case SystemType::PSVita:
             return SystemFamily::Sony;
         case SystemType::Xbox: case SystemType::Xbox360: case SystemType::PC:
+        case SystemType::XboxOne: case SystemType::XboxSeriesX:
         case SystemType::Steam:
             return SystemFamily::Microsoft;
         case SystemType::Atari2600: case SystemType::Atari5200: case SystemType::Atari800:

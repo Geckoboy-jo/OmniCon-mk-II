@@ -74,6 +74,36 @@ media even when the CHD and firmware are valid. Set
 Dreamcast archive downloads should contain a `.gdi`, `.cdi`, or `.chd` entry
 and any required track files.
 
+## Cover art for database games
+
+`scrape-db-covers [max-covers] [dry-run]` (at the `omnicon>` prompt) fetches
+box art for every Oracle DB game that has no cover yet and saves it to
+`saves/covers/<system>/<game name>.jpg`, where the shell looks for it. Images
+come from the libretro thumbnail library (no account or API key) and are
+deliberately small and low quality: at most 250 px on the longest side, JPEG
+quality 30 (about 7 KB each, so a full run is a few hundred MB). Only games in
+the Oracle DB are scraped, and games that already have a cover are skipped, so
+the command can be stopped and re-run. Use `dry-run` to see how many games would
+match, or a number to download only that many.
+
+Open `shell` afterwards to see the covers, or press **F6** in an open shell to
+load covers downloaded in another terminal. Games the source has no art for
+(Japan-only releases, DLC, Nintendo Switch and other systems it does not cover)
+keep the coloured placeholder; their names are listed in
+`saves/db_covers_unmatched.tsv`. The script needs Python 3 and Pillow
+(`pip install pillow`). `--quality`, `--max-size` and `--allow-title-screens`
+can be passed when running `scripts/scrape_db_covers.py` directly.
+
+## Steam library
+
+OmniCon lists installed Steam games, owned games from the Steam Web API
+(`~/.omnicon/steam.conf`), and the **non-Steam games** you added to Steam
+(*Add a Non-Steam Game*). Non-Steam games are read from
+`userdata/<id>/config/shortcuts.vdf` in your Steam folder (Linux paths,
+`STEAM_ROOT`, or a Windows install under `/mnt/<drive>/Program Files (x86)/Steam`
+in WSL), use any custom artwork from `config/grid/`, and launch through Steam
+like the rest. Steam must be installed on the machine OmniCon runs on.
+
 ## Additional console families
 
 The library also recognizes Sega Master System, Game Gear, Saturn; Nintendo
@@ -110,8 +140,54 @@ Wii U, Switch, Vita, Xbox, and Xbox 360 launch through external emulators:
 `Vita3K` (`OMNICON_VITA_LAUNCHER`), `xemu` (`OMNICON_XBOX_LAUNCHER`), and
 `xenia` (`OMNICON_XBOX360_LAUNCHER`) respectively. Install and configure those
 emulators, firmware, and keys as required by their projects. Xbox One and Xbox
-Series are not included because this project has no practical emulator launch
-backend for those platforms.
+Series have no emulator backend; their games come from Xbox Cloud Gaming instead
+(see below).
+
+### Xbox One and Xbox Series X|S (Xbox Cloud Gaming)
+
+OmniCon can list the games available to your Microsoft account on Xbox Cloud
+Gaming (xCloud) and open them in your browser. Games appear under the **XONE**
+(Xbox One) and **XSX** (Xbox Series X|S) filters, with box art.
+
+1. Open the **PC/Xbox** menu in the shell header and pick **Xbox One** or
+   **Xbox Series X|S** (also the `XONE` / `XSX` filters). While you are not
+   signed in, the list shows a sign-in prompt: press Enter / A (or click) and
+   the shell shows a short code and a `microsoft.com/link` address. Enter the
+   code on any phone or PC and sign in; the library loads when you finish.
+   Esc / B cancels. You can also run `xbox-login` at the OmniCon prompt
+   (`xbox-logout` removes the sign-in). The sign-in is stored in
+   `~/.omnicon/xbox_cloud_tokens.json` (owner-only permissions). If a signed-in
+   list is empty, Enter / A refreshes it and S / Y signs in again.
+2. The library is cached in `saves/xbox_cloud_library.json` and refreshed after
+   12 hours; if Xbox is unreachable the cached list is used.
+3. Selecting a game opens `https://www.xbox.com/play/launch/game/<product id>`
+   with `cmd.exe /c start` under WSL or `xdg-open` elsewhere. Xbox Cloud Gaming
+   needs a browser that xbox.com supports and, for most games, Game Pass
+   Ultimate. Your Microsoft account needs an Xbox profile (gamertag).
+
+No app registration is required. Optional settings go in
+`~/.omnicon/xbox.conf` (one `key=value` per line, `#` for comments); the
+matching environment variable, when set, wins:
+
+| Key | Environment variable | Meaning |
+| --- | --- | --- |
+| `scope` | `OMNICON_XBOX_CLOUD_SCOPE` | `mine` (default) or `all` cloud-playable titles (your history games are always included) |
+| `launcher` | `OMNICON_XBOX_CLOUD_LAUNCHER` | Browser command, for example `microsoft-edge` |
+| `client_id` | `OMNICON_XBOX_CLIENT_ID` | Azure client id for sign-in (default: xbox.com's) |
+
+By default the list combines two sources: cloud-streamable titles your account
+can play (owned games and, with Game Pass Ultimate, Game Pass titles), and games
+from your Xbox Live game history. History games that cannot be streamed (many
+paid games are not cloud-enabled) open their Microsoft Store page instead of
+cloud play. Only games you have launched at least once appear in the history,
+so a purchase you never started will not show up until you do. Each list ends
+with a **+** tile that opens Xbox Cloud Gaming (`xbox.com/play`) so you can add
+more games; press F5 (X on a controller) while on an Xbox list, or Enter / A on
+an empty list, to refresh and pick them up. A game is shown under Xbox Series X|S only when the
+Store lists it as Series-only; everything else is shown under Xbox One.
+`scripts/xcloud_library.py` implements the sign-in and library lookup using only
+the Python standard library. The xCloud endpoints are undocumented and may
+change without notice.
 
 ### Wii U archives (Cemu)
 

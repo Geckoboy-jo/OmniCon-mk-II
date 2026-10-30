@@ -22,6 +22,7 @@
 #include "SaveManager.hpp"
 #include "WiiUConverter.hpp"
 
+#include <algorithm>
 #include <cstdlib>
 #include <cctype>
 #include <filesystem>
@@ -1106,6 +1107,8 @@ void printHelp()
               << "  download <url>  Download one file and store it as a block\n"
               << "  download-all <url>  Download file links from a page and store each as a block\n"
               << "  convert-wiiu [dir]  Convert downloaded Wii U archives for Cemu (default Roms/wiiu)\n"
+              << "  xbox-login      Sign in to Xbox Cloud Gaming to list your Xbox One / Series X|S library\n"
+              << "  xbox-logout     Forget the saved Xbox Cloud Gaming sign-in\n"
               << "  load-folder <path>  Upload every regular file in a local folder\n"
               << "  play <path>     Load and run a ROM by extension\n"
               << "                  .nes -> NES, .smc/.sfc -> SNES, .gb -> Game Boy\n"
@@ -1131,6 +1134,7 @@ void printHelp()
               << "  play-n64 <path>  Load and run a Nintendo 64 ROM (.n64/.z64/.v64)\n"
               << "  shell           Open the graphical game library launcher\n"
               << "  scrape-covers   Download missing box art for all games in the library\n"
+              << "  scrape-db-covers [max] [dry-run]  Fetch small low-quality covers for Oracle DB games without one\n"
               << "  controls        Configure controls for all systems (keyboard + controller)\n"
               << "  controls-csv    Parse Controls.csv and set controls for all systems\n"
               << "  remap           Open the interactive controller button-mapping screen\n"
@@ -1484,6 +1488,7 @@ int main()
         lib.scan("Roms");                    // local ROMs first
         lib.scanSteam();                     // installed Steam games
         lib.scanSteamOwned("~/.omnicon/steam.conf"); // all owned Steam games via Web API
+        lib.scanXboxCloud("saves/xbox_cloud_library.json", "saves/covers"); // Xbox Cloud Gaming library (after 'xbox-login')
         lib.loadFromDB(oracleCfg);          // append DB entries (deduplicates against local)
         lib.fetchSteamCovers("saves/covers"); // download missing Steam cover art from CDN
         lib.resolveCoverPaths("saves/covers");
@@ -1538,6 +1543,7 @@ int main()
             lib.scan("Roms");
             lib.scanSteam();
             lib.scanSteamOwned("~/.omnicon/steam.conf");
+            lib.scanXboxCloud("saves/xbox_cloud_library.json", "saves/covers");
             lib.loadFromDB(oracleCfg);
             lib.fetchSteamCovers("saves/covers"); // download missing Steam cover art from CDN
             lib.resolveCoverPaths("saves/covers");
@@ -1594,6 +1600,22 @@ int main()
                 directory, [](const std::string& message) { std::cout << message << std::endl; },
                 &failures);
             std::cout << "Wii U conversion done. Ready=" << converted << " Failed=" << failures << "\n";
+            continue;
+        }
+
+        // xbox-login / xbox-logout: sign in to (or out of) Xbox Cloud Gaming. The next
+        // 'shell' then lists that account's cloud library under Xbox One / Series X|S.
+        if (input == "xbox-login" || input == "xbox-logout") {
+            if (!hasCommand("python3")) {
+                std::cerr << "python3 is required for Xbox Cloud Gaming.\n";
+                continue;
+            }
+            const int status = std::system(("python3 scripts/xcloud_library.py " +
+                                            input.substr(std::string("xbox-").size())).c_str());
+            if (status != 0)
+                std::cerr << input << " did not complete.\n";
+            else if (input == "xbox-login")
+                std::cout << "Run 'shell' to load your Xbox Cloud Gaming library.\n";
             continue;
         }
 
@@ -1854,6 +1876,67 @@ int main()
                         lib.resolveCoverPaths("saves/covers");
                 }
             }
+            continue;
+        }
+
+        // scrape-db-covers [limit] [dry-run]: fetch small, low-quality cover images for
+        // Oracle DB games that have none (see scripts/scrape_db_covers.py).
+        if (input == "scrape-db-covers" || input.rfind("scrape-db-covers ", 0) == 0) {
+            std::string extraArgs;
+            bool badArgument = false;
+            std::istringstream argStream(trim(input.substr(std::string("scrape-db-covers").size())));
+            std::string token;
+            while (argStream >> token) {
+                if (token == "dry-run") {
+                    extraArgs += " --dry-run";
+                } else if (!token.empty() && std::all_of(token.begin(), token.end(), ::isdigit)) {
+                    extraArgs += " --limit " + token;
+                } else {
+                    std::cout << "Usage: scrape-db-covers [max-covers] [dry-run]\n";
+                    badArgument = true;
+                    break;
+                }
+            }
+            if (badArgument) continue;
+            if (!hasCommand("python3") ||
+                !std::filesystem::exists("scripts/scrape_db_covers.py")) {
+                std::cerr << "python3 and scripts/scrape_db_covers.py are required.\n";
+                continue;
+            }
+
+            GameLibrary lib;
+            lib.scan("Roms");
+            lib.loadFromDB(oracleCfg);
+            lib.resolveCoverPaths("saves/covers");
+
+            // Only Oracle DB games without a cover; one tab-separated line per game.
+            const std::string queue = "saves/db_cover_queue.tsv";
+            std::filesystem::create_directories("saves");
+            int queued = 0;
+            {
+                std::ofstream out(queue, std::ios::trunc);
+                for (const auto& g : lib.games()) {
+                    if (g.dbId <= 0 || !g.coverPath.empty()) continue;
+                    std::string name = g.displayName;
+                    std::replace_if(name.begin(), name.end(),
+                                    [](char c) { return c == '\t' || c == '\n' || c == '\r'; }, ' ');
+                    out << g.dbId << '\t' << GameLibrary::systemDirName(g.system)
+                        << '\t' << name << '\n';
+                    ++queued;
+                }
+            }
+            if (queued == 0) {
+                std::cout << "Every database game already has a cover.\n";
+                continue;
+            }
+            const std::string cmd = "python3 scripts/scrape_db_covers.py --input " +
+                                    shellEscape(queue) + " --covers-dir saves/covers" + extraArgs +
+                                    " --unmatched saves/db_covers_unmatched.tsv";
+            const int status = std::system(cmd.c_str());
+            if (status != 0)
+                std::cerr << "scrape-db-covers did not complete.\n";
+            else
+                std::cout << "Open 'shell' (or press F6 inside it) to see the new covers.\n";
             continue;
         }
 

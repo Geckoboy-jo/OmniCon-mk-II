@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
@@ -203,6 +204,9 @@ SystemType GameLibrary::systemFromName(const std::string& name) {
     if (name == "PlayStation Vita" || name == "PS Vita" || name == "Vita") return SystemType::PSVita;
     if (name == "Xbox") return SystemType::Xbox;
     if (name == "Xbox 360" || name == "Xbox360") return SystemType::Xbox360;
+    if (name == "Xbox One" || name == "XboxOne") return SystemType::XboxOne;
+    if (name == "Xbox Series X|S" || name == "Xbox Series X" || name == "Xbox Series S" ||
+        name == "XboxSeriesX") return SystemType::XboxSeriesX;
     if (name == "Atari 7800") return SystemType::Atari7800;
     if (name == "Atari Lynx" || name == "Lynx") return SystemType::AtariLynx;
     if (name == "Atari Jaguar" || name == "Jaguar") return SystemType::AtariJaguar;
@@ -268,6 +272,8 @@ std::string GameLibrary::systemName(SystemType sys) {
         case SystemType::PSVita:        return "PlayStation Vita";
         case SystemType::Xbox:          return "Xbox";
         case SystemType::Xbox360:       return "Xbox 360";
+        case SystemType::XboxOne:       return "Xbox One";
+        case SystemType::XboxSeriesX:   return "Xbox Series X|S";
         case SystemType::Atari7800:     return "Atari 7800";
         case SystemType::AtariLynx:     return "Atari Lynx";
         case SystemType::AtariJaguar:   return "Atari Jaguar";
@@ -312,6 +318,8 @@ std::string GameLibrary::systemDirName(SystemType sys) {
         case SystemType::PSVita:        return "vita";
         case SystemType::Xbox:          return "xbox";
         case SystemType::Xbox360:       return "xbox360";
+        case SystemType::XboxOne:       return "xboxone";
+        case SystemType::XboxSeriesX:   return "xboxseriesx";
         case SystemType::Atari7800:     return "atari7800";
         case SystemType::AtariLynx:     return "atarilynx";
         case SystemType::AtariJaguar:   return "atarijaguar";
@@ -356,6 +364,8 @@ int GameLibrary::screenscraper_systemId(SystemType sys) {
         case SystemType::PSVita:        return 62;
         case SystemType::Xbox:          return 32;
         case SystemType::Xbox360:       return 33;
+        case SystemType::XboxOne:       return 0;   // cloud library, not scraped
+        case SystemType::XboxSeriesX:   return 0;   // cloud library, not scraped
         case SystemType::Atari7800:     return 41;
         case SystemType::AtariLynx:     return 28;
         case SystemType::AtariJaguar:   return 27;
@@ -501,6 +511,133 @@ void GameLibrary::scan(const std::string& romsDir) {
     });
 }
 
+// ─── Non-Steam shortcuts ─────────────────────────────────────────────────────
+
+// A non-Steam game's launch id is (appid << 32) | 0x02000000, which is always
+// more than 9 digits; real Steam AppIDs are far smaller.
+static bool isNonSteamShortcutId(const std::string& id) { return id.size() > 9; }
+
+namespace {
+
+struct Shortcut {
+    std::string name, exe;
+    uint32_t    appid = 0;
+    bool        hasAppid = false;
+};
+
+uint32_t crc32Bytes(const std::string& s) {
+    uint32_t crc = 0xFFFFFFFFu;
+    for (unsigned char c : s) {
+        crc ^= c;
+        for (int i = 0; i < 8; ++i) crc = (crc >> 1) ^ (0xEDB88320u & (0u - (crc & 1u)));
+    }
+    return ~crc;
+}
+
+bool readCString(const std::string& d, size_t& p, std::string& out) {
+    const size_t end = d.find('\0', p);
+    if (end == std::string::npos) return false;
+    out.assign(d, p, end - p);
+    p = end + 1;
+    return true;
+}
+
+// Reads one binary-VDF object (after its opening key) up to its 0x08 terminator.
+// Field values are copied into sc when it is non-null; nested objects are skipped.
+bool readVdfObject(const std::string& d, size_t& p, Shortcut* sc, int depth = 0) {
+    if (depth > 8) return false;
+    while (p < d.size()) {
+        const unsigned char type = static_cast<unsigned char>(d[p++]);
+        if (type == 0x08) return true;
+        std::string key;
+        if (!readCString(d, p, key)) return false;
+        std::string lower = key;
+        std::transform(lower.begin(), lower.end(), lower.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        if (type == 0x00) {
+            if (!readVdfObject(d, p, nullptr, depth + 1)) return false;
+        } else if (type == 0x01) {
+            std::string value;
+            if (!readCString(d, p, value)) return false;
+            if (sc && lower == "appname") sc->name = value;
+            else if (sc && lower == "exe") sc->exe = value;
+        } else if (type == 0x02) {
+            if (p + 4 > d.size()) return false;
+            uint32_t v = 0;
+            for (int i = 0; i < 4; ++i) v |= static_cast<uint32_t>(static_cast<unsigned char>(d[p + i])) << (8 * i);
+            p += 4;
+            if (sc && lower == "appid") { sc->appid = v; sc->hasAppid = true; }
+        } else {
+            return false;  // unknown field type; the file is not what we expect
+        }
+    }
+    return false;
+}
+
+// Parses userdata/<id>/config/shortcuts.vdf. Returns what could be read.
+std::vector<Shortcut> parseShortcuts(const std::string& data) {
+    std::vector<Shortcut> out;
+    size_t p = 0;
+    std::string key;
+    if (data.empty() || data[p++] != 0x00 || !readCString(data, p, key)) return out;
+    while (p < data.size()) {
+        const unsigned char type = static_cast<unsigned char>(data[p++]);
+        if (type == 0x08) break;
+        if (type != 0x00 || !readCString(data, p, key)) break;
+        Shortcut sc;
+        if (!readVdfObject(data, p, &sc)) break;
+        out.push_back(std::move(sc));
+    }
+    return out;
+}
+
+}  // namespace
+
+// Adds the non-Steam games the user has added to their Steam library.
+static void addNonSteamShortcuts(const std::string& steamRoot, std::vector<GameEntry>& games) {
+    namespace fs = std::filesystem;
+    const fs::path userdata = fs::path(steamRoot) / "userdata";
+    std::error_code ec;
+    if (!fs::is_directory(userdata, ec)) return;
+
+    std::set<std::string> existing;
+    for (const auto& g : games)
+        if (g.system == SystemType::Steam) existing.insert(g.romPath);
+
+    int added = 0;
+    for (const auto& user : fs::directory_iterator(userdata, ec)) {
+        const fs::path config = user.path() / "config";
+        std::ifstream in(config / "shortcuts.vdf", std::ios::binary);
+        if (!in) continue;
+        const std::string data((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+
+        for (const Shortcut& sc : parseShortcuts(data)) {
+            if (sc.name.empty()) continue;
+            const uint32_t appid = sc.hasAppid ? sc.appid
+                                               : (crc32Bytes(sc.exe + sc.name) | 0x80000000u);
+            const std::string gameId =
+                std::to_string((static_cast<uint64_t>(appid) << 32) | 0x02000000ull);
+            if (!existing.insert(gameId).second) continue;
+
+            GameEntry ge;
+            ge.romPath     = gameId;
+            ge.displayName = sc.name;
+            ge.system      = SystemType::Steam;
+
+            // Custom artwork set in Steam: portrait first, then the wide capsule.
+            const std::string id = std::to_string(appid);
+            for (const char* name : { "p.png", "p.jpg", "p.jpeg", ".png", ".jpg", ".jpeg" }) {
+                const fs::path art = config / "grid" / (id + name);
+                if (fs::exists(art, ec)) { ge.coverPath = art.string(); break; }
+            }
+            games.push_back(std::move(ge));
+            ++added;
+        }
+    }
+    if (added > 0)
+        std::cout << "[Steam] Added " << added << " non-Steam game(s) from your library.\n";
+}
+
 void GameLibrary::scanSteam() {
     namespace fs = std::filesystem;
 
@@ -631,6 +768,8 @@ void GameLibrary::scanSteam() {
             games_.push_back(std::move(ge));
         }
     }
+
+    addNonSteamShortcuts(steamRoot, games_);
 
     // Re-sort so Steam games are ordered by name within the Steam bucket
     std::stable_sort(games_.begin(), games_.end(), [](const GameEntry& a, const GameEntry& b) {
@@ -945,6 +1084,77 @@ void GameLibrary::scanSteamOwned(const std::string& credFile) {
     }
 }
 
+// ─── scanXboxCloud (Xbox Cloud Gaming) ───────────────────────────────────────
+
+void GameLibrary::scanXboxCloud(const std::string& cacheFile, const std::string& coversDir,
+                                bool forceRefresh) {
+    const fs::path helper = "scripts/xcloud_library.py";
+    if (!fs::exists(helper)) return;
+
+    // The helper prints nothing and exits 2 until the user has run 'xbox-login'.
+    const std::string cmd = "python3 " + shellQuote(helper.string()) +
+                            " list --cache " + shellQuote(cacheFile) +
+                            " --covers-dir " + shellQuote(coversDir) +
+                            (forceRefresh ? " --refresh" : "");
+    FILE* pipe = popen(cmd.c_str(), "r");
+    if (!pipe) return;
+
+    // A forced refresh replaces the previous Xbox entries instead of adding to them.
+    if (forceRefresh)
+        games_.erase(std::remove_if(games_.begin(), games_.end(), [](const GameEntry& g) {
+            return g.system == SystemType::XboxOne || g.system == SystemType::XboxSeriesX;
+        }), games_.end());
+
+    std::set<std::string> existing;
+    for (const auto& g : games_)
+        if (g.system == SystemType::XboxOne || g.system == SystemType::XboxSeriesX)
+            existing.insert(g.romPath);
+
+    // Each line: productId <TAB> XboxOne|XboxSeriesX <TAB> name <TAB> cover path <TAB> cloud|store
+    int added = 0;
+    char buf[4096];
+    while (fgets(buf, sizeof(buf), pipe)) {
+        std::string line(buf);
+        while (!line.empty() && (line.back() == '\n' || line.back() == '\r')) line.pop_back();
+
+        std::vector<std::string> fields;
+        std::stringstream ss(line);
+        std::string field;
+        while (std::getline(ss, field, '\t')) fields.push_back(field);
+        if (!line.empty() && line.back() == '\t') fields.emplace_back();
+        if (fields.size() < 3) continue;
+
+        // The product id ends up in a launch URL, so only accept plain alphanumerics.
+        const std::string& productId = fields[0];
+        if (productId.empty() || !std::all_of(productId.begin(), productId.end(),
+                                              [](unsigned char c) { return std::isalnum(c) != 0; }))
+            continue;
+        GameEntry ge;
+        // Owned games that can't be streamed carry a ":store" suffix so the
+        // launcher opens their Store page instead of cloud play.
+        const bool storeOnly = fields.size() > 4 && fields[4] == "store";
+        ge.romPath = storeOnly ? productId + ":store" : productId;
+        if (existing.count(ge.romPath) || fields[2].empty()) continue;
+        ge.displayName = fields[2];
+        ge.system      = fields[1] == "XboxSeriesX" ? SystemType::XboxSeriesX : SystemType::XboxOne;
+        if (fields.size() > 3 && !fields[3].empty() && fs::exists(fields[3]))
+            ge.coverPath = fields[3];
+        existing.insert(ge.romPath);
+        games_.push_back(std::move(ge));
+        ++added;
+    }
+    pclose(pipe);
+
+    if (added > 0) {
+        std::stable_sort(games_.begin(), games_.end(), [](const GameEntry& a, const GameEntry& b) {
+            if (a.system != b.system)
+                return static_cast<int>(a.system) < static_cast<int>(b.system);
+            return a.displayName < b.displayName;
+        });
+        std::cout << "[Xbox Cloud] Loaded " << added << " game(s).\n";
+    }
+}
+
 void GameLibrary::resolveCoverPaths(const std::string& coversBaseDir) {
     for (auto& ge : games_) {
         if (!ge.coverPath.empty()) continue;  // appcache or prior download already set it
@@ -984,6 +1194,8 @@ std::string GameLibrary::fetchCoverArt(const GameEntry& game, const std::string&
 
     // ── Steam: download from public CDN (no API key needed) ──────────────────
     if (game.system == SystemType::Steam) {
+        // Non-Steam shortcuts have no store art; only their own Steam artwork applies.
+        if (isNonSteamShortcutId(game.romPath)) return "";
         // Use appId (game.romPath) as filename — more stable than display name
         const std::string dest = baseDir + "/" + game.romPath + ".jpg";
         if (fs::exists(dest)) return dest;
@@ -1089,7 +1301,7 @@ void GameLibrary::fetchSteamCovers(const std::string& coversDir) {
     int total   = 0;
 
     for (auto& ge : games_) {
-        if (ge.system != SystemType::Steam) continue;
+        if (ge.system != SystemType::Steam || isNonSteamShortcutId(ge.romPath)) continue;
         if (!ge.coverPath.empty() && fs::exists(ge.coverPath)) continue;
         ++total;
     }
@@ -1100,7 +1312,7 @@ void GameLibrary::fetchSteamCovers(const std::string& coversDir) {
     std::cout.flush();
 
     for (auto& ge : games_) {
-        if (ge.system != SystemType::Steam) continue;
+        if (ge.system != SystemType::Steam || isNonSteamShortcutId(ge.romPath)) continue;
         if (!ge.coverPath.empty() && fs::exists(ge.coverPath)) continue;
 
         std::string path = fetchCoverArt(ge, coversDir);

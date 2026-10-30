@@ -24,12 +24,14 @@
 
 #include <algorithm>
 #include <cerrno>
+#include <csignal>
 #include <cstring>
 #include <cstdlib>
 #include <filesystem>
 #include <fcntl.h>
 #include <fstream>
 #include <iostream>
+#include <sstream>
 #include <unistd.h>
 #include <sys/wait.h>
 
@@ -37,7 +39,7 @@ namespace fs = std::filesystem;
 
 // ─── Static members ───────────────────────────────────────────────────────────
 
-const SystemType GameShell::kSystems[105] = {
+const SystemType GameShell::kSystems[107] = {
     SystemType::NES,
     SystemType::SNES,
     SystemType::GameBoy,
@@ -68,6 +70,8 @@ const SystemType GameShell::kSystems[105] = {
     SystemType::PSVita,
     SystemType::Xbox,
     SystemType::Xbox360,
+    SystemType::XboxOne,
+    SystemType::XboxSeriesX,
     SystemType::Atari7800,
     SystemType::AtariLynx,
     SystemType::AtariJaguar,
@@ -148,11 +152,11 @@ const SystemType GameShell::kSystems[105] = {
 static_assert(sizeof(GameShell::kSystems) / sizeof(GameShell::kSystems[0]) == GameShell::kNumSystems,
               "kSystems must list every filterable system");
 
-const char* const GameShell::kSysAbbrev[105] = {
+const char* const GameShell::kSysAbbrev[107] = {
     "NES", "SNES", "GB", "GBC", "GBA", "NDS", "3DS", "2600", "5200",
     "800", "GEN", "N64", "PS1", "PS2", "PS3", "GCN", "ODY", "PC", "DC",
     "STM", "SMS", "GG", "SAT", "WII", "WIIU", "SW", "PSP", "VITA",
-    "XBOX", "360", "7800", "LYNX", "JAG", "PCE", "COLECO", "INTV",
+    "XBOX", "360", "XONE", "XSX", "7800", "LYNX", "JAG", "PCE", "COLECO", "INTV",
     "VB", "PMIN", "FDS", "G&W", "BSX", "XEGS", "SCD", "32X", "PICO", "SG1K",
     "AES", "MVS", "NGCD", "NGP", "NGPC", "PCFX", "SGX", "PCCD", "3DO", "CD32",
     "WS", "WSC", "CRYS", "CHF", "VECX", "SV", "AW", "NAO", "NAO2", "CPS1",
@@ -289,6 +293,8 @@ static SDL_Color sysBadgeColor(SystemType sys) {
         case SystemType::PSVita:        return { 65, 85, 165, 255};
         case SystemType::Xbox:          return { 70, 145, 65, 255};
         case SystemType::Xbox360:       return { 45, 125, 50, 255};
+        case SystemType::XboxOne:       return { 16, 124, 16, 255};    // Xbox green
+        case SystemType::XboxSeriesX:   return { 14, 100, 14, 255};
         case SystemType::Atari7800:     return { 175, 105, 35, 255};
         case SystemType::AtariLynx:     return { 180, 125, 45, 255};
         case SystemType::AtariJaguar:   return { 150, 145, 45, 255};
@@ -325,7 +331,10 @@ static const char* findFont() {
 
 // ─── Lifecycle ────────────────────────────────────────────────────────────────
 
-GameShell::~GameShell() { cleanup(); }
+GameShell::~GameShell() {
+    cancelXboxSignIn();
+    cleanup();
+}
 
 bool GameShell::init() {
     if (SDL_InitSubSystem(SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER) != 0) {
@@ -521,6 +530,13 @@ void GameShell::rebuildFilter() {
         if (include)
             filteredGames_.push_back(&ge);
     }
+    // XONE / XSX end with a "+" tile that opens Xbox Cloud Gaming to add more games.
+    if (xboxCloudFilterActive() && searchQuery_.empty()) {
+        xboxAddEntry_.romPath     = kAddGamesId;
+        xboxAddEntry_.displayName = "Add more games";
+        xboxAddEntry_.system      = kSystems[currentFilter_];
+        filteredGames_.push_back(&xboxAddEntry_);
+    }
     selectedIdx_ = 0;
     scrollRow_   = 0;
     hoverIdx_    = -1;
@@ -703,7 +719,11 @@ void GameShell::renderGrid() {
     SDL_SetRenderDrawColor(renderer_, kColorBg.r, kColorBg.g, kColorBg.b, 255);
     SDL_RenderFillRect(renderer_, &gridArea);
 
-    if (filteredGames_.empty()) {
+    if (filteredGames_.empty() || xboxPromptActive()) {
+        if (xboxPromptActive()) {
+            renderXboxPanel();
+            return;
+        }
         renderCenteredText("No games found", 0, kHeaderH + kGridH / 2 - 10,
                            kW, kColorTextDim, fontMd_);
         return;
@@ -749,6 +769,16 @@ void GameShell::renderGrid() {
             SDL_Texture* tex = getCoverTexture(ge);
             if (tex) {
                 SDL_RenderCopy(renderer_, tex, nullptr, &coverR);
+            } else if (&ge == &xboxAddEntry_) {
+                // "+" tile
+                SDL_SetRenderDrawColor(renderer_, 20, 48, 24, 255);
+                SDL_RenderFillRect(renderer_, &coverR);
+                SDL_SetRenderDrawColor(renderer_, 80, 190, 90, 255);
+                const int cx = coverX + kCoverW / 2, cy = coverY + kCoverH / 2;
+                SDL_Rect hBar = {cx - 28, cy - 4, 56, 8};
+                SDL_Rect vBar = {cx - 4, cy - 28, 8, 56};
+                SDL_RenderFillRect(renderer_, &hBar);
+                SDL_RenderFillRect(renderer_, &vBar);
             } else {
                 // Coloured placeholder
                 SDL_Color pc = sysBadgeColor(ge.system);
@@ -895,6 +925,208 @@ void GameShell::renderSearchBox() {
                kColorTextDim, fontMd_);
 }
 
+// ─── Xbox Cloud Gaming sign-in ────────────────────────────────────────────────
+
+bool GameShell::xboxSignedIn() {
+    const char* custom = std::getenv("OMNICON_XBOX_TOKENS");
+    if (custom && *custom) return fs::exists(custom);
+    const char* home = std::getenv("HOME");
+    return home && *home && fs::exists(fs::path(home) / ".omnicon" / "xbox_cloud_tokens.json");
+}
+
+bool GameShell::xboxCloudFilterActive() const {
+    if (currentFilter_ < 0 || currentFilter_ >= kNumSystems) return false;
+    const SystemType sys = kSystems[currentFilter_];
+    return sys == SystemType::XboxOne || sys == SystemType::XboxSeriesX;
+}
+
+bool GameShell::xboxPromptActive() const {
+    if (!xboxCloudFilterActive() || !searchQuery_.empty()) return false;
+    // Nothing to show except (at most) the "+" tile.
+    return filteredGames_.empty() ||
+           (filteredGames_.size() == 1 && filteredGames_[0] == &xboxAddEntry_);
+}
+
+bool GameShell::xboxSignInWaiting() {
+    std::lock_guard<std::mutex> lock(xboxSignIn_.mutex);
+    return xboxSignIn_.state == XboxSignIn::State::Waiting;
+}
+
+void GameShell::cancelXboxSignIn() {
+    {
+        std::lock_guard<std::mutex> lock(xboxSignIn_.mutex);
+        if (xboxSignIn_.state == XboxSignIn::State::Waiting)
+            xboxSignIn_.state = XboxSignIn::State::Idle;
+        if (xboxSignIn_.pid > 0) kill(xboxSignIn_.pid, SIGTERM);
+    }
+    // Joined outside the lock: the worker takes it when its pipe closes.
+    if (xboxSignIn_.worker.joinable()) xboxSignIn_.worker.join();
+}
+
+void GameShell::startXboxSignIn() {
+    cancelXboxSignIn();
+
+    auto fail = [&](const std::string& message) {
+        std::lock_guard<std::mutex> lock(xboxSignIn_.mutex);
+        xboxSignIn_.state   = XboxSignIn::State::Failed;
+        xboxSignIn_.message = message;
+    };
+
+    int fds[2] = {};
+    if (pipe(fds) != 0) { fail("Could not start the sign-in helper."); return; }
+    const pid_t pid = fork();
+    if (pid < 0) {
+        close(fds[0]);
+        close(fds[1]);
+        fail("Could not start the sign-in helper.");
+        return;
+    }
+    if (pid == 0) {
+        close(fds[0]);
+        dup2(fds[1], STDOUT_FILENO);
+        close(fds[1]);
+        execlp("python3", "python3", "scripts/xcloud_library.py", "login", "--machine",
+               static_cast<char*>(nullptr));
+        _exit(127);
+    }
+    close(fds[1]);
+
+    {
+        std::lock_guard<std::mutex> lock(xboxSignIn_.mutex);
+        xboxSignIn_.state = XboxSignIn::State::Waiting;
+        xboxSignIn_.code.clear();
+        xboxSignIn_.url.clear();
+        xboxSignIn_.message.clear();
+        xboxSignIn_.pid = pid;
+    }
+
+    const int readFd = fds[0];
+    xboxSignIn_.worker = std::thread([this, readFd, pid]() {
+        using State = XboxSignIn::State;
+        FILE* in = fdopen(readFd, "r");
+        char buf[512];
+        while (in && fgets(buf, sizeof(buf), in)) {
+            std::string line(buf);
+            while (!line.empty() && (line.back() == '\n' || line.back() == '\r')) line.pop_back();
+            std::lock_guard<std::mutex> lock(xboxSignIn_.mutex);
+            if (xboxSignIn_.state != State::Waiting) continue;
+            if (line.rfind("CODE ", 0) == 0) {
+                std::istringstream fields(line.substr(5));
+                fields >> xboxSignIn_.code >> xboxSignIn_.url;
+            } else if (line == "OK") {
+                xboxSignIn_.state = State::Done;
+            } else if (line.rfind("FAIL", 0) == 0) {
+                xboxSignIn_.state   = State::Failed;
+                xboxSignIn_.message = line.size() > 5 ? line.substr(5) : "Sign-in failed.";
+            }
+        }
+        if (in) fclose(in);
+        else close(readFd);
+        waitpid(pid, nullptr, 0);
+        std::lock_guard<std::mutex> lock(xboxSignIn_.mutex);
+        xboxSignIn_.pid = -1;
+        if (xboxSignIn_.state == State::Waiting) {
+            xboxSignIn_.state   = State::Failed;
+            xboxSignIn_.message = "The sign-in helper stopped unexpectedly (is python3 installed?).";
+        }
+    });
+}
+
+void GameShell::reloadXboxLibrary() {
+    if (!library_) return;
+    // The fetch blocks for a few seconds, so draw the loading message first.
+    xboxLoading_ = true;
+    render();
+    library_->scanXboxCloud("saves/xbox_cloud_library.json", coversDir_, true);
+    xboxLoading_ = false;
+
+    const std::size_t count = library_->gamesForSystem(SystemType::XboxOne).size() +
+                              library_->gamesForSystem(SystemType::XboxSeriesX).size();
+    rebuildFilter();
+    computeFilterRects();
+    postShellMessage(count > 0
+        ? "Xbox Cloud: " + std::to_string(count) + " game(s) loaded."
+        : "Xbox Cloud: no playable games found for this account.");
+}
+
+void GameShell::pollXboxSignIn() {
+    bool done = false;
+    {
+        std::lock_guard<std::mutex> lock(xboxSignIn_.mutex);
+        if (xboxSignIn_.state == XboxSignIn::State::Done) {
+            xboxSignIn_.state = XboxSignIn::State::Idle;
+            done = true;
+        }
+    }
+    if (!done) return;
+    if (xboxSignIn_.worker.joinable()) xboxSignIn_.worker.join();
+    reloadXboxLibrary();
+}
+
+void GameShell::xboxPromptAction() {
+    if (xboxLoading_ || xboxSignInWaiting()) return;
+    {
+        std::lock_guard<std::mutex> lock(xboxSignIn_.mutex);
+        if (xboxSignIn_.state == XboxSignIn::State::Failed)
+            xboxSignIn_.state = XboxSignIn::State::Idle;
+    }
+    if (xboxSignedIn()) reloadXboxLibrary();
+    else                startXboxSignIn();
+}
+
+void GameShell::renderXboxPanel() {
+    const SDL_Color accent = {80, 190, 90, 255};
+    const SDL_Color warn   = {255, 170, 110, 255};
+    const int cy = kHeaderH + kGridH / 2;
+
+    XboxSignIn::State state;
+    std::string code, url, message;
+    {
+        std::lock_guard<std::mutex> lock(xboxSignIn_.mutex);
+        state   = xboxSignIn_.state;
+        code    = xboxSignIn_.code;
+        url     = xboxSignIn_.url;
+        message = xboxSignIn_.message;
+    }
+
+    const bool onePlatform = kSystems[currentFilter_] == SystemType::XboxOne;
+    renderCenteredText(onePlatform ? "Xbox One \xe2\x80\x94 Xbox Cloud Gaming"
+                                   : "Xbox Series X|S \xe2\x80\x94 Xbox Cloud Gaming",
+                       0, cy - 110, kW, accent, fontLg_);
+
+    if (xboxLoading_) {
+        renderCenteredText("Loading your Xbox Cloud Gaming library...",
+                           0, cy - 30, kW, kColorTextPri, fontMd_);
+    } else if (state == XboxSignIn::State::Waiting) {
+        if (code.empty()) {
+            renderCenteredText("Contacting Microsoft...", 0, cy - 30, kW, kColorTextPri, fontMd_);
+        } else {
+            renderCenteredText("On any phone or PC, open " + url + " and enter this code:",
+                               0, cy - 60, kW, kColorTextPri, fontMd_);
+            renderCenteredText(code, 0, cy - 25, kW, {255, 255, 255, 255}, fontLg_);
+            renderCenteredText("Waiting for you to finish signing in...    Esc / B = Cancel",
+                               0, cy + 25, kW, kColorTextDim, fontMd_);
+        }
+    } else if (state == XboxSignIn::State::Failed) {
+        renderCenteredText(message.empty() ? "Sign-in failed." : message,
+                           0, cy - 40, kW, warn, fontMd_);
+        renderCenteredText("Enter / A = Try again", 0, cy, kW, kColorTextDim, fontMd_);
+    } else if (!xboxSignedIn()) {
+        renderCenteredText("Sign in with your Microsoft account to see your Xbox Cloud Gaming library.",
+                           0, cy - 50, kW, kColorTextPri, fontMd_);
+        renderCenteredText("Enter / A / Click = Sign in", 0, cy - 10, kW, accent, fontMd_);
+        renderCenteredText("Needs an Xbox profile; most games also need Game Pass Ultimate.",
+                           0, cy + 30, kW, kColorTextDim, fontMd_);
+    } else {
+        renderCenteredText("No cloud games found for this account.",
+                           0, cy - 50, kW, kColorTextPri, fontMd_);
+        renderCenteredText("Enter / A / Click = Refresh      S / Y = Sign in again",
+                           0, cy - 10, kW, accent, fontMd_);
+        renderCenteredText("Most games need Game Pass Ultimate.",
+                           0, cy + 30, kW, kColorTextDim, fontMd_);
+    }
+}
+
 // ─── Main loop ────────────────────────────────────────────────────────────────
 
 void GameShell::run(GameLibrary& library, const std::string& coversDir) {
@@ -1007,6 +1239,8 @@ void GameShell::run(GameLibrary& library, const std::string& coversDir) {
                                 SDL_StopTextInput();
                             }
                             rebuildFilter(); computeFilterRects();
+                        } else if (xboxSignInWaiting()) {
+                            cancelXboxSignIn();
                         } else {
                             quit = true;
                         }
@@ -1049,10 +1283,26 @@ void GameShell::run(GameLibrary& library, const std::string& coversDir) {
                         break;
                     case SDLK_RETURN:
                     case SDLK_KP_ENTER:
-                        if (!filteredGames_.empty()) {
+                        if (xboxPromptActive()) {
+                            xboxPromptAction();
+                        } else if (!filteredGames_.empty()) {
                             launchTarget  = *filteredGames_[selectedIdx_];
                             pendingLaunch = true;
                         }
+                        break;
+                    case SDLK_F6:
+                        // Pick up cover images downloaded while the shell is open.
+                        library_->resolveCoverPaths(coversDir_);
+                        clearCoverCache();
+                        break;
+                    case SDLK_F5:
+                        if (xboxCloudFilterActive() && !xboxSignInWaiting() && !xboxLoading_ &&
+                            xboxSignedIn())
+                            reloadXboxLibrary();
+                        break;
+                    case SDLK_s:
+                        if (!searchActive_ && xboxPromptActive() && !xboxSignInWaiting() && !xboxLoading_)
+                            startXboxSignIn();
                         break;
                     // 0 = All, 1-9 = system filter (disabled while search is active)
                     case SDLK_0:
@@ -1127,7 +1377,9 @@ void GameShell::run(GameLibrary& library, const std::string& coversDir) {
                 } else {
                     // Game grid clicked
                     int gi = gameAtMouse(mx, my);
-                    if (gi >= 0) {
+                    if (xboxPromptActive()) {
+                        xboxPromptAction();
+                    } else if (gi >= 0) {
                         Uint32 now = SDL_GetTicks();
                         if (gi == lastClickIdx_ && now - lastClickMs_ < 400) {
                             // Double-click → launch
@@ -1156,7 +1408,18 @@ void GameShell::run(GameLibrary& library, const std::string& coversDir) {
                 int n = static_cast<int>(filteredGames_.size());
                 switch (ev.cbutton.button) {
                     case SDL_CONTROLLER_BUTTON_B:
-                        quit = true; break;
+                        if (xboxSignInWaiting()) cancelXboxSignIn();
+                        else quit = true;
+                        break;
+                    case SDL_CONTROLLER_BUTTON_X:
+                        if (xboxCloudFilterActive() && !xboxSignInWaiting() && !xboxLoading_ &&
+                            xboxSignedIn())
+                            reloadXboxLibrary();
+                        break;
+                    case SDL_CONTROLLER_BUTTON_Y:
+                        if (xboxPromptActive() && !xboxSignInWaiting() && !xboxLoading_)
+                            startXboxSignIn();
+                        break;
                     case SDL_CONTROLLER_BUTTON_DPAD_LEFT:
                         if (selectedIdx_ > 0) { --selectedIdx_; ensureVisible(); }
                         ctrlRepeatBtn_ = SDL_CONTROLLER_BUTTON_DPAD_LEFT;
@@ -1193,7 +1456,9 @@ void GameShell::run(GameLibrary& library, const std::string& coversDir) {
                     }
                     case SDL_CONTROLLER_BUTTON_A:
                     case SDL_CONTROLLER_BUTTON_START:
-                        if (!filteredGames_.empty()) {
+                        if (xboxPromptActive()) {
+                            xboxPromptAction();
+                        } else if (!filteredGames_.empty()) {
                             launchTarget  = *filteredGames_[selectedIdx_];
                             pendingLaunch = true;
                         }
@@ -1290,7 +1555,12 @@ void GameShell::run(GameLibrary& library, const std::string& coversDir) {
 
         if (pendingLaunch) {
             // If the ROM is not local but we have a download URL, fetch it first.
-            if (launchTarget.system != SystemType::Steam &&
+            // Steam and Xbox Cloud games launch externally; nothing to download
+            // and the shell stays open.
+            const bool launchesExternally = launchTarget.system == SystemType::Steam ||
+                                            launchTarget.system == SystemType::XboxOne ||
+                                            launchTarget.system == SystemType::XboxSeriesX;
+            if (!launchesExternally &&
                 !launchTarget.downloadUrl.empty() &&
                 (launchTarget.romPath.empty() || !std::filesystem::exists(launchTarget.romPath))) {
 
@@ -1398,8 +1668,8 @@ void GameShell::run(GameLibrary& library, const std::string& coversDir) {
                 }
             }
 
-            if (launchTarget.system == SystemType::Steam) {
-                // Steam games launch externally; fire and keep the shell open
+            if (launchesExternally) {
+                // External games launch separately; keep the shell open
                 launchGame(launchTarget);
             } else {
                 if (ctrl_) { SDL_GameControllerClose(ctrl_); ctrl_ = nullptr; ctrlName_.clear(); }
@@ -1431,9 +1701,13 @@ void GameShell::run(GameLibrary& library, const std::string& coversDir) {
             done:;
         }
 
-        if (!quit) render();
+        if (!quit) {
+            pollXboxSignIn();
+            render();
+        }
     }
 
+    cancelXboxSignIn();
     if (ctrl_) { SDL_GameControllerClose(ctrl_); ctrl_ = nullptr; ctrlName_.clear(); }
 }
 
@@ -1739,6 +2013,8 @@ void GameShell::launchGame(const GameEntry& game) {
         case SystemType::PSVita:           PSVitaConsoleLauncher().launch(path); break;
         case SystemType::Xbox:             XboxConsoleLauncher().launch(path); break;
         case SystemType::Xbox360:          Xbox360ConsoleLauncher().launch(path); break;
+        case SystemType::XboxOne:
+        case SystemType::XboxSeriesX:      XboxCloudConsoleLauncher().launch(path); break;
         case SystemType::Atari7800:        Atari7800ConsoleLauncher().launch(path); break;
         case SystemType::AtariLynx:        AtariLynxConsoleLauncher().launch(path); break;
         case SystemType::AtariJaguar:      AtariJaguarConsoleLauncher().launch(path); break;

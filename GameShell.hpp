@@ -7,8 +7,11 @@
 #include <SDL2/SDL_image.h>
 
 #include <map>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
+#include <sys/types.h>
 
 class GameShell {
 public:
@@ -36,9 +39,9 @@ public:
     static void loadConsoleBindings();
 
     // Public so free functions in the .cpp can access them
-    static const SystemType  kSystems[105];
-    static const char* const kSysAbbrev[105];
-    static constexpr int     kNumSystems = 105;
+    static const SystemType  kSystems[107];
+    static const char* const kSysAbbrev[107];
+    static constexpr int     kNumSystems = 107;
 
 private:
     // SDL resources
@@ -109,6 +112,32 @@ private:
     void layoutDropdown();
     void renderDropdown();
     int  dropdownItemAtMouse(int mx, int my) const;
+
+    // ── Xbox Cloud Gaming sign-in (XONE / XSX filters) ───────────────────────
+    // scripts/xcloud_library.py login --machine runs in a child process; a worker
+    // thread reads its status lines. The UI thread only polls this struct.
+    struct XboxSignIn {
+        enum class State { Idle, Waiting, Done, Failed };
+        std::mutex  mutex;
+        State       state = State::Idle;
+        std::string code, url, message;
+        pid_t       pid = -1;
+        std::thread worker;
+    };
+    XboxSignIn xboxSignIn_;
+    GameEntry  xboxAddEntry_;               // the "+" tile shown last in XONE / XSX
+    bool       xboxLoading_ = false;        // library fetch in progress (UI thread)
+
+    static bool xboxSignedIn();
+    bool xboxCloudFilterActive() const;
+    bool xboxPromptActive() const;          // XONE/XSX selected, list empty, no search
+    void xboxPromptAction();                // sign in, or refresh when already signed in
+    bool xboxSignInWaiting();
+    void startXboxSignIn();
+    void cancelXboxSignIn();
+    void pollXboxSignIn();                  // reloads the library when sign-in finishes
+    void reloadXboxLibrary();
+    void renderXboxPanel();
 
     // ── Logic helpers ─────────────────────────────────────────────────────────
     void rebuildFilter();

@@ -20,6 +20,9 @@ third_party/cdecrypt/cdecrypt
 third_party/cdecrypt/*.o
 third_party/cdecrypt/*.d
 saves/wiiu_converted.tsv
+saves/xbox_cloud_library.json
+saves/db_cover_queue.tsv
+saves/db_covers_unmatched.tsv
 
 third_party/libretro/*.so
 third_party/mame/

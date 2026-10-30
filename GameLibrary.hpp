@@ -25,6 +25,13 @@ public:
     // apiKey and steamId are saved to credFile on first use.
     void scanSteamOwned(const std::string& credFile);
 
+    // Load the signed-in account's Xbox Cloud Gaming (xCloud) library as Xbox One
+    // and Xbox Series X|S entries via scripts/xcloud_library.py. Does nothing
+    // until the user has signed in with the 'xbox-login' command. Entries carry
+    // the Microsoft Store product id in romPath; covers are cached in coversDir.
+    void scanXboxCloud(const std::string& cacheFile, const std::string& coversDir,
+                       bool forceRefresh = false);
+
     // Populate coverPath on each entry from cached files in coversBaseDir.
     void resolveCoverPaths(const std::string& coversBaseDir);
 
