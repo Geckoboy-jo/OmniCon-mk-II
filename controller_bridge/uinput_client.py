@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
 WSL-side uinput bridge.
-Reads 12-byte XInput packets from stdin and drives a virtual Xbox 360 gamepad
-via /dev/uinput so that SDL2 sees it as a real controller.
+Reads 13-byte packets from stdin and drives one virtual Xbox 360 gamepad per
+controller index via /dev/uinput so that SDL2 sees each physical controller
+as a real gamepad (player 1 = index 0, player 2 = index 1, ...).
 """
 import struct
 import sys
@@ -15,8 +16,9 @@ except ImportError:
     sys.exit(1)
 
 # ── Packet format (must match xinput_server.py) ───────────────────────────────
-PACKET_FMT  = struct.Struct('<HhhhhBB')   # 12 bytes
+PACKET_FMT  = struct.Struct('<BHhhhhBB')   # 13 bytes: index + payload
 PACKET_SIZE = PACKET_FMT.size
+MAX_PADS    = 4
 
 # ── XInput button bitmasks → Linux evdev button codes ────────────────────────
 # D-pad (0x000F) is handled separately as ABS_HAT0X/Y
@@ -52,25 +54,35 @@ CAPABILITIES = {
     ],
 }
 
-# ── Create virtual gamepad ────────────────────────────────────────────────────
+# ── Virtual gamepads (one per controller index, created on first packet) ─────
 # Use the exact VID/PID so SDL2 matches it against its gamepad database
-ui = UInput(
-    CAPABILITIES,
-    name='Microsoft X-Box 360 pad',
-    vendor=0x24c6,
-    product=0x531a,
-    version=0x0110,
-)
-try:
-    path = ui.device.path if ui.device else "unknown"
-except Exception:
-    path = "unknown"
-sys.stderr.write(f"Virtual gamepad active: {path}\n")
-sys.stderr.flush()
+pads = {}   # index -> {'ui': UInput, 'prev_btns': int}
+
+def get_pad(idx):
+    pad = pads.get(idx)
+    if pad is not None:
+        return pad
+    if len(pads) >= MAX_PADS:
+        return None
+    ui = UInput(
+        CAPABILITIES,
+        name='Microsoft X-Box 360 pad',
+        vendor=0x24c6,
+        product=0x531a,
+        version=0x0110,
+    )
+    try:
+        path = ui.device.path if ui.device else "unknown"
+    except Exception:
+        path = "unknown"
+    sys.stderr.write(f"Virtual gamepad {idx} active: {path}\n")
+    sys.stderr.flush()
+    pad = {'ui': ui, 'prev_btns': 0}
+    pads[idx] = pad
+    return pad
 
 # ── Main loop ─────────────────────────────────────────────────────────────────
-stdin      = sys.stdin.buffer
-prev_btns  = 0
+stdin = sys.stdin.buffer
 
 def clamp16(v):
     """Prevent signed-short overflow when negating -32768."""
@@ -82,14 +94,18 @@ try:
         if len(data) < PACKET_SIZE:
             break
 
-        buttons, lx, ly, rx, ry, lt, rt = PACKET_FMT.unpack(data)
+        idx, buttons, lx, ly, rx, ry, lt, rt = PACKET_FMT.unpack(data)
+        pad = get_pad(idx)
+        if pad is None:
+            continue
+        ui = pad['ui']
 
         # ── Face / shoulder / stick-click buttons ─────────────────────────────
-        changed = buttons ^ prev_btns
+        changed = buttons ^ pad['prev_btns']
         for mask, code in BUTTON_MAP.items():
             if changed & mask:
                 ui.write(e.EV_KEY, code, 1 if (buttons & mask) else 0)
-        prev_btns = buttons
+        pad['prev_btns'] = buttons
 
         # ── D-pad as HAT axes ─────────────────────────────────────────────────
         hat_x = (1 if buttons & 0x0008 else 0) - (1 if buttons & 0x0004 else 0)
@@ -113,5 +129,6 @@ try:
 except KeyboardInterrupt:
     pass
 finally:
-    ui.close()
+    for pad in pads.values():
+        pad['ui'].close()
     sys.stderr.write("Bridge closed.\n")

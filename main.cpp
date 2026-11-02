@@ -1187,6 +1187,7 @@ void printHelp()
               << "  controls-csv    Parse Controls.csv and set controls for all systems\n"
               << "  remap           Open the interactive controller button-mapping screen\n"
               << "  remap <console> Remap controller buttons for a specific console (nes/snes/gb/gba/nds/3ds/n64/ps1/ps2/gamecube/genesis/atari2600/atari5200/atari800/odyssey/all)\n"
+              << "  remap player2   Capture player 2 controller bindings and save them to retroarch_controller.cfg\n"
               << "  db-rename-from-url  Rename every DB entry to the clean title decoded from its download URL\n"
               << "  config          Re-enter database password\n"
               << "  help            Show this message\n"
@@ -1578,6 +1579,15 @@ int main()
             ensureControllerBridge();
             GameShell rs;
             rs.remap();
+            continue;
+        }
+
+        // RetroArch player 2 remap: capture raw bindings into retroarch_controller.cfg
+        if (input == "remap player2" || input == "remap player 2" ||
+            input == "remap-player2" || input == "remap-player-2") {
+            ensureControllerBridge();
+            GameShell rs;
+            rs.remapRetroArchPlayer(2);
             continue;
         }
 

@@ -2717,6 +2717,285 @@ void GameShell::remapConsole(const std::string& sysName) {
     cleanup();
 }
 
+// ── remapRetroArchPlayer (RetroArch player-N bindings → retroarch_controller.cfg)
+
+void GameShell::remapRetroArchPlayer(int player) {
+    if (!init()) { std::cerr << "[remapRetroArchPlayer] SDL init failed\n"; return; }
+
+    // Helper: full-screen status message
+    auto showMsg = [&](const std::string& msg, SDL_Color col = {200,200,255,255}) {
+        SDL_SetRenderDrawColor(renderer_, 10, 10, 30, 255);
+        SDL_RenderClear(renderer_);
+        renderCenteredText(msg, 0, kH/2 - 14, kW, col, fontLg_);
+        SDL_RenderPresent(renderer_);
+    };
+
+    // ── Step 1: restart the bridge so it runs the latest xinput_server.py ────
+    showMsg("Restarting controller bridge...");
+    std::system("pkill -f uinput_client.py 2>/dev/null; pkill -f xinput_server.py 2>/dev/null");
+    { // drain events while bridge dies
+        Uint32 t = SDL_GetTicks() + 1500;
+        SDL_Event ev;
+        while (SDL_GetTicks() < t) { SDL_Delay(30); while (SDL_PollEvent(&ev)) {} }
+    }
+    if (std::filesystem::exists("controller_bridge/start_bridge.sh")) {
+        std::system("modprobe uinput 2>/dev/null; bash controller_bridge/start_bridge.sh >/dev/null 2>&1 &");
+    }
+
+    // ── Step 2: open every pad; the user picks one by pressing a button ──────
+    // The bridge creates one virtual pad per physical controller, but only
+    // after that controller's first input, and SDL enumeration order is not
+    // guaranteed to match player order — so let the user identify the pad.
+    struct OpenPad { SDL_GameController* ctrl; SDL_JoystickID joyId; };
+    std::vector<OpenPad> openPads;
+    auto refreshPads = [&]() {
+        for (int i = 0; i < SDL_NumJoysticks(); ++i) {
+            if (!SDL_IsGameController(i)) continue;
+            SDL_GameController* c = SDL_GameControllerOpen(i);
+            if (!c) continue;
+            SDL_JoystickID id = SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(c));
+            bool dup = false;
+            for (auto& p : openPads) if (p.joyId == id) { dup = true; break; }
+            if (dup) { SDL_GameControllerClose(c); continue; }
+            openPads.push_back({c, id});
+        }
+    };
+
+    bool cancelled = false;
+    int  selected  = -1;
+    while (selected < 0 && !cancelled) {
+        refreshPads();
+        showMsg("Press any button on the controller for player " +
+                std::to_string(player) + "   (ESC to cancel)");
+        Uint32 deadline = SDL_GetTicks() + 250;
+        SDL_Event ev;
+        while (SDL_GetTicks() < deadline && selected < 0 && !cancelled) {
+            SDL_Delay(20);
+            while (SDL_PollEvent(&ev)) {
+                if (ev.type == SDL_QUIT) cancelled = true;
+                else if (ev.type == SDL_KEYDOWN &&
+                         ev.key.keysym.sym == SDLK_ESCAPE) cancelled = true;
+                else if (ev.type == SDL_JOYBUTTONDOWN) {
+                    for (size_t i = 0; i < openPads.size(); ++i)
+                        if (openPads[i].joyId == ev.jbutton.which)
+                            selected = (int)i;
+                }
+            }
+        }
+    }
+    if (cancelled || selected < 0) {
+        for (auto& p : openPads) SDL_GameControllerClose(p.ctrl);
+        cleanup();
+        return;
+    }
+    ctrl_    = openPads[selected].ctrl;
+    ctrlName_ = SDL_GameControllerName(ctrl_);
+    for (size_t i = 0; i < openPads.size(); ++i)
+        if ((int)i != selected) SDL_GameControllerClose(openPads[i].ctrl);
+    showMsg("Controller ready: " + ctrlName_);
+    SDL_Delay(800);
+
+    // ── Step 3: capture each input ───────────────────────────────────────────
+    struct Action {
+        const char* label;      // shown on screen
+        const char* raKey;      // RetroArch key suffix ("b_btn", "l2_axis", "l_x")
+        bool        isAxis;     // false = SDL_JOYBUTTONDOWN, true = SDL_JOYAXISMOTION
+        bool        isStick;    // true → writes <raKey>_plus_axis / <raKey>_minus_axis
+        int         rawIdx   = -1;
+        bool        positive = true;   // axis deflection direction
+    };
+    std::vector<Action> actions = {
+        // ── Face buttons ──────────────────────────────────────────────────
+        {"B  (bottom face / confirm)",      "b_btn",      false, false},
+        {"A  (right face / cancel)",        "a_btn",      false, false},
+        {"X  (left face)",                  "x_btn",      false, false},
+        {"Y  (top face)",                   "y_btn",      false, false},
+        // ── Shoulder ──────────────────────────────────────────────────────
+        {"L  (left shoulder)",              "l_btn",      false, false},
+        {"R  (right shoulder)",             "r_btn",      false, false},
+        // ── Menu ──────────────────────────────────────────────────────────
+        {"Select / Back",                   "select_btn", false, false},
+        {"Start",                           "start_btn",  false, false},
+        // ── Stick clicks ──────────────────────────────────────────────────
+        {"L3 (left stick click)",           "l3_btn",     false, false},
+        {"R3 (right stick click)",          "r3_btn",     false, false},
+        // ── Triggers ──────────────────────────────────────────────────────
+        {"L2 (left trigger \xe2\x80\x94 press fully)",  "l2_axis", true, false},
+        {"R2 (right trigger \xe2\x80\x94 press fully)", "r2_axis", true, false},
+        // ── Stick axes: ask for a specific direction to detect sign ───────
+        {"Left Stick \xe2\x86\x92  RIGHT (then return to centre)",  "l_x", true, true},
+        {"Left Stick \xe2\x86\x93  DOWN  (then return to centre)",  "l_y", true, true},
+        {"Right Stick \xe2\x86\x92 RIGHT (then return to centre)",  "r_x", true, true},
+        {"Right Stick \xe2\x86\x93 DOWN  (then return to centre)",  "r_y", true, true},
+    };
+
+    SDL_JoystickID joyId = -1;
+    SDL_Joystick*  joy   = SDL_GameControllerGetJoystick(ctrl_);
+    if (joy) joyId = SDL_JoystickInstanceID(joy);
+
+    // Snapshot axis centres for deflection detection
+    std::array<Sint16, 32> axisCenter = {};
+    if (joy) {
+        int n = std::min(SDL_JoystickNumAxes(joy), 32);
+        for (int i = 0; i < n; ++i)
+            axisCenter[i] = SDL_JoystickGetAxis(joy, i);
+    }
+
+    int  idx  = 0;
+    bool done = false;
+
+    const std::string title =
+        "RetroArch Player " + std::to_string(player) +
+        " Setup   \xe2\x80\x94   ESC to cancel   \xe2\x80\x94   Backspace = redo last";
+
+    auto drawRebind = [&]() {
+        SDL_SetRenderDrawColor(renderer_, 10, 10, 30, 255);
+        SDL_RenderClear(renderer_);
+
+        renderCenteredText(title, 0, 6, kW, {140,140,200,255}, fontMd_);
+
+        // Left column: already-mapped
+        int listY = 32;
+        for (int i = 0; i < idx && i < (int)actions.size(); ++i) {
+            std::string txt = std::string(actions[i].label) + "  \xe2\x86\x92  ";
+            if (actions[i].isAxis)
+                txt += std::string("axis ") + (actions[i].positive ? "+" : "-")
+                     + std::to_string(actions[i].rawIdx);
+            else
+                txt += "btn " + std::to_string(actions[i].rawIdx);
+            renderText(txt, 30, listY, {80,200,80,255}, fontSm_, kW/2 - 50);
+            listY += 20;
+        }
+
+        // Right half: current prompt
+        if (idx < (int)actions.size()) {
+            int py = kH/2 - 50;
+            renderCenteredText(actions[idx].isAxis ? "Push:" : "Press:",
+                               kW/2, py, kW/2, {160,160,200,255}, fontMd_);
+            renderCenteredText(actions[idx].label,
+                               kW/2, py + 26, kW/2, {255,220,60,255}, fontLg_);
+            std::string progress = std::to_string(idx+1) + " / "
+                                 + std::to_string(actions.size());
+            renderCenteredText(progress, kW/2, py + 70, kW/2, {110,110,150,255}, fontMd_);
+        }
+
+        SDL_RenderPresent(renderer_);
+    };
+
+    while (!done && idx < (int)actions.size()) {
+        drawRebind();
+        SDL_Event ev;
+        while (SDL_PollEvent(&ev)) {
+            if (ev.type == SDL_QUIT)  { done = true; break; }
+            if (ev.type == SDL_KEYDOWN) {
+                if (ev.key.keysym.sym == SDLK_ESCAPE)    { done = true; break; }
+                if (ev.key.keysym.sym == SDLK_BACKSPACE && idx > 0) { --idx; break; }
+            }
+
+            auto& act = actions[idx];
+            if (!act.isAxis && ev.type == SDL_JOYBUTTONDOWN
+                    && ev.jbutton.which == joyId) {
+                act.rawIdx = ev.jbutton.button;
+                ++idx;
+            }
+            else if (act.isAxis && ev.type == SDL_JOYAXISMOTION
+                     && ev.jaxis.which == joyId) {
+                int ai    = std::min((int)ev.jaxis.axis, 31);
+                // Use int arithmetic to avoid Sint16 overflow when a trigger
+                // goes from its idle value (−32768) to fully pressed (+32767).
+                int delta = (int)ev.jaxis.value - (int)axisCenter[ai];
+                if (std::abs(delta) > 14000) {
+                    act.rawIdx   = ev.jaxis.axis;
+                    act.positive = (ev.jaxis.value > axisCenter[ai]);
+                    ++idx;
+
+                    // ── Wait for axis to return to centre ─────────────────
+                    // Drain events until the captured axis is back near idle,
+                    // so the deflection doesn't bleed into the next prompt.
+                    {
+                        Uint32 deadline = SDL_GetTicks() + 1500;
+                        SDL_SetRenderDrawColor(renderer_, 10, 10, 30, 255);
+                        SDL_RenderClear(renderer_);
+                        renderCenteredText("Release...",
+                            0, kH/2 - 14, kW, {160,160,200,255}, fontMd_);
+                        SDL_RenderPresent(renderer_);
+
+                        bool released = false;
+                        while (!released && SDL_GetTicks() < deadline) {
+                            SDL_Event re;
+                            while (SDL_PollEvent(&re)) {
+                                if (re.type == SDL_JOYAXISMOTION
+                                        && re.jaxis.which == joyId
+                                        && re.jaxis.axis == act.rawIdx) {
+                                    int cur = (int)re.jaxis.value - (int)axisCenter[ai];
+                                    if (std::abs(cur) < 6000) released = true;
+                                }
+                            }
+                            SDL_Delay(16);
+                        }
+                        // Extra 150 ms gap before showing the next prompt
+                        SDL_Delay(150);
+                    }
+                }
+            }
+        }
+        SDL_Delay(16);
+    }
+    if (done) { cleanup(); return; }
+
+    // ── Step 4: build RetroArch key/value pairs ──────────────────────────────
+    const std::string pfx = "input_player" + std::to_string(player) + "_";
+    std::vector<std::pair<std::string,std::string>> kv;
+    kv.emplace_back(pfx + "joypad_index", "\"" + std::to_string(player - 1) + "\"");
+    // Buttons (same layout as the player 1 block)
+    for (const auto& act : actions) {
+        if (act.isAxis || act.rawIdx < 0) continue;
+        kv.emplace_back(pfx + act.raKey, "\"" + std::to_string(act.rawIdx) + "\"");
+    }
+    // D-pad always comes from the HAT (ABS_HAT0X/Y set by uinput_client.py)
+    kv.emplace_back(pfx + "up_btn",    "\"h0up\"");
+    kv.emplace_back(pfx + "down_btn",  "\"h0down\"");
+    kv.emplace_back(pfx + "left_btn",  "\"h0left\"");
+    kv.emplace_back(pfx + "right_btn", "\"h0right\"");
+    // Axes
+    for (const auto& act : actions) {
+        if (!act.isAxis || act.rawIdx < 0) continue;
+        const std::string ai = std::to_string(act.rawIdx);
+        if (act.isStick) {
+            kv.emplace_back(pfx + act.raKey + "_plus_axis",
+                            "\"" + std::string(act.positive ? "+" : "-") + ai + "\"");
+            kv.emplace_back(pfx + act.raKey + "_minus_axis",
+                            "\"" + std::string(act.positive ? "-" : "+") + ai + "\"");
+        } else {
+            kv.emplace_back(pfx + act.raKey,
+                            "\"" + std::string(act.positive ? "+" : "-") + ai + "\"");
+        }
+    }
+
+    // ── Step 5: merge into retroarch_controller.cfg ──────────────────────────
+    const fs::path cfgPath = "retroarch_controller.cfg";
+    std::vector<std::string> kept;
+    {
+        std::ifstream f(cfgPath);
+        std::string line;
+        while (std::getline(f, line))
+            if (line.rfind(pfx, 0) != 0)   // drop stale player-N keys
+                kept.push_back(line);
+    }
+    while (!kept.empty() && kept.back().empty()) kept.pop_back();
+    {
+        std::ofstream f(cfgPath, std::ios::trunc);
+        for (const auto& l : kept) f << l << "\n";
+        if (!kept.empty()) f << "\n";
+        for (const auto& [k, v] : kv) f << k << " = " << v << "\n";
+    }
+
+    showMsg("Saved player " + std::to_string(player) +
+            " bindings to retroarch_controller.cfg", {80,230,80,255});
+    SDL_Delay(1500);
+    cleanup();
+}
+
 // ── loadConsoleBindings (static, called at startup) ───────────────────────────
 
 void GameShell::loadConsoleBindings() {

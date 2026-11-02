@@ -34,6 +34,11 @@ public:
     // Pass "all" to step through every built-in console mapping.
     void remapConsole(const std::string& sysName = "all");
 
+    // Interactive capture of one player's raw controller bindings for RetroArch.
+    // Merges input_player<N>_* keys into retroarch_controller.cfg (passed to
+    // RetroArch via --appendconfig by RetroArchConsoleLauncher).
+    void remapRetroArchPlayer(int player);
+
     // Load saves/console_bindings.conf and apply to every globalControllerBindings.
     // Called once at program startup (no SDL required).
     static void loadConsoleBindings();

@@ -5,9 +5,12 @@ Tries XInput first (Xbox controllers); falls back to WinMM for non-XInput
 devices such as the BDA NSW Fusion Pro (Switch Pro layout) and generic HID
 gamepads.
 
-Each packet written to stdout is 12 bytes:
-  <H h h h h B B>
-  buttons (uint16), lx, ly, rx, ry (int16), lt, rt (uint8)
+Each packet written to stdout is 13 bytes:
+  <B H h h h h B B>
+  index (uint8), buttons (uint16), lx, ly, rx, ry (int16), lt, rt (uint8)
+
+The index byte identifies the controller (XInput slot / WinMM enumeration
+order) so the WSL side can drive one virtual gamepad per physical controller.
 
 XInput button bitmask:
   0x0001 DPAD_UP    0x0002 DPAD_DOWN  0x0004 DPAD_LEFT  0x0008 DPAD_RIGHT
@@ -21,9 +24,10 @@ import sys
 import os
 import time
 
-PACKET_FMT    = struct.Struct('<HhhhhBB')
+PACKET_FMT    = struct.Struct('<BHhhhhBB')
 POLL_INTERVAL = 1.0 / 250.0
 ERROR_DEVICE_NOT_READY = 1167
+MAX_XINPUT_SLOTS = 4
 
 # ─── XInput ──────────────────────────────────────────────────────────────────
 
@@ -223,83 +227,116 @@ def _read_trigger(info, caps, name, raw_btns, is_lt):
     v = _read_axis(info, caps, n)
     return min(255, max(0, (v + 32767) >> 8))
 
-# ─── XInput runner ────────────────────────────────────────────────────────────
+# ─── Unified runner ───────────────────────────────────────────────────────────
+# Polls XInput slots AND WinMM joysticks together so mixed setups work
+# (e.g. an Xbox pad for player 1 and a WinMM-only Fusion Pro for player 2).
+#
+# XInput slot i        → packet index i
+# WinMM joystick k     → packet index MAX_XINPUT_SLOTS + k (monotonic)
+#
+# XInput devices also show up in WinMM. To avoid driving two virtual pads for
+# one physical controller, WinMM devices with a Microsoft vendor ID (0x045E)
+# are ignored while any XInput slot is connected. Set BRIDGE_WINMM_ALL=1 to
+# disable that filter.
 
-def run_xinput(xi):
-    state      = XINPUT_STATE()
-    prev_pkt   = -1
-    sys.stderr.write('[xinput] Running (Xbox-compatible mode).\n'); sys.stderr.flush()
-    while True:
-        ret = xi.XInputGetState(0, ctypes.byref(state))
-        if ret == 0:
-            if state.dwPacketNumber != prev_pkt:
-                prev_pkt = state.dwPacketNumber
-                g = state.Gamepad
-                sys.stdout.buffer.write(PACKET_FMT.pack(
-                    g.wButtons, g.sThumbLX, g.sThumbLY,
-                    g.sThumbRX, g.sThumbRY,
-                    g.bLeftTrigger, g.bRightTrigger))
-                sys.stdout.buffer.flush()
-        elif ret == ERROR_DEVICE_NOT_READY:
-            time.sleep(1.0)
-            continue
-        time.sleep(POLL_INTERVAL)
+def run_bridge(xi):
+    state     = XINPUT_STATE()
+    prev_pkt  = [-1] * MAX_XINPUT_SLOTS
+    xi_alive  = [False] * MAX_XINPUT_SLOTS
+    winmm     = ctypes.windll.winmm
+    btn_map   = _load_btn_map()
+    axis_map  = _load_axis_map()
+    skip_ms   = os.environ.get('BRIDGE_WINMM_ALL', '') != '1'
+    mm_devs   = []                     # {'jid','caps','info','prev','idx','ms'}
+    mm_by_jid = {}
+    next_idx  = MAX_XINPUT_SLOTS
+    last_scan = 0.0
 
-# ─── WinMM runner ─────────────────────────────────────────────────────────────
-
-def run_winmm():
-    """Returns True on clean exit, False if controller not found / disconnected."""
-    winmm = ctypes.windll.winmm
-    caps  = JOYCAPS()
-    joy_id = -1
-    for jid in range(winmm.joyGetNumDevs()):
-        if winmm.joyGetDevCapsA(jid, ctypes.byref(caps), ctypes.sizeof(caps)) == JOYERR_NOERROR:
-            joy_id = jid
-            break
-    if joy_id < 0:
-        sys.stderr.write('[winmm] No joystick found — waiting...\n'); sys.stderr.flush()
-        return False
-
-    name = caps.szPname.decode('ascii', errors='replace')
-    sys.stderr.write(f'[winmm] Joystick {joy_id}: "{name}"  '
-                     f'buttons={caps.wNumButtons} axes={caps.wNumAxes}\n')
+    sys.stderr.write('[bridge] Unified mode (XInput + WinMM).\n')
     sys.stderr.flush()
 
-    btn_map  = _load_btn_map()
-    axis_map = _load_axis_map()
-    info     = JOYINFOEX()
-    info.dwSize  = ctypes.sizeof(JOYINFOEX)
-    info.dwFlags = JOY_RETURNALL
-    prev_data    = None
-
     while True:
-        ret = winmm.joyGetPosEx(joy_id, ctypes.byref(info))
-        if ret != JOYERR_NOERROR:
-            time.sleep(1.0)
-            if winmm.joyGetDevCapsA(joy_id, ctypes.byref(caps), ctypes.sizeof(caps)) != JOYERR_NOERROR:
-                sys.stderr.write('[winmm] Controller disconnected.\n'); sys.stderr.flush()
-                return False
-            continue
+        # ── XInput slots ──────────────────────────────────────────────────────
+        if xi is not None:
+            for slot in range(MAX_XINPUT_SLOTS):
+                ret = xi.XInputGetState(slot, ctypes.byref(state))
+                if ret == 0:
+                    if not xi_alive[slot]:
+                        xi_alive[slot] = True
+                        sys.stderr.write(f'[xinput] Controller {slot} connected.\n')
+                        sys.stderr.flush()
+                    if state.dwPacketNumber != prev_pkt[slot]:
+                        prev_pkt[slot] = state.dwPacketNumber
+                        g = state.Gamepad
+                        sys.stdout.buffer.write(PACKET_FMT.pack(
+                            slot, g.wButtons, g.sThumbLX, g.sThumbLY,
+                            g.sThumbRX, g.sThumbRY,
+                            g.bLeftTrigger, g.bRightTrigger))
+                        sys.stdout.buffer.flush()
+                elif xi_alive[slot]:
+                    xi_alive[slot] = False
+                    sys.stderr.write(f'[xinput] Controller {slot} disconnected.\n')
+                    sys.stderr.flush()
 
-        raw_btns   = info.dwButtons
-        xi_buttons = _pov_to_dpad(info.dwPOV)
-        for bit, mask in btn_map.items():
-            if (raw_btns >> bit) & 1:
-                xi_buttons |= mask
+        # ── WinMM hot-plug rescan (~every 2 s) ────────────────────────────────
+        now = time.monotonic()
+        if now - last_scan > 2.0:
+            last_scan = now
+            for jid in range(winmm.joyGetNumDevs()):
+                if jid in mm_by_jid:
+                    continue
+                c = JOYCAPS()
+                if winmm.joyGetDevCapsA(jid, ctypes.byref(c), ctypes.sizeof(c)) != JOYERR_NOERROR:
+                    continue
+                name = c.szPname.decode('ascii', errors='replace')
+                ms   = (c.wMid == 0x045E)   # Microsoft → XInput clone
+                info = JOYINFOEX()
+                info.dwSize  = ctypes.sizeof(JOYINFOEX)
+                info.dwFlags = JOY_RETURNALL
+                dev = {'jid': jid, 'caps': c, 'info': info,
+                       'prev': None, 'idx': next_idx, 'ms': ms}
+                next_idx += 1
+                mm_devs.append(dev)
+                mm_by_jid[jid] = dev
+                sys.stderr.write(f'[winmm] Joystick {jid} (pad index {dev["idx"]}): '
+                                 f'"{name}" buttons={c.wNumButtons} axes={c.wNumAxes}'
+                                 f'{"  [xinput-clone]" if ms else ""}\n')
+                sys.stderr.flush()
 
-        lx = _read_axis(info, caps, axis_map['lx'])
-        ly = _read_axis(info, caps, axis_map['ly'])
-        rx = _read_axis(info, caps, axis_map['rx'])
-        ry = _read_axis(info, caps, axis_map['ry'])
-        lt = _read_trigger(info, caps, axis_map['lt'], raw_btns, True)
-        rt = _read_trigger(info, caps, axis_map['rt'], raw_btns, False)
+        # ── WinMM poll ────────────────────────────────────────────────────────
+        any_xi = any(xi_alive)
+        for dev in mm_devs:
+            if dev['ms'] and skip_ms and any_xi:
+                dev['prev'] = None
+                continue   # same physical pad already handled via XInput
+            jid  = dev['jid']
+            info = dev['info']
+            ret  = winmm.joyGetPosEx(jid, ctypes.byref(info))
+            if ret != JOYERR_NOERROR:
+                continue
 
-        cur = (xi_buttons, lx, ly, rx, ry, lt, rt)
-        if cur != prev_data:
-            prev_data = cur
-            sys.stdout.buffer.write(PACKET_FMT.pack(*cur))
-            sys.stdout.buffer.flush()
+            caps       = dev['caps']
+            raw_btns   = info.dwButtons
+            xi_buttons = _pov_to_dpad(info.dwPOV)
+            for bit, mask in btn_map.items():
+                if (raw_btns >> bit) & 1:
+                    xi_buttons |= mask
 
+            lx = _read_axis(info, caps, axis_map['lx'])
+            ly = _read_axis(info, caps, axis_map['ly'])
+            rx = _read_axis(info, caps, axis_map['rx'])
+            ry = _read_axis(info, caps, axis_map['ry'])
+            lt = _read_trigger(info, caps, axis_map['lt'], raw_btns, True)
+            rt = _read_trigger(info, caps, axis_map['rt'], raw_btns, False)
+
+            cur = (xi_buttons, lx, ly, rx, ry, lt, rt)
+            if cur != dev['prev']:
+                dev['prev'] = cur
+                sys.stdout.buffer.write(PACKET_FMT.pack(dev['idx'], *cur))
+                sys.stdout.buffer.flush()
+
+        if xi is None and not mm_devs:
+            time.sleep(0.5)   # nothing to poll — avoid a tight loop
         time.sleep(POLL_INTERVAL)
 
 # ─── Entry point ──────────────────────────────────────────────────────────────
@@ -308,20 +345,12 @@ def main():
     sys.stderr.write('[bridge] Starting controller bridge...\n'); sys.stderr.flush()
 
     xi = _load_xinput()
-    if xi is not None:
-        state = XINPUT_STATE()
-        if xi.XInputGetState(0, ctypes.byref(state)) == 0:
-            run_xinput(xi)   # Xbox controller present — use XInput
-            return
-        sys.stderr.write('[xinput] No XInput controller — switching to WinMM.\n')
-    else:
-        sys.stderr.write('[xinput] XInput DLL unavailable — switching to WinMM.\n')
-    sys.stderr.write('[winmm] WinMM mode active (Switch Pro / HID gamepad support).\n')
+    if xi is None:
+        sys.stderr.write('[xinput] XInput DLL unavailable — WinMM only.\n')
+    sys.stderr.write('[winmm] WinMM active (Switch Pro / HID gamepad support).\n')
     sys.stderr.flush()
 
-    while True:
-        if not run_winmm():
-            time.sleep(2.0)   # retry after disconnect / not found
+    run_bridge(xi)
 
 if __name__ == '__main__':
     main()
