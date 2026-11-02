@@ -62,7 +62,19 @@ static MYSQL* mysqlConnect(const OracleDBConfig& cfg) {
     if (!mysql_real_connect(conn, cfg.host.c_str(), cfg.user.c_str(),
                             cfg.password.c_str(), db,
                             static_cast<unsigned int>(cfg.port), nullptr, 0)) {
+        const unsigned int errNo = mysql_errno(conn);
         std::cerr << "[MySQL] Connect failed: " << mysql_error(conn) << "\n";
+        // CR_SERVER_LOST (2013) during the auth handshake, when the same
+        // credentials work from other devices, means the server dropped the
+        // connection because this client's host/IP is not in the account's
+        // allowed host set. Point the user at the fix.
+        if (errNo == 2013) {
+            std::cerr << "[MySQL] The server closed the connection during login. "
+                         "If these credentials work from other devices, this "
+                         "device's public IP is likely not granted on the "
+                         "server. Run sql/grant_omnicon_remote.sh on the DB "
+                         "server to allow it (it verifies the password first).\n";
+        }
         mysql_close(conn);
         return nullptr;
     }

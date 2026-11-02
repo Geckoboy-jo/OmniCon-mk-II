@@ -1,16 +1,6 @@
 #include "3DS.hpp"
-#include <fstream>
-#include <iostream>
-#include <algorithm>
-#include <cctype>
-#include <climits>
-#include <cstdarg>
-#include <cstring>
-#include <cstdint>
-#include <filesystem>
-#include <thread>
-#include <chrono>
-#include <dlfcn.h>
+#include "top.hpp"
+
 
 // ─── Abstract backend ─────────────────────────────────────────────────────────
 

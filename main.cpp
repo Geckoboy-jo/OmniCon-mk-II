@@ -36,6 +36,7 @@
 #include <thread>
 #include <vector>
 
+
 // ── Controller bridge (WSL2 only) ─────────────────────────────────────────────
 // Starts the Windows→WSL uinput bridge once and keeps it alive for the full
 // program lifetime so the controller is available in the shell AND in every
@@ -151,6 +152,53 @@ bool hasCommand(const std::string& command)
 {
     const std::string probe = "command -v " + command + " >/dev/null 2>&1";
     return std::system(probe.c_str()) == 0;
+}
+
+// Check the external programs OmniCon needs at runtime and fetch any that are
+// missing, so a fresh device can bootstrap itself. Set OMNICON_SKIP_DEP_CHECK=1
+// to disable the automatic download.
+void ensureRuntimeDependencies()
+{
+    if (std::getenv("OMNICON_SKIP_DEP_CHECK"))
+        return;
+
+    // Emulators installed user-locally by scripts/install_deps.sh live here.
+    const char* home = std::getenv("HOME");
+    if (home && *home) {
+        const std::string userBin = std::string(home) + "/.local/bin";
+        const char* pathEnv = std::getenv("PATH");
+        const std::string path = pathEnv ? pathEnv : "";
+        if (path.find(userBin) == std::string::npos)
+            setenv("PATH", (userBin + ":" + path).c_str(), 1);
+    }
+
+    static const char* const kRuntimeDeps[] = {
+        "curl", "mysql", "retroarch", "cemu", "Ryubing", "Vita3K", "xemu",
+    };
+    std::vector<std::string> missing;
+    for (const char* dep : kRuntimeDeps)
+        if (!hasCommand(dep))
+            missing.emplace_back(dep);
+    if (missing.empty())
+        return;
+
+    std::cerr << "[deps] Missing runtime dependencies:";
+    for (const auto& dep : missing)
+        std::cerr << ' ' << dep;
+    std::cerr << "\n[deps] Downloading them now (this can take a few minutes)...\n";
+
+    if (!std::filesystem::exists("scripts/install_deps.sh")) {
+        std::cerr << "[deps] scripts/install_deps.sh not found; please install the above manually.\n";
+        return;
+    }
+    const int status = std::system("bash scripts/install_deps.sh --runtime");
+    if (status != 0)
+        std::cerr << "[deps] The dependency installer reported an error.\n";
+
+    for (const char* dep : kRuntimeDeps)
+        if (!hasCommand(dep))
+            std::cerr << "[deps] Still missing: " << dep
+                      << " (related features will be unavailable)\n";
 }
 
 // Run scrape_covers.py for any games currently missing cover art, then
@@ -1454,6 +1502,10 @@ int main()
 
     // Load any per-console button bindings saved from previous remap sessions.
     GameShell::loadConsoleBindings();
+
+    // Download any missing runtime dependencies (emulators, clients) so a
+    // fresh device can get them automatically.
+    ensureRuntimeDependencies();
 
     if (!hasCommand("curl")) {
         std::cerr << "curl is required but was not found in PATH.\n";

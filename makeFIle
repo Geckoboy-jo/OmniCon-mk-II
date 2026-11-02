@@ -8,7 +8,7 @@ SAMEBOY_LIB := third_party/SameBoy/build/lib/libsameboy.a
 TARGET := omnicon_repl
 SOURCES := main.cpp NES.cpp SNES.cpp GameBoy.cpp GameBoyColor.cpp Atari2600.cpp Atari5200.cpp Atari800.cpp GBA.cpp NDS.cpp 3DS.cpp agnes.c GameLibrary.cpp GameShell.cpp Odyssey.cpp SegaGenesis.cpp N64.cpp PS1.cpp PS2.cpp PS3.cpp GameCube.cpp SaveManager.cpp OracleDB.cpp DownloadManager.cpp ConsoleLaunchers.cpp SegaMasterSystemConsoleLauncher.cpp GameGearConsoleLauncher.cpp SegaSaturnConsoleLauncher.cpp WiiConsoleLauncher.cpp WiiUConsoleLauncher.cpp NintendoSwitchConsoleLauncher.cpp PSPConsoleLauncher.cpp PSVitaConsoleLauncher.cpp XboxConsoleLauncher.cpp Xbox360ConsoleLauncher.cpp XboxCloudConsoleLauncher.cpp Atari7800ConsoleLauncher.cpp AtariLynxConsoleLauncher.cpp AtariJaguarConsoleLauncher.cpp PCEngineConsoleLauncher.cpp ColecoVisionConsoleLauncher.cpp IntellivisionConsoleLauncher.cpp ExtraSystems.cpp MameConsoleLauncher.cpp ShellMessage.cpp WiiUConverter.cpp
 
-.PHONY: all run clean reset save bootroms cdecrypt
+.PHONY: all run clean reset save bootroms cdecrypt deps
 
 
 
@@ -22,7 +22,10 @@ $(TARGET): $(SOURCES) NES.hpp SNES.hpp GameBoy.hpp GameBoyColor.hpp Atari2600.hp
 	ExtraSystems.hpp MameConsoleLauncher.hpp ShellMessage.hpp ExtraConsoleLaunchers.hpp RetroArchConsoleLauncher.hpp | bootroms
 	$(CC) $(CFLAGS) $(SDL_CFLAGS) $(MYSQL_CFLAGS) $(SOURCES) -o $(TARGET) $(SAMEBOY_LIB) $(SDL_LIBS) -lSDL2_ttf -lSDL2_image -ldl -lmgba $(MYSQL_LIBS) -pthread
 
-bootroms:
+deps:
+	bash scripts/install_deps.sh --build
+
+bootroms: deps
 	$(MAKE) -C third_party/SameBoy bootroms
 
 cdecrypt:
