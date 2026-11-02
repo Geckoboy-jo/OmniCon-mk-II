@@ -15,6 +15,14 @@
 #include <memory>
 #include <mutex>
 #include <thread>
+#include <algorithm>
+#include <cctype>
+#include <climits>
+#include <cstdarg>
+#include <cstring>
+#include <cstdint>
+#include <chrono>
+#include <dlfcn.h>
 #include <SDL2/SDL.h>
 
 using namespace std;

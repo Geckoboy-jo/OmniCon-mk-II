@@ -1,12 +1,30 @@
 # OmniCon-mk-II
 Private repo
 
+## Dependencies
+
+OmniCon bootstraps itself on a new device. `make` (via the `deps` target) runs
+`scripts/install_deps.sh --build`, which installs whatever is missing: the
+compiler and SDL2/MySQL/mGBA development packages via apt, RGBDS and `cppp`
+for SameBoy, and the vendored SameBoy sources themselves (cloned at the commit
+pinned by this repository) including the boot ROMs and `libsameboy.a`.
+
+At startup the program also checks for its runtime dependencies (`curl`, the
+`mysql` client, `retroarch`, `cemu`, `Ryubing`, `Vita3K`, and `xemu`) and
+automatically downloads any that are missing by running
+`scripts/install_deps.sh --runtime`. Emulators are installed as AppImages in
+`~/.local/bin`, so no root is required for them; apt packages use `sudo` when
+needed. Set `OMNICON_SKIP_DEP_CHECK=1` to disable the startup check, or run
+`scripts/install_deps.sh` manually at any time — it is idempotent and only
+installs what is missing. `xenia` (Xbox 360) is Windows-only and must be
+installed manually.
+
 ## Game Boy boot ROMs
 
 The native Game Boy emulator uses boot ROM binaries generated from the vendored
 SameBoy sources. The project build generates them automatically; this requires
-RGBDS (`rgbasm`, `rgblink`, and `rgbgfx`) to be installed. You can also build
-them directly with `make bootroms`.
+RGBDS (`rgbasm`, `rgblink`, and `rgbgfx`), which `make deps` installs if it is
+missing. You can also build the boot ROMs directly with `make bootroms`.
 
 ## Archive.org download cookies
 
