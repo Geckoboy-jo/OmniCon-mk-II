@@ -136,10 +136,14 @@ executable is not named `retroarch`. Per-system core paths can be overridden:
 | Intellivision | `OMNICON_INTELLIVISION_CORE` | `freeintv_libretro.so` |
 
 Wii U, Switch, Vita, Xbox, and Xbox 360 launch through external emulators:
-`cemu` (`OMNICON_WIIU_LAUNCHER`), `Ryujinx` (`OMNICON_SWITCH_LAUNCHER`),
+`cemu` (`OMNICON_WIIU_LAUNCHER`), `Ryubing` (`OMNICON_SWITCH_LAUNCHER`),
 `Vita3K` (`OMNICON_VITA_LAUNCHER`), `xemu` (`OMNICON_XBOX_LAUNCHER`), and
 `xenia` (`OMNICON_XBOX360_LAUNCHER`) respectively. Install and configure those
-emulators, firmware, and keys as required by their projects. Xbox One and Xbox
+emulators, firmware, and keys as required by their projects. For Switch,
+download Ryubing (the community Ryujinx fork) from
+https://git.ryujinx.app/ryubing/ryujinx/releases and put the `Ryubing`
+executable on your `PATH` (or point `OMNICON_SWITCH_LAUNCHER` at it); it also
+needs your console's `prod.keys` and firmware installed via its own setup. Xbox One and Xbox
 Series have no emulator backend; their games come from Xbox Cloud Gaming instead
 (see below).
 

@@ -6,6 +6,7 @@
 #include <cctype>
 #include <cstdlib>
 #include <fstream>
+#include <vector>
 
 namespace {
 
@@ -57,31 +58,39 @@ bool XboxCloudConsoleLauncher::launch(const std::string& contentPath) const {
         std::cerr << "[Xbox Cloud] Invalid product id: " << contentPath << "\n";
         return false;
     }
-    std::string url;
-    if (id == kAddGamesId)
-        url = "https://www.xbox.com/play";
-    else if (storeOnly)
-        url = "https://www.xbox.com/games/store/-/" + id;
-    else
-        url = "https://www.xbox.com/play/launch/game/" + id;
+    std::vector<std::string> urls;
+    if (id == kAddGamesId) {
+        // Not every game is streamable, so open the Xbox Store alongside
+        // Cloud Gaming to cover purchase/download-only titles.
+        urls.push_back("https://www.xbox.com/play");
+        urls.push_back("https://www.xbox.com/games/store");
+    } else if (storeOnly) {
+        urls.push_back("https://www.xbox.com/games/store/-/" + id);
+    } else {
+        urls.push_back("https://www.xbox.com/play/launch/game/" + id);
+    }
 
     const char* envLauncher = std::getenv("OMNICON_XBOX_CLOUD_LAUNCHER");
     const std::string configured = envLauncher && *envLauncher
                                  ? std::string(envLauncher) : xboxConfValue("launcher");
-    bool started = false;
-    if (!configured.empty()) {
-        started = launchExternalApplication(configured, {url});
-    } else if (runningInWSL()) {
-        // The browser lives on Windows; the empty argument is start's window title.
-        started = launchExternalApplication("cmd.exe", {"/c", "start", "", url});
-    } else {
-        started = launchExternalApplication("xdg-open", {url});
+    bool started = true;
+    for (const std::string& url : urls) {
+        bool ok;
+        if (!configured.empty()) {
+            ok = launchExternalApplication(configured, {url});
+        } else if (runningInWSL()) {
+            // The browser lives on Windows; the empty argument is start's window title.
+            ok = launchExternalApplication("cmd.exe", {"/c", "start", "", url});
+        } else {
+            ok = launchExternalApplication("xdg-open", {url});
+        }
+        started = started && ok;
     }
 
     if (!started) {
         std::cerr << "[Xbox Cloud] Could not open a browser. Set "
                      "OMNICON_XBOX_CLOUD_LAUNCHER to a browser command.\n";
-        postShellMessage("Xbox Cloud: could not open a browser for " + url);
+        postShellMessage("Xbox Cloud: could not open a browser for " + urls.front());
     }
     return started;
 }

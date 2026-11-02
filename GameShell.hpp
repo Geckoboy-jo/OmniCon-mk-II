@@ -126,6 +126,7 @@ private:
     };
     XboxSignIn xboxSignIn_;
     GameEntry  xboxAddEntry_;               // the "+" tile shown last in XONE / XSX
+    GameEntry  steamAddEntry_;              // the "+" tile shown last in Steam
     bool       xboxLoading_ = false;        // library fetch in progress (UI thread)
 
     static bool xboxSignedIn();

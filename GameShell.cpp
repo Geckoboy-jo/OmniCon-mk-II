@@ -39,7 +39,11 @@ namespace fs = std::filesystem;
 
 // ─── Static members ───────────────────────────────────────────────────────────
 
+// Grouped by SystemFamily in header tab order (Nintendo, Sega, Sony, Microsoft,
+// Atari, NEC, SNK, Arcade, Other) so shoulder-button cycling moves linearly
+// across the tabs. kSysAbbrev must stay in the same order.
 const SystemType GameShell::kSystems[107] = {
+    // Nintendo
     SystemType::NES,
     SystemType::SNES,
     SystemType::GameBoy,
@@ -47,63 +51,59 @@ const SystemType GameShell::kSystems[107] = {
     SystemType::GBA,
     SystemType::NDS,
     SystemType::ThreeDS,
-    SystemType::Atari2600,
-    SystemType::Atari5200,
-    SystemType::Atari800,
-    SystemType::SegaGenesis,
     SystemType::N64,
-    SystemType::PS1,
-    SystemType::PS2,
-    SystemType::PS3,
     SystemType::GameCube,
-    SystemType::Odyssey,
-    SystemType::PC,
-    SystemType::Dreamcast,
-    SystemType::Steam,
-    SystemType::SegaMasterSystem,
-    SystemType::GameGear,
-    SystemType::SegaSaturn,
     SystemType::Wii,
     SystemType::WiiU,
     SystemType::NintendoSwitch,
-    SystemType::PSP,
-    SystemType::PSVita,
-    SystemType::Xbox,
-    SystemType::Xbox360,
-    SystemType::XboxOne,
-    SystemType::XboxSeriesX,
-    SystemType::Atari7800,
-    SystemType::AtariLynx,
-    SystemType::AtariJaguar,
-    SystemType::PCEngine,
-    SystemType::ColecoVision,
-    SystemType::Intellivision,
     SystemType::VirtualBoy,
     SystemType::PokemonMini,
     SystemType::FamicomDiskSystem,
     SystemType::GameAndWatch,
     SystemType::Satellaview,
-    SystemType::AtariXEGS,
+    // Sega
+    SystemType::SegaGenesis,
+    SystemType::Dreamcast,
+    SystemType::SegaMasterSystem,
+    SystemType::GameGear,
+    SystemType::SegaSaturn,
     SystemType::SegaCD,
     SystemType::Sega32X,
     SystemType::SegaPico,
     SystemType::SG1000,
+    // Sony
+    SystemType::PS1,
+    SystemType::PS2,
+    SystemType::PS3,
+    SystemType::PSP,
+    SystemType::PSVita,
+    // Microsoft
+    SystemType::PC,
+    SystemType::Steam,
+    SystemType::Xbox,
+    SystemType::Xbox360,
+    SystemType::XboxOne,
+    SystemType::XboxSeriesX,
+    // Atari
+    SystemType::Atari2600,
+    SystemType::Atari5200,
+    SystemType::Atari800,
+    SystemType::Atari7800,
+    SystemType::AtariLynx,
+    SystemType::AtariJaguar,
+    SystemType::AtariXEGS,
+    // NEC
+    SystemType::PCEngine,
+    SystemType::PCFX,
+    SystemType::SuperGrafx,
+    SystemType::PCEngineCD,
+    // SNK
     SystemType::NeoGeoAES,
     SystemType::NeoGeoMVS,
     SystemType::NeoGeoCD,
     SystemType::NeoGeoPocket,
     SystemType::NeoGeoPocketColor,
-    SystemType::PCFX,
-    SystemType::SuperGrafx,
-    SystemType::PCEngineCD,
-    SystemType::Panasonic3DO,
-    SystemType::AmigaCD32,
-    SystemType::WonderSwan,
-    SystemType::WonderswanColor,
-    SystemType::SwanCrystal,
-    SystemType::FairchildChannelF,
-    SystemType::Vectrex,
-    SystemType::WataraSupervision,
+    // Arcade
     SystemType::Atomiswave,
     SystemType::Naomi,
     SystemType::Naomi2,
@@ -115,6 +115,31 @@ const SystemType GameShell::kSystems[107] = {
     SystemType::SegaSystem32,
     SystemType::SegaModel3,
     SystemType::Arcade,
+    SystemType::SegaModel1,
+    SystemType::SegaModel2,
+    SystemType::NamcoSystem22,
+    SystemType::NamcoSystem23,
+    SystemType::NamcoSystem246,
+    SystemType::NamcoSystem256,
+    SystemType::CaveCV1000,
+    SystemType::KonamiGX,
+    SystemType::IGS_PGM2,
+    SystemType::SegaHikaru,
+    SystemType::SegaChihiro,
+    SystemType::Triforce,
+    SystemType::HyperNeoGeo64,
+    // Other
+    SystemType::Odyssey,
+    SystemType::ColecoVision,
+    SystemType::Intellivision,
+    SystemType::Panasonic3DO,
+    SystemType::AmigaCD32,
+    SystemType::WonderSwan,
+    SystemType::WonderswanColor,
+    SystemType::SwanCrystal,
+    SystemType::FairchildChannelF,
+    SystemType::Vectrex,
+    SystemType::WataraSupervision,
     SystemType::Odyssey2,
     SystemType::CDi,
     SystemType::CreatiVision,
@@ -134,38 +159,39 @@ const SystemType GameShell::kSystems[107] = {
     SystemType::FMTownsMarty,
     SystemType::HartungGameMaster,
     SystemType::GP32,
-    SystemType::SegaModel1,
-    SystemType::SegaModel2,
-    SystemType::NamcoSystem22,
-    SystemType::NamcoSystem23,
-    SystemType::NamcoSystem246,
-    SystemType::NamcoSystem256,
-    SystemType::CaveCV1000,
-    SystemType::KonamiGX,
-    SystemType::IGS_PGM2,
-    SystemType::SegaHikaru,
-    SystemType::SegaChihiro,
-    SystemType::Triforce,
-    SystemType::HyperNeoGeo64,
 };
 
 static_assert(sizeof(GameShell::kSystems) / sizeof(GameShell::kSystems[0]) == GameShell::kNumSystems,
               "kSystems must list every filterable system");
 
 const char* const GameShell::kSysAbbrev[107] = {
-    "NES", "SNES", "GB", "GBC", "GBA", "NDS", "3DS", "2600", "5200",
-    "800", "GEN", "N64", "PS1", "PS2", "PS3", "GCN", "ODY", "PC", "DC",
-    "STM", "SMS", "GG", "SAT", "WII", "WIIU", "SW", "PSP", "VITA",
-    "XBOX", "360", "XONE", "XSX", "7800", "LYNX", "JAG", "PCE", "COLECO", "INTV",
-    "VB", "PMIN", "FDS", "G&W", "BSX", "XEGS", "SCD", "32X", "PICO", "SG1K",
-    "AES", "MVS", "NGCD", "NGP", "NGPC", "PCFX", "SGX", "PCCD", "3DO", "CD32",
-    "WS", "WSC", "CRYS", "CHF", "VECX", "SV", "AW", "NAO", "NAO2", "CPS1",
-    "CPS2", "CPS3", "PGM", "S16", "S32", "MDL3", "ARC",
-    "O2", "CDI", "CRV", "LOOP", "PIP", "SCV", "APF", "ARCD", "VC4K", "ASTR",
-    "ST2", "GCOM", "ADV", "RX78", "SACN", "FM7", "MRTY", "GMST", "GP32",
-    "MDL1", "MDL2", "N22", "N23", "N246", "N256", "CV1K", "KGX", "PGM2",
-    "HIK", "CHIH", "TRI", "HNG"
+    // Nintendo
+    "NES", "SNES", "GB", "GBC", "GBA", "NDS", "3DS", "N64", "GCN", "WII",
+    "WIIU", "SW", "VB", "PMIN", "FDS", "G&W", "BSX",
+    // Sega
+    "GEN", "DC", "SMS", "GG", "SAT", "SCD", "32X", "PICO", "SG1K",
+    // Sony
+    "PS1", "PS2", "PS3", "PSP", "VITA",
+    // Microsoft
+    "PC", "STM", "XBOX", "360", "XONE", "XSX",
+    // Atari
+    "2600", "5200", "800", "7800", "LYNX", "JAG", "XEGS",
+    // NEC
+    "PCE", "PCFX", "SGX", "PCCD",
+    // SNK
+    "AES", "MVS", "NGCD", "NGP", "NGPC",
+    // Arcade
+    "AW", "NAO", "NAO2", "CPS1", "CPS2", "CPS3", "PGM", "S16", "S32", "MDL3",
+    "ARC", "MDL1", "MDL2", "N22", "N23", "N246", "N256", "CV1K", "KGX", "PGM2",
+    "HIK", "CHIH", "TRI", "HNG",
+    // Other
+    "ODY", "COLECO", "INTV", "3DO", "CD32", "WS", "WSC", "CRYS", "CHF", "VECX",
+    "SV", "O2", "CDI", "CRV", "LOOP", "PIP", "SCV", "APF", "ARCD", "VC4K",
+    "ASTR", "ST2", "GCOM", "ADV", "RX78", "SACN", "FM7", "MRTY", "GMST", "GP32"
 };
+
+static_assert(sizeof(GameShell::kSysAbbrev) / sizeof(GameShell::kSysAbbrev[0]) == GameShell::kNumSystems,
+              "kSysAbbrev must list one abbreviation per kSystems entry");
 
 // ─── Colour palette ───────────────────────────────────────────────────────────
 
@@ -487,6 +513,10 @@ void GameShell::renderCenteredText(const std::string& text,
 
 // ─── Filter logic ─────────────────────────────────────────────────────────────
 
+// romPath sentinel for the Steam "+" tile, which opens the Steam store instead
+// of launching a game (real entries hold a numeric AppID).
+static constexpr const char* kSteamStoreId = "STEAMSTORE";
+
 void GameShell::rebuildFilter() {
     filteredGames_.clear();
     const auto& dm = DownloadManager::instance();
@@ -530,12 +560,21 @@ void GameShell::rebuildFilter() {
         if (include)
             filteredGames_.push_back(&ge);
     }
-    // XONE / XSX end with a "+" tile that opens Xbox Cloud Gaming to add more games.
+    // XONE / XSX end with a "+" tile that opens Xbox Cloud Gaming and the Xbox
+    // Store to add more games.
     if (xboxCloudFilterActive() && searchQuery_.empty()) {
         xboxAddEntry_.romPath     = kAddGamesId;
         xboxAddEntry_.displayName = "Add more games";
         xboxAddEntry_.system      = kSystems[currentFilter_];
         filteredGames_.push_back(&xboxAddEntry_);
+    }
+    // Steam ends with a "+" tile that opens the Steam store to add more games.
+    if (currentFilter_ >= 0 && currentFilter_ < kNumSystems &&
+        kSystems[currentFilter_] == SystemType::Steam && searchQuery_.empty()) {
+        steamAddEntry_.romPath     = kSteamStoreId;
+        steamAddEntry_.displayName = "Add more games";
+        steamAddEntry_.system      = SystemType::Steam;
+        filteredGames_.push_back(&steamAddEntry_);
     }
     selectedIdx_ = 0;
     scrollRow_   = 0;
@@ -769,11 +808,16 @@ void GameShell::renderGrid() {
             SDL_Texture* tex = getCoverTexture(ge);
             if (tex) {
                 SDL_RenderCopy(renderer_, tex, nullptr, &coverR);
-            } else if (&ge == &xboxAddEntry_) {
-                // "+" tile
-                SDL_SetRenderDrawColor(renderer_, 20, 48, 24, 255);
+            } else if (&ge == &xboxAddEntry_ || &ge == &steamAddEntry_) {
+                // "+" tile (Xbox green / Steam blue)
+                const bool steam = (&ge == &steamAddEntry_);
+                const SDL_Color tileBg   = steam ? SDL_Color{18, 32, 54, 255}
+                                                 : SDL_Color{20, 48, 24, 255};
+                const SDL_Color tilePlus = steam ? SDL_Color{90, 160, 220, 255}
+                                                 : SDL_Color{80, 190, 90, 255};
+                SDL_SetRenderDrawColor(renderer_, tileBg.r, tileBg.g, tileBg.b, 255);
                 SDL_RenderFillRect(renderer_, &coverR);
-                SDL_SetRenderDrawColor(renderer_, 80, 190, 90, 255);
+                SDL_SetRenderDrawColor(renderer_, tilePlus.r, tilePlus.g, tilePlus.b, 255);
                 const int cx = coverX + kCoverW / 2, cy = coverY + kCoverH / 2;
                 SDL_Rect hBar = {cx - 28, cy - 4, 56, 8};
                 SDL_Rect vBar = {cx - 4, cy - 28, 8, 56};
@@ -1198,12 +1242,15 @@ void GameShell::run(GameLibrary& library, const std::string& coversDir) {
 
     bool quit = false;
 
-    // First-run: if a controller is connected but no saved mapping exists,
-    // auto-launch the rebind screen so the user can calibrate immediately.
-    if (ctrl_ && !std::filesystem::exists("saves/controller_sdlmap.txt")) {
-        std::cerr << "[GameShell] No controller mapping saved — launching setup.\n";
+    // Run the controller rebind screen on startup, before the library UI.
+    // This lets the user confirm/calibrate their pad every launch; ESC cancels.
+    // (Previously this only auto-launched on first run when no mapping existed.)
+    if (ctrl_) {
+        std::cerr << "[GameShell] Launching controller setup.\n";
         runRebindScreen();
         rebuildFilter(); computeFilterRects();
+    } else if (!std::filesystem::exists("saves/controller_sdlmap.txt")) {
+        std::cerr << "[GameShell] No controller detected; skipping setup.\n";
     }
 
     while (!quit) {
@@ -2022,8 +2069,11 @@ void GameShell::launchGame(const GameEntry& game) {
         case SystemType::ColecoVision:     ColecoVisionConsoleLauncher().launch(path); break;
         case SystemType::Intellivision:    IntellivisionConsoleLauncher().launch(path); break;
         case SystemType::Steam: {
-            // game.romPath holds the numeric Steam AppID (validated all-digits at scan time)
-            const std::string url = "steam://rungameid/" + path;
+            // game.romPath holds the numeric Steam AppID (validated all-digits at
+            // scan time); the "+" tile uses kSteamStoreId to open the store.
+            const std::string url = (path == kSteamStoreId)
+                                  ? "steam://store"
+                                  : "steam://rungameid/" + path;
 
             // Detect WSL2: if so, Steam lives on Windows and cmd.exe is the right launcher
             bool inWSL2 = false;
