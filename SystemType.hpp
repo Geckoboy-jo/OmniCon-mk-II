@@ -152,5 +152,6 @@ enum class SystemType {
     KonamiBemaniPCPlatform,
     Arcade, //generic catagory will bunch many consoles into this catagory
     Steam,//both steam deck and steam machine
+    OculusRift,
     Unknown
 };
