@@ -70,7 +70,7 @@ static const std::vector<std::string> kRomExts = {
     "z64","n64","v64","a26","a52","a78","atr","xfd","atx","xex","car","cas","com",
     "lnx","j64","jag","md","gen","smd","68k","sgd","sms","gg","pce","sgx","col",
     "int","cso","pbp","vpk","wbfs","wad","dol","wud","wux","rpx","wua","nsp","xci","nsz","xcz",
-    "xbe","xiso","gcm","gcz","rvz","ciso","iso","cue","chd","gdi","cdi","img","mdf","pkg",
+    "xbe","xiso","god","zar","gcm","gcz","rvz","ciso","iso","cue","chd","gdi","cdi","img","mdf","pkg",
     "bin","exe","odyssey"
 };
 
@@ -483,6 +483,41 @@ static fs::path downloadDestinationDirectory(const std::string& romsDir,
         return {};
     }
     return directory;
+}
+
+// ─── Xbox 360 archives ───────────────────────────────────────────────────────
+// Xbox 360 releases are often whole game folders (default.xex plus data) or
+// Games on Demand packages instead of one image, so extractRom()'s "first ROM
+// file" approach cannot work. Extract the whole archive into destDir, then
+// return the file Xenia should open ("" if none is found).
+
+static std::string lowerCopy(std::string s) {
+    std::transform(s.begin(), s.end(), s.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return s;
+}
+
+static bool extractWholeArchive(const std::string& archivePath, const std::string& destDir) {
+    const std::string ext = lowerCopy(fs::path(archivePath).extension().string());
+    const std::string quotedArchive = shellQuote(archivePath);
+    const std::string quotedDest = shellQuote(destDir);
+
+    if (ext == ".zip") {
+        if (system("unzip -v >/dev/null 2>&1") == 0) // NOLINT
+            return system(("unzip -o -q " + quotedArchive + " -d " + quotedDest +
+                           " >/dev/null 2>&1").c_str()) == 0; // NOLINT
+        return system(("python3 -c \"import zipfile,sys;"
+                       "zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])\" " +
+                       quotedArchive + " " + quotedDest + " 2>/dev/null").c_str()) == 0; // NOLINT
+    }
+    for (const char* tool : {"7z", "7zz", "7zr"}) {
+        if (system((std::string(tool) + " i >/dev/null 2>&1").c_str()) == 0) // NOLINT
+            return system((std::string(tool) + " x -aoa -o" + quotedDest + " " +
+                           quotedArchive + " >/dev/null 2>&1").c_str()) == 0; // NOLINT
+    }
+    return system(("python3 -c \"import py7zr,sys;"
+                   "py7zr.SevenZipFile(sys.argv[1],mode='r').extractall(sys.argv[2])\" " +
+                   quotedArchive + " " + quotedDest + " 2>/dev/null").c_str()) == 0; // NOLINT
 }
 
 // ─── Thread-pool helpers ───────────────────────────────────────────────────────────
@@ -1185,11 +1220,40 @@ std::string DownloadManager::downloadBlocking(
             return "";
         }
         std::string extractedPath;
+        bool xboxFolder = false;   // Xbox 360 game that spans several files
+        auto extractArchive = [&]() {
+            if (entrySystem != SystemType::Xbox360)
+                return extractRom(tmpPath, stagingDir, entry.system == "GBA",
+                                  isPcSystem(entry.system));
+            std::cout << "[DL] Xbox 360: extracting the whole archive...\n";
+            if (!extractWholeArchive(tmpPath, stagingDir)) {
+                std::cerr << "[DL] Xbox 360: could not extract the archive (is unzip, 7z or "
+                             "python3 installed?).\n";
+                return std::string();
+            }
+            std::size_t fileCount = 0;
+            std::vector<std::string> sample;
+            std::error_code countError;
+            for (fs::recursive_directory_iterator it(stagingDir, countError), end;
+                 !countError && it != end; it.increment(countError))
+                if (it->is_regular_file(countError)) {
+                    if (sample.size() < 8)
+                        sample.push_back(fs::relative(it->path(), stagingDir).string());
+                    ++fileCount;
+                }
+            const std::string target = GameLibrary::findXbox360Target(stagingDir);
+            if (target.empty()) {
+                std::cerr << "[DL] Xbox 360: no launchable file (default.xex, .iso, .xex, .zar, "
+                             "or STFS package) among " << fileCount << " extracted file(s):\n";
+                for (const auto& name : sample) std::cerr << "[DL]   " << name << "\n";
+            }
+            xboxFolder = !target.empty() && fileCount > 1;
+            return target;
+        };
         if (progress) {
             std::atomic<bool> extractionDone{false};
             std::thread extractionThread([&]() {
-                extractedPath = extractRom(
-                    tmpPath, stagingDir, entry.system == "GBA", isPcSystem(entry.system));
+                extractedPath = extractArchive();
                 extractionDone.store(true);
             });
             while (!extractionDone.load()) {
@@ -1198,8 +1262,7 @@ std::string DownloadManager::downloadBlocking(
             }
             extractionThread.join();
         } else {
-            extractedPath = extractRom(
-                tmpPath, stagingDir, entry.system == "GBA", isPcSystem(entry.system));
+            extractedPath = extractArchive();
         }
         unlink(tmpPath.c_str());
         if (extractedPath.empty()) {
@@ -1222,10 +1285,18 @@ std::string DownloadManager::downloadBlocking(
                 if (errorOut) *errorOut = "Could not create the ROM system directory.";
                 return "";
             }
-            const fs::path destination =
-                uniqueDestinationPath(destinationDirectory, extracted.filename());
+            // A multi-file Xbox 360 game keeps its folder layout: move the whole
+            // staging directory to Roms/xbox360/<archive name>/.
+            std::string folderName = urlDecode(fs::path(successfulUrlPath).stem().string());
+            std::replace_if(folderName.begin(), folderName.end(),
+                            [](char c) { return c == '/' || c == '\\' || c == ':'; }, '_');
+            if (folderName.empty() || folderName.front() == '.') folderName.insert(0, "xbox360_");
+            fs::path destination =
+                xboxFolder ? uniqueDestinationPath(destinationDirectory, folderName)
+                           : uniqueDestinationPath(destinationDirectory, extracted.filename());
+            const fs::path relativeTarget = fs::relative(extracted, stagingDir);
             std::error_code moveError;
-            fs::rename(extracted, destination, moveError);
+            fs::rename(xboxFolder ? fs::path(stagingDir) : extracted, destination, moveError);
             if (moveError) {
                 std::error_code cleanupError;
                 fs::remove_all(stagingDir, cleanupError);
@@ -1234,7 +1305,8 @@ std::string DownloadManager::downloadBlocking(
                 if (errorOut) *errorOut = message;
                 return "";
             }
-            finalPath = destination.string();
+            finalPath = xboxFolder ? (destination / relativeTarget).string()
+                                   : destination.string();
         }
         std::error_code cleanupError;
         fs::remove_all(stagingDir, cleanupError);

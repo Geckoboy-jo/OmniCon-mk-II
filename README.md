@@ -10,8 +10,8 @@ for SameBoy, and the vendored SameBoy sources themselves (cloned at the commit
 pinned by this repository) including the boot ROMs and `libsameboy.a`.
 
 At startup the program also checks for its runtime dependencies (`curl`, the
-`mysql` client, `steam`, SteamVR, `retroarch`, `cemu`, `Ryubing`, `Vita3K`, and
-`xemu`) and automatically downloads any that are missing by running
+`mysql` client, `steam`, SteamVR, `retroarch`, `cemu`, `Ryubing`, `Vita3K`,
+`xemu`, and `xenia_canary`) and automatically downloads any that are missing by running
 `scripts/install_deps.sh --runtime`. Emulators are installed as AppImages in
 `~/.local/bin`, so no root is required for them; apt packages use `sudo` when
 needed. Steam is used from a Windows install on a WSL mount (`/mnt/<drive>`) if
@@ -20,8 +20,14 @@ one exists; otherwise the Linux client is installed from Valve's official `.deb`
 through whichever Steam client is in use (`steam://install/250820`), so you may
 need to log in to Steam and confirm the install. Set `OMNICON_SKIP_DEP_CHECK=1` to disable the startup check, or run
 `scripts/install_deps.sh` manually at any time — it is idempotent and only
-installs what is missing. `xenia` (Xbox 360) is Windows-only and must be
-installed manually.
+installs what is missing. It also installs FUSE 2 (for the AppImage
+emulators), 7-Zip, the extra libretro cores (`scripts/fetch_emulators.sh`),
+and, where the distro has no `rgbds` package (Ubuntu 24.04), the upstream
+RGBDS release. It works when run as root or via `sudo`. The Xbox 360 emulator `xenia_canary` (experimental
+Linux build) is unpacked under `~/.local/share/xenia_canary` and linked into
+`~/.local/bin`. That build needs glibc 2.38+ (Ubuntu 24.04 or newer); on older
+systems the installer skips it and the Xbox 360 launcher shows a clear message
+instead of failing to start. Set `OMNICON_XBOX360_LAUNCHER` to use another Xenia.
 
 ## Game Boy boot ROMs
 
@@ -143,6 +149,11 @@ Intellivision. Put games in the matching `Roms/` subfolder (for example
 `Roms/saturn`, `Roms/psp`, or `Roms/xbox360`) when the file extension is
 ambiguous, such as `.iso`, `.chd`, or `.pkg`.
 
+Xbox 360 games can be a single image (`.iso`, `.zar`, `.xex`), a game folder
+containing `default.xex`, or a Games on Demand package. Downloaded Xbox 360
+archives are extracted whole: multi-file games go into their own
+`Roms/xbox360/<name>/` folder, which the library scans for the file to launch.
+
 Each launcher-backed console has its own `*ConsoleLauncher.cpp` implementation.
 `GameShell` only selects the appropriate console launcher; shared RetroArch and
 external-process handling lives in `ConsoleLaunchers.cpp`.
@@ -168,7 +179,7 @@ executable is not named `retroarch`. Per-system core paths can be overridden:
 Wii U, Switch, Vita, Xbox, and Xbox 360 launch through external emulators:
 `cemu` (`OMNICON_WIIU_LAUNCHER`), `Ryubing` (`OMNICON_SWITCH_LAUNCHER`),
 `Vita3K` (`OMNICON_VITA_LAUNCHER`), `xemu` (`OMNICON_XBOX_LAUNCHER`), and
-`xenia` (`OMNICON_XBOX360_LAUNCHER`) respectively. Install and configure those
+`xenia_canary` or `xenia` (`OMNICON_XBOX360_LAUNCHER`) respectively. Install and configure those
 emulators, firmware, and keys as required by their projects. For Switch,
 download Ryubing (the community Ryujinx fork) from
 https://git.ryujinx.app/ryubing/ryujinx/releases and put the `Ryubing`

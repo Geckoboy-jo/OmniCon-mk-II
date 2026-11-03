@@ -1746,7 +1746,7 @@ void GameShell::run(GameLibrary& library, const std::string& coversDir) {
                 // Ensure bridge is still alive before the emulator starts SDL.
                 // (bridge is a separate process so it normally survives, but
                 //  restart it if it crashed during a previous session.)
-                if (std::system("pgrep -f uinput_client.py >/dev/null 2>&1") != 0
+                if (std::system("pgrep -f '[u]input_client.py' >/dev/null 2>&1") != 0
                         && std::filesystem::exists("controller_bridge/start_bridge.sh")) {
                     std::cerr << "[GameShell] Bridge not running — restarting...\n";
                     std::system("modprobe uinput 2>/dev/null; bash controller_bridge/start_bridge.sh >/dev/null 2>&1 &");
@@ -2173,7 +2173,7 @@ void GameShell::runRebindScreen() {
     // ── Step 1: kill old bridge + restart with up-to-date xinput_server.py ───
     showMsg("Restarting controller bridge...");
     if (ctrl_) { SDL_GameControllerClose(ctrl_); ctrl_ = nullptr; ctrlName_.clear(); }
-    std::system("pkill -f uinput_client.py 2>/dev/null; pkill -f xinput_server.py 2>/dev/null");
+    std::system("pkill -f '[u]input_client.py' 2>/dev/null; pkill -f '[x]input_server.py' 2>/dev/null");
     { // drain events while bridge dies
         Uint32 t = SDL_GetTicks() + 1500;
         SDL_Event ev;
@@ -2765,7 +2765,7 @@ void GameShell::remapRetroArchPlayer(int player) {
 
     // ── Step 1: restart the bridge so it runs the latest xinput_server.py ────
     showMsg("Restarting controller bridge...");
-    std::system("pkill -f uinput_client.py 2>/dev/null; pkill -f xinput_server.py 2>/dev/null");
+    std::system("pkill -f '[u]input_client.py' 2>/dev/null; pkill -f '[x]input_server.py' 2>/dev/null");
     { // drain events while bridge dies
         Uint32 t = SDL_GetTicks() + 1500;
         SDL_Event ev;

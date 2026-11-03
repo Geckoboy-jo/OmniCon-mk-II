@@ -56,6 +56,15 @@ public:
     static SystemType   systemFromName(const std::string& name); // reverse of systemName()
     static SystemType   systemFromUrl(const std::string& url);  // infer from URL path keywords
     static std::string  cleanFileName(const std::string& filename);
+
+    // The file Xenia should open inside an Xbox 360 game folder: default.xex, an
+    // image (.iso/.xex/.zar/.god), or a Games on Demand package (an
+    // extension-less file with a sibling "<name>.data" folder). "" if none.
+    static std::string  findXbox360Target(const std::filesystem::path& root);
+
+    // True for an STFS package (Games on Demand, Arcade, installed game) that
+    // Xenia can boot; false for DLC, title updates and other content packages.
+    static bool         isBootableXbox360Package(const std::filesystem::path& file);
     static std::string  systemName(SystemType sys);
     static std::string  systemDirName(SystemType sys);
     static int          screenscraper_systemId(SystemType sys);

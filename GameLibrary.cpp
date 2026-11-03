@@ -403,12 +403,63 @@ std::string GameLibrary::cleanFileName(const std::string& filename) {
     return name.empty() ? p.stem().string() : name;
 }
 
+std::string GameLibrary::findXbox360Target(const fs::path& root) {
+    auto lower = [](std::string s) {
+        std::transform(s.begin(), s.end(), s.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        return s;
+    };
+    std::string image, god;
+    std::error_code ec;
+    for (fs::recursive_directory_iterator it(root, ec), end; !ec && it != end; it.increment(ec)) {
+        if (!it->is_regular_file(ec)) continue;
+        const std::string name = it->path().filename().string();
+        const std::string ext  = lower(it->path().extension().string());
+        if (lower(name) == "default.xex") return it->path().string();
+        if (image.empty() && (ext == ".iso" || ext == ".xex" || ext == ".zar" || ext == ".god"))
+            image = it->path().string();
+        if (god.empty() && ext.empty() && isBootableXbox360Package(it->path()))
+            god = it->path().string();
+    }
+    return !image.empty() ? image : god;
+}
+
+// STFS packages start with LIVE, PIRS or CON. Their content type (offset 0x344)
+// tells a bootable game from DLC, title updates or save games, which Xenia
+// cannot launch on their own.
+bool GameLibrary::isBootableXbox360Package(const fs::path& file) {
+    std::ifstream in(file, std::ios::binary);
+    unsigned char header[0x348] = {};
+    in.read(reinterpret_cast<char*>(header), sizeof(header));
+    if (static_cast<size_t>(in.gcount()) < sizeof(header)) return false;
+    const std::string magic(reinterpret_cast<char*>(header), 4);
+    if (magic != "LIVE" && magic != "PIRS" && magic != "CON ") return false;
+    const uint32_t type = (static_cast<uint32_t>(header[0x344]) << 24) |
+                          (static_cast<uint32_t>(header[0x345]) << 16) |
+                          (static_cast<uint32_t>(header[0x346]) << 8) |
+                           static_cast<uint32_t>(header[0x347]);
+    return type == 0x1000 || type == 0x4000 || type == 0x7000 || type == 0xD0000;
+}
+
 // ─── Scanning ─────────────────────────────────────────────────────────────────
 
 void GameLibrary::scanDirectory(const fs::path& dir, SystemType forceSystem) {
     if (!fs::exists(dir) || !fs::is_directory(dir)) return;
 
     for (const auto& entry : fs::directory_iterator(dir)) {
+        // Xbox 360 games are often folders (default.xex or a Games on Demand package).
+        if (forceSystem == SystemType::Xbox360 && entry.is_directory()) {
+            const std::string folder = entry.path().filename().string();
+            if (folder.rfind("_omnicon_extract_", 0) == 0) continue;
+            const std::string target = findXbox360Target(entry.path());
+            if (target.empty()) continue;
+            GameEntry ge;
+            ge.romPath     = target;
+            ge.displayName = cleanFileName(folder + ".dir");   // cleanFileName strips an extension
+            ge.system      = SystemType::Xbox360;
+            games_.push_back(std::move(ge));
+            continue;
+        }
         if (!entry.is_regular_file()) continue;
 
         const std::string filename = entry.path().filename().string();
@@ -417,6 +468,9 @@ void GameLibrary::scanDirectory(const fs::path& dir, SystemType forceSystem) {
         if (filename.find(':') != std::string::npos) continue;
 
         std::string ext = toLower(entry.path().extension().string());
+        // Extension-less Xbox 360 files are STFS packages; skip DLC/updates that cannot boot.
+        if (forceSystem == SystemType::Xbox360 && ext.empty() && !isBootableXbox360Package(entry.path()))
+            continue;
         if (forceSystem == SystemType::Unknown && ext == ".cue") {
             fs::path binPath = entry.path();
             binPath.replace_extension(".bin");

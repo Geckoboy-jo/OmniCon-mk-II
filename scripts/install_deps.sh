@@ -5,6 +5,7 @@
 #   scripts/install_deps.sh           # build + runtime dependencies
 #   scripts/install_deps.sh --build   # only what `make` needs
 #   scripts/install_deps.sh --runtime # only what the emulator front-ends need
+#   scripts/install_deps.sh --xenia   # only the Xbox 360 emulator (xenia_canary)
 #
 # Idempotent: anything already present is skipped. System packages are
 # installed with apt (using sudo when needed and possible); emulators are
@@ -15,11 +16,13 @@ cd "$(dirname "$0")/.."
 
 DO_BUILD=0
 DO_RUNTIME=0
+DO_XENIA=0
 case "${1:-}" in
     --build)   DO_BUILD=1 ;;
     --runtime) DO_RUNTIME=1 ;;
+    --xenia)   DO_XENIA=1 ;;
     ""|--all)  DO_BUILD=1; DO_RUNTIME=1 ;;
-    *) echo "usage: $0 [--build|--runtime|--all]" >&2; exit 2 ;;
+    *) echo "usage: $0 [--build|--runtime|--xenia|--all]" >&2; exit 2 ;;
 esac
 
 log()  { printf '[deps] %s\n' "$*"; }
@@ -51,7 +54,7 @@ apt_install() {
     if [ "${#want[@]}" -eq 0 ]; then
         return 0
     fi
-    if [ -z "$SUDO" ]; then
+    if [ -z "$SUDO" ] && [ "$(id -u)" -ne 0 ]; then
         warn "Missing packages, install them manually: ${want[*]}"
         return 1
     fi
@@ -86,6 +89,81 @@ install_appimage() {
         warn "Failed to download $name; install it manually."
         return 1
     fi
+}
+
+# Xenia (Xbox 360): the xenia-canary experimental Linux build is a tarball, so
+# unpack it under ~/.local/share and link its executable into ~/.local/bin.
+install_xenia_canary() {
+    local api="https://api.github.com/repos/xenia-canary/xenia-canary-releases/releases/latest"
+    local url tmp dir bin glibc
+    # The prebuilt Linux binary needs glibc 2.38+ (Ubuntu 24.04+); older systems
+    # would only get a binary that cannot start.
+    glibc=$(ldd --version 2>/dev/null | head -n1 | grep -oE '[0-9]+\.[0-9]+$')
+    if [ -n "$glibc" ] && [ "$(printf '%s\n2.38\n' "$glibc" | sort -V | head -n1)" != "2.38" ]; then
+        warn "xenia_canary needs glibc 2.38+ (this system has $glibc); upgrade to Ubuntu 24.04+ or set OMNICON_XBOX360_LAUNCHER."
+        return 1
+    fi
+    have xz || apt_install xz-utils
+    apt_install libsdl2-2.0-0 libvulkan1 mesa-vulkan-drivers libgtk-3-0t64 \
+        || apt_install libsdl2-2.0-0 libvulkan1 mesa-vulkan-drivers libgtk-3-0 \
+        || warn "Could not install xenia_canary's runtime libraries (SDL2, Vulkan, GTK)."
+    apt_install libasound2t64 || apt_install libasound2 \
+        || warn "Could not install libasound2 (needed by xenia_canary)."
+    log "Looking up the latest xenia_canary Linux build..."
+    url=$(curl -fsSL "$api" \
+        | grep -o '"browser_download_url": *"[^"]*"' \
+        | cut -d'"' -f4 \
+        | grep -E 'linux.*\.tar.*\.xz$' \
+        | head -n1)
+    if [ -z "$url" ]; then
+        warn "Could not find a xenia_canary Linux download; install it manually."
+        return 1
+    fi
+    tmp=$(mktemp --suffix=.tar.xz) || return 1
+    dir="$HOME/.local/share/xenia_canary"
+    log "Downloading $url"
+    if curl -fSL "$url" -o "$tmp" \
+        && rm -rf "$dir" && mkdir -p "$dir" \
+        && tar -xJf "$tmp" -C "$dir"; then
+        bin=$(find "$dir" -type f -perm -u+x -name 'xenia_canary*' ! -name '*.so*' | head -n1)
+        if [ -n "$bin" ]; then
+            ln -sf "$bin" "$USER_BIN/xenia_canary"
+            log "Installed xenia_canary to $USER_BIN/xenia_canary"
+        else
+            warn "Unpacked xenia_canary to $dir but found no executable; link it manually."
+        fi
+    else
+        warn "Failed to install xenia_canary; install it manually."
+    fi
+    rm -f "$tmp"
+}
+
+# Some distros (e.g. Ubuntu 24.04) do not package RGBDS; use the upstream
+# prebuilt Linux release and link its tools into ~/.local/bin.
+install_rgbds_release() {
+    local url tmp dir tool
+    have xz || apt_install xz-utils
+    url=$(curl -fsSL "https://api.github.com/repos/gbdev/rgbds/releases/latest" \
+        | grep -o '"browser_download_url": *"[^"]*"' \
+        | cut -d'"' -f4 \
+        | grep -E 'rgbds-linux-x86_64\.tar\.xz$' \
+        | head -n1)
+    if [ -z "$url" ]; then
+        warn "Could not find an RGBDS download."
+        return 1
+    fi
+    tmp=$(mktemp --suffix=.tar.xz) || return 1
+    dir="$HOME/.local/share/rgbds"
+    log "Downloading $url"
+    if curl -fSL "$url" -o "$tmp" && rm -rf "$dir" && mkdir -p "$dir" \
+        && tar -xJf "$tmp" -C "$dir"; then
+        for tool in rgbasm rgblink rgbfix rgbgfx; do
+            ln -sf "$(find "$dir" -type f -name "$tool" | head -n1)" "$USER_BIN/$tool"
+        done
+        log "Installed RGBDS to $USER_BIN"
+    fi
+    rm -f "$tmp"
+    have rgbasm
 }
 
 build_cppp() {
@@ -134,7 +212,7 @@ ensure_build_deps() {
     fi
 
     if ! have rgbasm; then
-        apt_install rgbds \
+        apt_install rgbds || install_rgbds_release \
             || warn "RGBDS not found; install rgbasm/rgblink/rgbgfx manually (https://rgbds.gbdev.io)."
     fi
 
@@ -192,7 +270,7 @@ steamvr_installed() {
 # Steam comes from Valve's official .deb (needs i386 multiarch for the client).
 install_steam() {
     local deb
-    if [ -z "$SUDO" ]; then
+    if [ -z "$SUDO" ] && [ "$(id -u)" -ne 0 ]; then
         warn "Steam needs root to install; run: sudo apt install steam-installer"
         return 1
     fi
@@ -241,7 +319,32 @@ ensure_runtime_deps() {
     have curl  || apt_install curl
     have mysql || apt_install default-mysql-client
 
+    # AppImage emulators need FUSE 2; unzip/7z are used to unpack downloaded ROMs.
+    apt_install libfuse2t64 || apt_install libfuse2 \
+        || warn "libfuse2 missing; AppImage emulators may not start."
+    have unzip || apt_install unzip
+    have 7z || have 7zz || have 7zr || apt_install 7zip || apt_install p7zip-full \
+        || warn "7z not found; .7z/.rar archives fall back to Python py7zr."
+
     ensure_steam_deps
+
+    # WSL2: the Windows->uinput controller bridge needs evdev + uinput access.
+    if grep -qi microsoft /proc/version 2>/dev/null && [ -f scripts/setup_wsl_controller.sh ]; then
+        log "Setting up the WSL controller bridge..."
+        bash scripts/setup_wsl_controller.sh \
+            || warn "WSL controller bridge setup failed; run scripts/setup_wsl_controller.sh."
+    fi
+
+    # libretro cores for the extra consoles (skips any already present).
+    if [ -f scripts/fetch_emulators.sh ]; then
+        log "Fetching libretro cores..."
+        # The script cds relative to its own path, so run a CR-stripped copy that
+        # sits next to it (it may have been checked out with CRLF line endings).
+        tr -d '\r' < scripts/fetch_emulators.sh > scripts/.fetch_emulators.run.sh
+        sh scripts/.fetch_emulators.run.sh \
+            || warn "Some libretro cores could not be fetched."
+        rm -f scripts/.fetch_emulators.run.sh
+    fi
 
     if ! have retroarch; then
         apt_install retroarch \
@@ -264,11 +367,14 @@ ensure_runtime_deps() {
         "https://api.github.com/repos/xemu-project/xemu/releases/latest" \
         'x86_64\.AppImage$' 'zsync|sha|dbg' xemu
 
-    if ! have xenia; then
-        log "xenia (Xbox 360) is Windows-only; install it manually if needed."
+    have xenia_canary || install_xenia_canary
+
+    if [ "$(uname -s)" = "Linux" ] && ! have xenia_canary; then
+        log "Xbox 360 games need Xenia; install xenia_canary manually or set OMNICON_XBOX360_LAUNCHER."
     fi
 }
 
 [ "$DO_BUILD" -eq 1 ]   && ensure_build_deps
 [ "$DO_RUNTIME" -eq 1 ] && ensure_runtime_deps
+[ "$DO_XENIA" -eq 1 ]   && { have curl || apt_install curl; have xenia_canary || install_xenia_canary; }
 log "Done."

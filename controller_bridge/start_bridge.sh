@@ -7,7 +7,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VENV_PYTHON="$SCRIPT_DIR/../.venv/bin/python3"
 
 # Guard: exit silently if the bridge is already running
-if pgrep -f "uinput_client.py" > /dev/null 2>&1; then
+if pgrep -f "[u]input_client.py" > /dev/null 2>&1; then
     echo "Controller bridge already running."
     exit 0
 fi
@@ -21,8 +21,16 @@ if [ ! -x "$VENV_PYTHON" ]; then
     fi
 fi
 
+LOGFILE="/tmp/omnicon_bridge.log"
+fail() { echo "ERROR: $*" | tee -a "$LOGFILE" >&2; exit 1; }
+
 # Load uinput kernel module (no-op if already loaded; works as root)
-modprobe uinput 2>/dev/null || sudo modprobe uinput 2>/dev/null || true
+modprobe uinput 2>/dev/null || sudo -n modprobe uinput 2>/dev/null || true
+
+"$VENV_PYTHON" -c "import evdev" 2>/dev/null \
+    || fail "python evdev is missing for $VENV_PYTHON. Run scripts/setup_wsl_controller.sh"
+[ -w /dev/uinput ] \
+    || fail "/dev/uinput is missing or not writable. Run scripts/setup_wsl_controller.sh, then 'wsl --shutdown' from Windows."
 
 # Locate Windows Python
 WIN_PYTHON=""
@@ -39,7 +47,6 @@ if [ -z "$WIN_PYTHON" ]; then
 fi
 
 WIN_SERVER="$(wslpath -w "$SCRIPT_DIR/xinput_server.py")"
-LOGFILE="/tmp/omnicon_bridge.log"
 echo "Controller bridge starting (XInput → uinput)..."  | tee -a "$LOGFILE"
 echo "[bridge] xinput_server : $WIN_SERVER"              >> "$LOGFILE"
 echo "[bridge] uinput_client : $VENV_PYTHON $SCRIPT_DIR/uinput_client.py" >> "$LOGFILE"

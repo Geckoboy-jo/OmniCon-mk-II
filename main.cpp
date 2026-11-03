@@ -48,7 +48,9 @@ static bool isWSL2() {
 }
 
 static bool bridgeRunning() {
-    return std::system("pgrep -f uinput_client.py >/dev/null 2>&1") == 0;
+    // "[u]input" keeps the pattern from matching the sh -c that runs this very
+    // pgrep, which made the bridge look permanently running.
+    return std::system("pgrep -f '[u]input_client.py' >/dev/null 2>&1") == 0;
 }
 
 // Start the bridge if needed.  Safe to call repeatedly; is a no-op when the
@@ -213,7 +215,7 @@ void ensureRuntimeDependencies()
     }
 
     static const char* const kRuntimeDeps[] = {
-        "curl", "mysql", "retroarch", "cemu", "Ryubing", "Vita3K", "xemu",
+        "curl", "mysql", "retroarch", "cemu", "Ryubing", "Vita3K", "xemu", "xenia_canary",
     };
     std::vector<std::string> missing;
     for (const char* dep : kRuntimeDeps)
