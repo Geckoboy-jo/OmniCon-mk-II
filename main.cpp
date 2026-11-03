@@ -154,6 +154,46 @@ bool hasCommand(const std::string& command)
     return std::system(probe.c_str()) == 0;
 }
 
+// Windows Steam on a WSL mount (/mnt/<drive>), if any. Mirrors the roots
+// GameLibrary::scanSteam() searches.
+bool windowsSteamInstalled()
+{
+    std::error_code ec;
+    for (const char* drv : { "c", "d", "e", "f" })
+        for (const char* s : { "/Program Files (x86)/Steam", "/Program Files/Steam" })
+            if (std::filesystem::is_directory(std::string("/mnt/") + drv + s + "/steamapps", ec))
+                return true;
+    return false;
+}
+
+// Steam is available if the Linux client is installed or, under WSL, Windows
+// Steam is reachable through /mnt. Without either, install_deps.sh installs
+// the Linux client.
+bool steamInstalled()
+{
+    return hasCommand("steam") || windowsSteamInstalled();
+}
+
+// SteamVR is a Steam app rather than a command, so look for its install folder.
+bool steamVrInstalled()
+{
+    std::vector<std::string> roots;
+    if (const char* r = std::getenv("STEAM_ROOT"))
+        if (*r) roots.emplace_back(r);
+    if (const char* home = std::getenv("HOME"); home && *home) {
+        roots.emplace_back(std::string(home) + "/.local/share/Steam");
+        roots.emplace_back(std::string(home) + "/.steam/steam");
+    }
+    for (const char* drv : { "c", "d", "e", "f" })
+        for (const char* s : { "/Program Files (x86)/Steam", "/Program Files/Steam" })
+            roots.emplace_back(std::string("/mnt/") + drv + s);
+    std::error_code ec;
+    for (const auto& root : roots)
+        if (std::filesystem::is_directory(root + "/steamapps/common/SteamVR", ec))
+            return true;
+    return false;
+}
+
 // Check the external programs OmniCon needs at runtime and fetch any that are
 // missing, so a fresh device can bootstrap itself. Set OMNICON_SKIP_DEP_CHECK=1
 // to disable the automatic download.
@@ -179,6 +219,10 @@ void ensureRuntimeDependencies()
     for (const char* dep : kRuntimeDeps)
         if (!hasCommand(dep))
             missing.emplace_back(dep);
+    if (!steamInstalled())
+        missing.emplace_back("steam");
+    if (!steamVrInstalled())
+        missing.emplace_back("SteamVR");
     if (missing.empty())
         return;
 
@@ -199,6 +243,10 @@ void ensureRuntimeDependencies()
         if (!hasCommand(dep))
             std::cerr << "[deps] Still missing: " << dep
                       << " (related features will be unavailable)\n";
+    if (!steamInstalled())
+        std::cerr << "[deps] Still missing: steam (related features will be unavailable)\n";
+    // SteamVR installs asynchronously through the Steam client, so it may not
+    // be on disk yet.
 }
 
 // Run scrape_covers.py for any games currently missing cover art, then
@@ -1544,6 +1592,7 @@ int main()
         lib.scanXboxCloud("saves/xbox_cloud_library.json", "saves/covers"); // Xbox Cloud Gaming library (after 'xbox-login')
         lib.loadFromDB(oracleCfg);          // append DB entries (deduplicates against local)
         lib.fetchSteamCovers("saves/covers"); // download missing Steam cover art from CDN
+        lib.fetchSteamAchievements("~/.omnicon/steam.conf", "saves/steam_achievements.tsv");
         lib.resolveCoverPaths("saves/covers");
         GameShell gameShell;
         if (gameShell.init()) {
@@ -1608,6 +1657,7 @@ int main()
             lib.scanXboxCloud("saves/xbox_cloud_library.json", "saves/covers");
             lib.loadFromDB(oracleCfg);
             lib.fetchSteamCovers("saves/covers"); // download missing Steam cover art from CDN
+            lib.fetchSteamAchievements("~/.omnicon/steam.conf", "saves/steam_achievements.tsv");
             lib.resolveCoverPaths("saves/covers");
             GameShell shell;
             if (shell.init()) {
@@ -2008,6 +2058,7 @@ int main()
             lib.scanSteam();
             lib.scanSteamOwned("~/.omnicon/steam.conf");
             lib.loadFromDB(oracleCfg);
+            lib.fetchSteamAchievements("~/.omnicon/steam.conf", "saves/steam_achievements.tsv");
             lib.resolveCoverPaths("saves/covers");
             scrapeCoversIfNeeded(lib, "saves/covers");
             continue;

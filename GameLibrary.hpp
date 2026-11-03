@@ -25,6 +25,11 @@ public:
     // apiKey and steamId are saved to credFile on first use.
     void scanSteamOwned(const std::string& credFile);
 
+    // Fill achievementPercent on Steam entries via the Steam Web API
+    // (GetPlayerAchievements), using the same credentials as scanSteamOwned().
+    // Results are cached in cacheFile so only stale entries hit the network.
+    void fetchSteamAchievements(const std::string& credFile, const std::string& cacheFile);
+
     // Load the signed-in account's Xbox Cloud Gaming (xCloud) library as Xbox One
     // and Xbox Series X|S entries via scripts/xcloud_library.py. Does nothing
     // until the user has signed in with the 'xbox-login' command. Entries carry

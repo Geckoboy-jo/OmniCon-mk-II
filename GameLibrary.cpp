@@ -4,15 +4,20 @@
 #include "ExtraSystems.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <ctime>
 #include <fstream>
 #include <iostream>
+#include <map>
+#include <mutex>
 #include <regex>
 #include <set>
 #include <sstream>
+#include <thread>
 #include <unistd.h>
 
 namespace fs = std::filesystem;
@@ -1084,6 +1089,121 @@ void GameLibrary::scanSteamOwned(const std::string& credFile) {
     }
 }
 
+// ─── fetchSteamAchievements (Web API) ────────────────────────────────────────
+
+static std::string expandHome(const std::string& path) {
+    if (path.rfind("~/", 0) == 0)
+        if (const char* home = getenv("HOME")) return std::string(home) + path.substr(1);
+    return path;
+}
+
+void GameLibrary::fetchSteamAchievements(const std::string& credFile, const std::string& cacheFile) {
+    // scanSteamOwned() saves credentials to the literal path; also accept ~ expanded.
+    std::string credPath = credFile;
+    if (!fs::exists(credPath)) credPath = expandHome(credFile);
+    const std::string apiKey  = readCredFile(credPath, "steam_api_key");
+    const std::string steamId = readCredFile(credPath, "steam_id");
+    if (apiKey.empty() || steamId.empty()) return;
+
+    struct CacheRow { int percent; long long expires; };
+    std::map<std::string, CacheRow> cache;
+    {
+        std::ifstream in(cacheFile);
+        std::string line;
+        while (std::getline(in, line)) {
+            std::istringstream ls(line);
+            std::string appId; int pct; long long exp;
+            if (ls >> appId >> pct >> exp) cache[appId] = {pct, exp};
+        }
+    }
+
+    const long long now = static_cast<long long>(std::time(nullptr));
+    std::vector<GameEntry*> todo;
+    for (auto& g : games_) {
+        if (g.system != SystemType::Steam || g.romPath.empty() || isNonSteamShortcutId(g.romPath) ||
+            !std::all_of(g.romPath.begin(), g.romPath.end(),
+                         [](unsigned char c) { return std::isdigit(c) != 0; }))
+            continue;
+        auto it = cache.find(g.romPath);
+        if (it != cache.end() && it->second.expires > now) {
+            g.achievementPercent = it->second.percent;
+        } else {
+            todo.push_back(&g);
+        }
+    }
+
+    if (!todo.empty()) {
+        std::cout << "[Steam] Fetching achievements for " << todo.size() << " game(s)...\n";
+        std::cout.flush();
+
+        constexpr long long kOkTtl = 12 * 3600, kNoStatsTtl = 7 * 24 * 3600, kRetryTtl = 3600;
+        std::mutex mtx;
+        std::atomic<size_t> next{0};
+        std::atomic<bool> detailsPrivate{false};
+
+        auto worker = [&]() {
+            for (size_t i; !detailsPrivate && (i = next++) < todo.size(); ) {
+                const std::string appId = todo[i]->romPath;
+                const std::string url =
+                    "https://api.steampowered.com/ISteamUserStats/GetPlayerAchievements/v0001/"
+                    "?appid=" + appId + "&key=" + apiKey + "&steamid=" + steamId;
+                // The last line of curl's output is the HTTP status code.
+                const std::string cmd = "curl --location --silent --max-time 20 -w '\\n%{http_code}' " +
+                                        shellQuote(url);
+                std::string out;
+                if (FILE* f = popen(cmd.c_str(), "r")) {
+                    char buf[8192];
+                    while (fgets(buf, sizeof(buf), f)) out += buf;
+                    pclose(f);
+                }
+                const size_t nl = out.find_last_of('\n');
+                const std::string status = nl == std::string::npos ? "" : out.substr(nl + 1);
+                const std::string body   = nl == std::string::npos ? out : out.substr(0, nl);
+
+                int percent = -1;
+                long long ttl = kRetryTtl;   // network errors / private profiles: retry soon
+                static const std::regex okRe(R"x("success"\s*:\s*true)x");
+                if (status == "200" && std::regex_search(body, okRe)) {
+                    int total = 0, earned = 0;
+                    static const std::regex achRe(R"x("achieved"\s*:\s*(\d))x");
+                    for (auto it = std::sregex_iterator(body.begin(), body.end(), achRe);
+                         it != std::sregex_iterator(); ++it) {
+                        ++total;
+                        if ((*it)[1].str() == "1") ++earned;
+                    }
+                    if (total > 0) percent = earned * 100 / total;
+                    ttl = total > 0 ? kOkTtl : kNoStatsTtl;
+                } else if (body.find("no stats") != std::string::npos) {
+                    ttl = kNoStatsTtl;
+                } else if (body.find("not public") != std::string::npos) {
+                    // Steam hides achievements unless "Game details" are public; every
+                    // other request would fail the same way, so stop and don't cache.
+                    detailsPrivate = true;
+                    continue;
+                }
+
+                std::lock_guard<std::mutex> lock(mtx);
+                todo[i]->achievementPercent = percent;
+                cache[appId] = {percent, now + ttl};
+            }
+        };
+
+        std::vector<std::thread> pool;
+        for (int t = 0; t < 8; ++t) pool.emplace_back(worker);
+        for (auto& t : pool) t.join();
+
+        if (detailsPrivate)
+            std::cerr << "[Steam] Achievements are hidden: set your Steam profile's \"Game details\" to "
+                         "Public (https://steamcommunity.com/my/edit/settings), then restart OmniCon.\n";
+
+        std::error_code ec;
+        fs::create_directories(fs::path(cacheFile).parent_path(), ec);
+        std::ofstream out(cacheFile, std::ios::trunc);
+        for (const auto& [appId, row] : cache)
+            out << appId << '\t' << row.percent << '\t' << row.expires << '\n';
+    }
+}
+
 // ─── scanXboxCloud (Xbox Cloud Gaming) ───────────────────────────────────────
 
 void GameLibrary::scanXboxCloud(const std::string& cacheFile, const std::string& coversDir,
@@ -1110,7 +1230,7 @@ void GameLibrary::scanXboxCloud(const std::string& cacheFile, const std::string&
         if (g.system == SystemType::XboxOne || g.system == SystemType::XboxSeriesX)
             existing.insert(g.romPath);
 
-    // Each line: productId <TAB> XboxOne|XboxSeriesX <TAB> name <TAB> cover path <TAB> cloud|store
+    // Each line: productId <TAB> XboxOne|XboxSeriesX <TAB> name <TAB> cover path <TAB> cloud|store <TAB> achievement %
     int added = 0;
     char buf[4096];
     while (fgets(buf, sizeof(buf), pipe)) {
@@ -1139,6 +1259,10 @@ void GameLibrary::scanXboxCloud(const std::string& cacheFile, const std::string&
         ge.system      = fields[1] == "XboxSeriesX" ? SystemType::XboxSeriesX : SystemType::XboxOne;
         if (fields.size() > 3 && !fields[3].empty() && fs::exists(fields[3]))
             ge.coverPath = fields[3];
+        if (fields.size() > 5 && !fields[5].empty() &&
+            std::all_of(fields[5].begin(), fields[5].end(),
+                        [](unsigned char c) { return std::isdigit(c) != 0; }))
+            ge.achievementPercent = std::min(100, std::atoi(fields[5].c_str()));
         existing.insert(ge.romPath);
         games_.push_back(std::move(ge));
         ++added;

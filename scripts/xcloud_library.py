@@ -6,7 +6,7 @@
     xcloud_library.py list --cache F --covers-dir D [--all] [--refresh]
 
 `list` prints one tab-separated line per game on stdout:
-    <productId> <XboxOne|XboxSeriesX> <name> <cover path or empty> <cloud|store>
+    <productId> <XboxOne|XboxSeriesX> <name> <cover path or empty> <cloud|store> <achievement % or empty>
 "cloud" games can be streamed; "store" games are owned but only openable on
 their Store page. Everything else (prompts, progress, errors) goes to stderr.
 Exit status 2 means "not signed in" (silent unless a saved sign-in expired).
@@ -54,7 +54,7 @@ XBL_HEADERS = {"x-xbl-contract-version": "1", "Origin": "https://www.xbox.com",
 OFFERINGS = ("xgpuweb", "xgpuwebf2p")  # Game Pass, then free-to-play
 CATALOG_URL = "https://displaycatalog.mp.microsoft.com/v7.0/products"
 CATALOG_BATCH = 50
-CACHE_VERSION = 2
+CACHE_VERSION = 4
 
 XERR_HELP = {
     2148916233: "this Microsoft account has no Xbox profile; sign in at xbox.com once first",
@@ -233,6 +233,20 @@ def fetch_cloud_titles():
     return titles
 
 
+def achievement_percent(info):
+    """Percent of achievements earned (0-100), or -1 when the title has none.
+    Newer titles report totalAchievements as 0, so fall back to the title's own
+    progressPercentage (gamerscore based) whenever it has any gamerscore."""
+    if not isinstance(info, dict):
+        return -1
+    total = info.get("totalAchievements") or 0
+    if total > 0:
+        return min(100, round(100 * (info.get("currentAchievements") or 0) / total))
+    if (info.get("totalGamerscore") or 0) > 0:
+        return max(0, min(100, int(info.get("progressPercentage") or 0)))
+    return -1
+
+
 def fetch_owned_titles():
     """Console games on the account's Xbox Live title history, keyed by Store
     product id: {name, generations, cover}. Covers games bought outside Game Pass
@@ -244,7 +258,7 @@ def fetch_owned_titles():
                "x-xbl-contract-version": "2", "Accept-Language": "en-US"}
     base = f"https://titlehub.xboxlive.com/users/xuid({claims['xid']})/titles/titlehistory/decoration/"
     results = None
-    for fields in ("scid,image,productId", "scid,image"):
+    for fields in ("scid,image,productId,achievement", "scid,image,productId", "scid,image"):
         try:
             results = request("GET", base + fields + "?maxItems=2000", headers=headers,
                               timeout=60).get("titles", [])
@@ -266,7 +280,8 @@ def fetch_owned_titles():
             continue
         owned[pid] = {"name": t.get("name") or pid,
                       "series_only": "XboxOne" not in devices,
-                      "cover": (t.get("displayImage") or "")}
+                      "cover": (t.get("displayImage") or ""),
+                      "achievements": achievement_percent(t.get("achievement"))}
     if skipped:
         log(f"{skipped} title(s) in your Xbox history have no Store id and were skipped.")
     return owned
@@ -343,6 +358,7 @@ def build_library(include_all):
                       "name": " ".join((meta.get("name") or fallback).split()),
                       "generation": "XboxSeriesX" if series_only else "XboxOne",
                       "cover": cover,
+                      "achievements": own.get("achievements", -1),
                       "kind": "cloud" if pid in cloud else "store"})
     games.sort(key=lambda g: g["name"].lower())
     return games
@@ -409,8 +425,9 @@ def cmd_list(args):
 
     for g in games:
         cover = Path(args.covers_dir) / g["generation"].lower() / (g["id"] + ".jpg")
+        pct = g.get("achievements", -1)
         print("\t".join((g["id"], g["generation"], g["name"], str(cover) if cover.exists() else "",
-                         g.get("kind", "cloud"))))
+                         g.get("kind", "cloud"), str(pct) if pct >= 0 else "")))
     return 0
 
 

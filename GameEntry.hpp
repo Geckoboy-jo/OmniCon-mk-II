@@ -10,4 +10,5 @@ struct GameEntry {
     std::string coverPath;    // empty if not yet resolved
     SystemType  system = SystemType::Unknown;
     int         dbId   = 0;   // Oracle DB row id (0 if not in DB)
+    int         achievementPercent = -1;  // 0-100 achievements earned (Steam/Xbox); -1 = unknown or none
 };

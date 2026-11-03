@@ -158,10 +158,90 @@ ensure_build_deps() {
     fi
 }
 
+steam_roots() {
+    local drv sub
+    [ -n "${STEAM_ROOT:-}" ] && echo "$STEAM_ROOT"
+    echo "$HOME/.local/share/Steam"
+    echo "$HOME/.steam/steam"
+    for drv in c d e f; do
+        for sub in "Program Files (x86)" "Program Files"; do
+            echo "/mnt/$drv/$sub/Steam"
+        done
+    done
+}
+
+# Windows Steam reachable through a WSL mount; empty when /mnt has none.
+windows_steam_root() {
+    local root
+    while IFS= read -r root; do
+        case "$root" in
+            /mnt/*) [ -d "$root/steamapps" ] && { echo "$root"; return 0; } ;;
+        esac
+    done < <(steam_roots)
+    return 1
+}
+
+steamvr_installed() {
+    local root
+    while IFS= read -r root; do
+        [ -d "$root/steamapps/common/SteamVR" ] && return 0
+    done < <(steam_roots)
+    return 1
+}
+
+# Steam comes from Valve's official .deb (needs i386 multiarch for the client).
+install_steam() {
+    local deb
+    if [ -z "$SUDO" ]; then
+        warn "Steam needs root to install; run: sudo apt install steam-installer"
+        return 1
+    fi
+    deb=$(mktemp --suffix=.deb) || return 1
+    log "Downloading Steam..."
+    if curl -fSL "https://cdn.cloudflare.steamstatic.com/client/installer/steam.deb" -o "$deb"; then
+        $SUDO dpkg --add-architecture i386
+        $SUDO apt-get update -qq && APT_UPDATED=1
+        $SUDO apt-get install -y "$deb" || warn "Steam installation failed."
+    else
+        warn "Failed to download Steam; install it manually."
+    fi
+    rm -f "$deb"
+    have steam
+}
+
+# SteamVR (appid 250820) is a Steam app, so it is installed through the Steam
+# client; Steam must be able to log in, so this only queues the install.
+# Under WSL with Windows Steam on /mnt the Windows client is used; otherwise
+# the Linux client.
+install_steamvr() {
+    log "Asking Steam to install SteamVR (confirm in the Steam window if prompted)..."
+    if windows_steam_root >/dev/null && have cmd.exe; then
+        cmd.exe /c start "" steam://install/250820 >/dev/null 2>&1 &
+    elif have steam; then
+        nohup steam steam://install/250820 >/dev/null 2>&1 &
+    else
+        warn "Steam is unavailable; install SteamVR manually."
+    fi
+}
+
+ensure_steam_deps() {
+    if windows_steam_root >/dev/null; then
+        log "Using Windows Steam at $(windows_steam_root)"
+    elif ! have steam; then
+        log "No Steam found (no Windows Steam under /mnt); installing the Linux client."
+        install_steam || warn "Steam not installed; Steam games and SteamVR are unavailable."
+    fi
+    if ! steamvr_installed && { windows_steam_root >/dev/null || have steam; }; then
+        install_steamvr
+    fi
+}
+
 ensure_runtime_deps() {
     log "Checking runtime dependencies..."
     have curl  || apt_install curl
     have mysql || apt_install default-mysql-client
+
+    ensure_steam_deps
 
     if ! have retroarch; then
         apt_install retroarch \

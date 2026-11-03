@@ -867,6 +867,28 @@ void GameShell::renderGrid() {
                            {220, 225, 240, 255}, fontMd_);
             }
 
+            // Achievement progress bar (Steam / Xbox) under the badge row
+            if (ge.achievementPercent >= 0) {
+                const int pct = std::min(100, ge.achievementPercent);
+                const int barY = sy + kSlotH - 8;
+                SDL_Rect track = {coverX, barY, kCoverW, 5};
+                SDL_SetRenderDrawColor(renderer_, 40, 44, 60, 255);
+                SDL_RenderFillRect(renderer_, &track);
+                const SDL_Color fill = pct >= 100 ? SDL_Color{240, 190, 60, 255}
+                                                  : SDL_Color{80, 190, 90, 255};
+                SDL_Rect filled = {coverX, barY, kCoverW * pct / 100, 5};
+                SDL_SetRenderDrawColor(renderer_, fill.r, fill.g, fill.b, 255);
+                SDL_RenderFillRect(renderer_, &filled);
+
+                // Percentage label, right-aligned on the badge row
+                const std::string label = std::to_string(pct) + "%";
+                int lw = 0, lh = 0;
+                TTF_SizeUTF8(fontMd_, label.c_str(), &lw, &lh);
+                (void)lh;
+                renderText(label, coverX + kCoverW - lw,
+                           coverY + kCoverH + gap1 + nameH + gap2 + 1, fill, fontMd_);
+            }
+
             // Game name (centred, clipped to slot width)
             int nameY = coverY + kCoverH + gap1;
             SDL_Color nc = selected ? kColorTextPri : kColorTextDim;
@@ -2075,7 +2097,9 @@ void GameShell::launchGame(const GameEntry& game) {
                                   ? "steam://store"
                                   : "steam://rungameid/" + path;
 
-            // Detect WSL2: if so, Steam lives on Windows and cmd.exe is the right launcher
+            // Detect WSL2 with Windows Steam on a /mnt drive: then cmd.exe is the
+            // right launcher. Otherwise (native Linux, or WSL2 using the Linux
+            // Steam client) fall back to xdg-open.
             bool inWSL2 = false;
             {
                 std::ifstream pv("/proc/version");
@@ -2083,6 +2107,15 @@ void GameShell::launchGame(const GameEntry& game) {
                 if (std::getline(pv, line))
                     inWSL2 = line.find("Microsoft") != std::string::npos ||
                              line.find("microsoft") != std::string::npos;
+            }
+            if (inWSL2) {
+                bool windowsSteam = false;
+                std::error_code ec;
+                for (const char* drv : { "c", "d", "e", "f" })
+                    for (const char* s : { "/Program Files (x86)/Steam", "/Program Files/Steam" })
+                        if (std::filesystem::is_directory(std::string("/mnt/") + drv + s + "/steamapps", ec))
+                            windowsSteam = true;
+                inWSL2 = windowsSteam;
             }
 
             pid_t pid = fork();

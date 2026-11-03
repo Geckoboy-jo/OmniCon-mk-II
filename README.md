@@ -10,11 +10,15 @@ for SameBoy, and the vendored SameBoy sources themselves (cloned at the commit
 pinned by this repository) including the boot ROMs and `libsameboy.a`.
 
 At startup the program also checks for its runtime dependencies (`curl`, the
-`mysql` client, `retroarch`, `cemu`, `Ryubing`, `Vita3K`, and `xemu`) and
-automatically downloads any that are missing by running
+`mysql` client, `steam`, SteamVR, `retroarch`, `cemu`, `Ryubing`, `Vita3K`, and
+`xemu`) and automatically downloads any that are missing by running
 `scripts/install_deps.sh --runtime`. Emulators are installed as AppImages in
 `~/.local/bin`, so no root is required for them; apt packages use `sudo` when
-needed. Set `OMNICON_SKIP_DEP_CHECK=1` to disable the startup check, or run
+needed. Steam is used from a Windows install on a WSL mount (`/mnt/<drive>`) if
+one exists; otherwise the Linux client is installed from Valve's official `.deb`
+(enables i386 multiarch, needs `sudo`). SteamVR is then queued for install
+through whichever Steam client is in use (`steam://install/250820`), so you may
+need to log in to Steam and confirm the install. Set `OMNICON_SKIP_DEP_CHECK=1` to disable the startup check, or run
 `scripts/install_deps.sh` manually at any time — it is idempotent and only
 installs what is missing. `xenia` (Xbox 360) is Windows-only and must be
 installed manually.
@@ -121,6 +125,14 @@ OmniCon lists installed Steam games, owned games from the Steam Web API
 `STEAM_ROOT`, or a Windows install under `/mnt/<drive>/Program Files (x86)/Steam`
 in WSL), use any custom artwork from `config/grid/`, and launch through Steam
 like the rest. Steam must be installed on the machine OmniCon runs on.
+
+Steam and Xbox tiles show a progress bar and percentage of achievements
+earned (gold at 100%). Steam percentages come from the Web API
+(`GetPlayerAchievements`); your Steam profile's **Game details** must be set to
+Public or Steam refuses the request (OmniCon prints a warning). They are cached
+in `saves/steam_achievements.tsv`. Xbox percentages come from your Xbox Live
+title history (achievements earned, or gamerscore progress for newer titles), so
+only titles you have launched show a bar. Games without achievements show no bar.
 
 ## Additional console families
 
