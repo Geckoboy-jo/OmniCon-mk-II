@@ -1,0 +1,23 @@
+# VCS / IDE
+.git
+.vs
+.vscode
+__pycache__
+~
+
+# Local runtime data — mount as volumes instead (see README)
+saves/
+Roms/
+Misc BIOS/
+DVD Firmware/
+
+# Prebuilt binaries, logs and archives
+omnicon_repl
+omnicon_debug
+oracle_test
+play
+*.log
+*.zip
+
+# SameBoy build artifacts are rebuilt inside the image
+third_party/SameBoy/build/
