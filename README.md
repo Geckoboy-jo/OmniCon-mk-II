@@ -76,6 +76,58 @@ For database downloads classified as PC Games, OmniCon selects `.bin` or
 cue descriptor beside extracted BIN images. Existing cached `pc_redump` BIN
 downloads are repaired when the download cache is loaded.
 
+## Macros (Create Macro)
+
+OmniCon can record and play back input macros for **any** console — built-in
+emulator backends and external launchers alike — because input is injected at
+the OS level with [PyAutoGUI](https://pyautogui.readthedocs.io/).  Macros are
+JSON files in `saves/macros/` and are executed by `scripts/macro_engine.py`.
+
+Open the **Macro Studio** with **F2** (or **Ctrl+M**) in the game shell, or
+with the `macro` command in the REPL.  F2 is a *global* hotkey: it works even
+while an emulator window has focus (via an XInput2 raw-key listener on
+X11/XWayland; on pure Wayland the in-shell F2/Ctrl+M still work).
+
+The studio opens as a **borderless, always-on-top, semi-transparent overlay**
+that floats over the game — the game and shell stay open and visible behind
+it, so you never close anything to build a macro.  Opening the studio
+**pauses** a running external game (SIGSTOP to its process group); press
+**G** to resume the game while keeping the overlay open (live mode — handy
+for watching pixels while building a trigger), and **G** again to re-pause.
+Press **O** to cycle the overlay opacity (100% / 92% / 80% / 65%) so you can
+see more or less of the game through the panel.  Closing the studio (Esc)
+resumes the game if you left it paused.
+
+Two kinds of macros:
+
+* **Timeline** — a list of actions (key press/hold/release, mouse click/move,
+  wait, type text) played back in order, optionally looping.
+* **Trigger** — a condition that fires a list of actions:
+    * **Pixel** — the pixel at (x, y) matches a colour within a tolerance.
+    * **Button** — a keyboard key or mouse button is pressed.
+
+Each macro can be scoped to a specific system and/or game, or left at `any` to
+apply everywhere.  When a game is launched, every enabled macro that matches
+starts automatically; the engine stops when the shell session ends (or press
+**S** in the studio to stop it manually).
+
+### Colour matcher
+
+The trigger editor's **Pick pixel & colour** tool captures a pixel's position
+and colour.  It draws **no overlay**, so the colours on screen are exactly
+what the game renders — the captured value is safe to use in a pixel trigger.
+Hover the mouse over the pixel and click (or press Enter in the terminal).
+
+### Requirements
+
+```sh
+pip install pyautogui pynput
+```
+
+`pyautogui` is required for all macros; `pynput` adds button triggers and
+click-to-pick (without it, pixel triggers and timelines still work and the
+picker falls back to Enter-to-capture).
+
 ## BIOS files
 
 If a `Misc BIOS/` folder exists in the repository root, the PS1 and PS2
@@ -183,8 +235,21 @@ Wii U, Switch, Vita, Xbox, and Xbox 360 launch through external emulators:
 emulators, firmware, and keys as required by their projects. For Switch,
 download Ryubing (the community Ryujinx fork) from
 https://git.ryujinx.app/ryubing/ryujinx/releases and put the `Ryubing`
-executable on your `PATH` (or point `OMNICON_SWITCH_LAUNCHER` at it); it also
-needs your console's `prod.keys` and firmware installed via its own setup. Xbox One and Xbox
+executable on your `PATH` (or point `OMNICON_SWITCH_LAUNCHER` at it).
+
+**Switch keys:** place your console's `prod.keys` (and optionally
+`title.keys`) in the repo's `Misc BIOS/` folder.  On launch, OmniCon
+automatically links them into Ryubing's profile (`~/.config/Ryujinx/system/`
+and `~/.config/Ryubing/system/`) so the emulator finds them — it never
+overwrites a keys file you installed yourself.
+
+**Switch firmware:** drop the dumped firmware into `Misc BIOS/Firmware X.Y.Z/`
+(a flat folder of `.nca` files).  On launch, OmniCon installs the newest such
+folder into Ryubing's `bis/system/Contents/registered/` directory (the layout
+Ryubing actually reads), so the emulator stops reporting missing firmware.
+Files already installed are skipped, and the originals in `Misc BIOS/` are
+left untouched.  The Windows-native build (`Ryubing-win`, used on WSL2) reads
+its own Windows profile and is not touched. Xbox One and Xbox
 Series have no emulator backend; their games come from Xbox Cloud Gaming instead
 (see below).
 

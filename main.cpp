@@ -448,7 +448,6 @@ DatabaseConfig promptDatabaseConfig()
 
     return config;
 }
-
 bool downloadToBytes(const std::string& url, std::vector<unsigned char>& bytes)
 {
     const std::string command =
@@ -1238,6 +1237,8 @@ void printHelp()
               << "  remap           Open the interactive controller button-mapping screen\n"
               << "  remap <console> Remap controller buttons for a specific console (nes/snes/gb/gba/nds/3ds/n64/ps1/ps2/gamecube/genesis/atari2600/atari5200/atari800/odyssey/all)\n"
               << "  remap player2   Capture player 2 controller bindings and save them to retroarch_controller.cfg\n"
+              << "  macro           Open the Create Macro studio (PyAutoGUI macros for any console;\n"
+              << "                  timelines and pixel/button triggers, with a colour-matcher tool)\n"
               << "  db-rename-from-url  Rename every DB entry to the clean title decoded from its download URL\n"
               << "  config          Re-enter database password\n"
               << "  help            Show this message\n"
@@ -1648,6 +1649,14 @@ int main()
             ensureControllerBridge();
             GameShell rs;
             rs.remapConsole(sys);
+            continue;
+        }
+
+        // Create Macro studio (same screen as F2 in the shell).
+        if (input == "macro" || input == "macros" || input == "create macro" ||
+            input == "create-macro") {
+            GameShell ms;
+            ms.macroStudio();
             continue;
         }
 

@@ -8,6 +8,13 @@
 
 namespace fs = std::filesystem;
 
+namespace {
+std::atomic<pid_t> g_lastGamePid{-1};
+}
+
+pid_t lastLaunchedGamePid() { return g_lastGamePid.load(); }
+void  setLastLaunchedGamePid(pid_t pid) { g_lastGamePid.store(pid); }
+
 static bool launchExternalChecked(const std::vector<std::string>& args) {
     if (args.empty()) return false;
 
@@ -49,6 +56,7 @@ static bool launchExternalChecked(const std::vector<std::string>& args) {
                   << std::strerror(error) << "\n";
         return false;
     }
+    setLastLaunchedGamePid(pid);
     return true;
 }
 

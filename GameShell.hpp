@@ -6,6 +6,7 @@
 #include <SDL2/SDL_ttf.h>
 #include <SDL2/SDL_image.h>
 
+#include <atomic>
 #include <map>
 #include <mutex>
 #include <string>
@@ -33,6 +34,12 @@ public:
     // External emulator systems use the input configuration of their launcher.
     // Pass "all" to step through every built-in console mapping.
     void remapConsole(const std::string& sysName = "all");
+
+    // Open the "Create Macro" studio stand-alone (e.g. from the REPL "macro"
+    // command).  Initialises SDL, runs the studio, then cleans up.
+    void macroStudio() {
+        if (init()) { runMacroStudio(); cleanup(); }
+    }
 
     // Interactive capture of one player's raw controller bindings for RetroArch.
     // Merges input_player<N>_* keys into retroarch_controller.cfg (passed to
@@ -185,4 +192,36 @@ private:
 
     // Returns the GUID string of the currently-open joystick, or "".
     std::string joystickGUID() const;
+
+    // ── Macro studio ──────────────────────────────────────────────────────────
+    // Modal "Create Macro" screen (F2 / Ctrl+M in the shell).  Pauses a
+    // running external game (SIGSTOP to its process group) while open and
+    // resumes it (SIGCONT) on close.  The studio renders only inside the
+    // shell window, so game colours are never altered; the colour-matcher
+    // tool captures pixels with no overlay at all.
+    void runMacroStudio();
+
+    // Global F2 hotkey: a background thread listens for F2 system-wide via
+    // XInput2 raw key events, so the studio opens even while an emulator
+    // window has focus.  The main loop polls macroHotkeyPending_ and opens
+    // the studio on the UI thread (SDL is not thread-safe).
+    void startMacroHotkeyListener();
+    void stopMacroHotkeyListener();
+    std::atomic<bool> macroHotkeyPending_{false};
+
+    // Start scripts/macro_engine.py for every enabled macro that applies to
+    // this game (no-op when none match).  Stops any previously running engine.
+    void startMacroEngine(const GameEntry& game);
+    // Stop the macro engine started by startMacroEngine(), if running.
+    void stopMacroEngine();
+    // Colour matcher: minimise the shell window, run the no-overlay picker,
+    // and return the clicked pixel's position and colour.  False on failure.
+    bool runColorPicker(int& x, int& y, int& r, int& g, int& b);
+    // As above, but minimises/restores an arbitrary window (the studio popup).
+    bool runColorPickerOn(SDL_Window* win, int& x, int& y, int& r, int& g, int& b);
+
+private:
+    // Global-hotkey listener thread state (XInput2 raw key events).
+    std::thread       macroHotkeyThread_;
+    std::atomic<bool> macroHotkeyStop_{false};
 };

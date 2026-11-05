@@ -249,6 +249,7 @@ static bool launchExternalChecked(const std::vector<std::string>& args) {
                   << std::strerror(error) << "\n";
         return false;
     }
+    setLastLaunchedGamePid(pid);
     return true;
 }
 
@@ -448,6 +449,7 @@ bool GameShell::init() {
 }
 
 void GameShell::cleanup() {
+    stopMacroEngine();   // macros stop when the shell session ends
     clearCoverCache();
     if (fontLg_)   { TTF_CloseFont(fontLg_);       fontLg_   = nullptr; }
     if (fontMd_)   { TTF_CloseFont(fontMd_);       fontMd_   = nullptr; }
@@ -919,7 +921,7 @@ void GameShell::renderInfoBar() {
     renderText(
         "\xe2\x86\x90\xe2\x86\x92\xe2\x86\x91\xe2\x86\x93 Navigate    "
         "Enter / Double-click = Play    Mouse Wheel = Scroll    "
-        "Ctrl+F = Search    Esc = Exit",
+        "Ctrl+F = Search    F2 = Macros    Esc = Exit",
         20, barY + kInfoH - 16, kColorTextDim, fontSm_);
 
     std::string toast;
@@ -1275,10 +1277,20 @@ void GameShell::run(GameLibrary& library, const std::string& coversDir) {
         std::cerr << "[GameShell] No controller detected; skipping setup.\n";
     }
 
+    // Global F2 hotkey: opens the Macro Studio even while an emulator window
+    // has focus (XInput2 raw key listener; no-op on pure Wayland).
+    startMacroHotkeyListener();
+
     while (!quit) {
         SDL_Event ev;
         bool      pendingLaunch = false;
         GameEntry launchTarget;
+
+        // Global hotkey fired while another window had focus: open the studio.
+        if (macroHotkeyPending_.exchange(false)) {
+            runMacroStudio();
+            rebuildFilter(); computeFilterRects();
+        }
 
         while (SDL_PollEvent(&ev)) {
             if (ev.type == SDL_QUIT) { quit = true; break; }
@@ -1298,6 +1310,13 @@ void GameShell::run(GameLibrary& library, const std::string& coversDir) {
                         // Open the interactive controller-rebind screen.
                         runRebindScreen();
                         rebuildFilter(); computeFilterRects();
+                        break;
+                    case SDLK_F2:
+                        // Open the "Create Macro" studio (pauses a running game).
+                        if (!searchActive_) {
+                            runMacroStudio();
+                            rebuildFilter(); computeFilterRects();
+                        }
                         break;
                     case SDLK_ESCAPE:
                         if (searchActive_) {
@@ -1328,6 +1347,13 @@ void GameShell::run(GameLibrary& library, const std::string& coversDir) {
                         if (ev.key.keysym.mod & KMOD_CTRL) {
                             searchActive_ = true;
                             SDL_StartTextInput();
+                        }
+                        break;
+                    case SDLK_m:
+                        // Ctrl+M — same as F2: open the "Create Macro" studio.
+                        if (!searchActive_ && (ev.key.keysym.mod & KMOD_CTRL)) {
+                            runMacroStudio();
+                            rebuildFilter(); computeFilterRects();
                         }
                         break;
                     case SDLK_LEFT:
@@ -1776,13 +1802,38 @@ void GameShell::run(GameLibrary& library, const std::string& coversDir) {
         }
     }
 
+    stopMacroHotkeyListener();
     cancelXboxSignIn();
     if (ctrl_) { SDL_GameControllerClose(ctrl_); ctrl_ = nullptr; ctrlName_.clear(); }
 }
 
 // ─── Game launch ──────────────────────────────────────────────────────────────
 
+// Systems emulated in-process: runInteractive() blocks the shell until the
+// game exits.  Everything else launches an external emulator and returns.
+static bool usesBuiltinEmulator(SystemType sys) {
+    switch (sys) {
+        case SystemType::NES:          case SystemType::SNES:
+        case SystemType::GameBoy:      case SystemType::GameBoyColor:
+        case SystemType::GBA:          case SystemType::NDS:
+        case SystemType::ThreeDS:      case SystemType::Atari2600:
+        case SystemType::Atari5200:    case SystemType::Atari800:
+        case SystemType::SegaGenesis:  case SystemType::N64:
+        case SystemType::PS1:          case SystemType::PS2:
+        case SystemType::PS3:          case SystemType::GameCube:
+        case SystemType::Odyssey:
+            return true;
+        default:
+            return false;
+    }
+}
+
 void GameShell::launchGame(const GameEntry& game) {
+    // Start the PyAutoGUI macro engine for any macros bound to this game
+    // (no-op when none match).  Works with every console: input is injected
+    // at the OS level and reaches whichever emulator window has focus.
+    startMacroEngine(game);
+
     const std::string& path = game.romPath;
     // Defensive: if system is Unknown, try to detect from the file extension.
     SystemType sys = game.system;
@@ -2132,6 +2183,7 @@ void GameShell::launchGame(const GameEntry& game) {
                 }
                 _exit(1);
             }
+            if (pid > 0) setLastLaunchedGamePid(pid);
             // Parent returns immediately; Steam launches asynchronously
             break;
         }
@@ -2140,6 +2192,13 @@ void GameShell::launchGame(const GameEntry& game) {
                 std::cerr << "[GameShell] Unknown system for ROM: " << path << "\n";
             break;
     }
+
+    // Built-in backends block until the game exits; their macros must not
+    // keep injecting input into the shell afterwards.  External emulators
+    // keep running, so their engine keeps running too (stop it from the
+    // Macro Studio with S, or it exits when the shell closes).
+    if (usesBuiltinEmulator(sys))
+        stopMacroEngine();
 }
 
 // ─── Controller helpers ───────────────────────────────────────────────────────
