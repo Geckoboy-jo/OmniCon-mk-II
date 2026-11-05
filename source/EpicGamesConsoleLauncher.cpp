@@ -49,7 +49,8 @@ bool EpicGamesConsoleLauncher::launch(const std::string &contentPath) const {
       started = launchExternalApplication(
           "flatpak", {"run", "com.heroicgameslauncher.hgl"});
     else if (hasCommand("lutris"))
-      started = launchExternalApplication("lutris", {"lutris:rungame/epic-games-store"});
+      started = launchExternalApplication("lutris",
+                                          {"lutris:rungame/epic-games-store"});
   }
 
   if (!started) {

@@ -151,9 +151,9 @@ enum class SystemType {
   TaitoTypeXPlus,
   TaitoTypeX3,
   KonamiBemaniPCPlatform,
-  Arcade, // generic catagory will bunch many consoles into this catagory
-  Steam,  // both steam deck and steam machine
-  Minecraft,  // Minecraft Launcher (Java Edition)
-  EpicGames,  // Epic Games Launcher
+  Arcade,    // generic catagory will bunch many consoles into this catagory
+  Steam,     // both steam deck and steam machine
+  Minecraft, // Minecraft Launcher (Java Edition)
+  EpicGames, // Epic Games Launcher
   Unknown
 };
