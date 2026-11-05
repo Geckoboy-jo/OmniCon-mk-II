@@ -1,8 +1,8 @@
 #pragma once
 
-#include <stdint.h>
-#include <stdbool.h>
 #include "defs.h"
+#include <stdbool.h>
+#include <stdint.h>
 
 #ifdef GB_INTERNAL
 internal uint8_t GB_random(void);

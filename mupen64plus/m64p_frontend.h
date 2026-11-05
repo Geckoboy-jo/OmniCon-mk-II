@@ -32,13 +32,15 @@
 extern "C" {
 #endif
 
-
 /* pointer types to the callback functions in the front-end application */
-typedef void (*ptr_DebugCallback)(void *Context, int level, const char *message);
-typedef void (*ptr_StateCallback)(void *Context, m64p_core_param param_type, int new_value);
+typedef void (*ptr_DebugCallback)(void *Context, int level,
+                                  const char *message);
+typedef void (*ptr_StateCallback)(void *Context, m64p_core_param param_type,
+                                  int new_value);
 #if defined(M64P_CORE_PROTOTYPES)
 EXPORT void CALL DebugCallback(void *Context, int level, const char *message);
-EXPORT void CALL StateCallback(void *Context, m64p_core_param param_type, int new_value);
+EXPORT void CALL StateCallback(void *Context, m64p_core_param param_type,
+                               int new_value);
 #endif
 
 /* CoreStartup()
@@ -46,9 +48,13 @@ EXPORT void CALL StateCallback(void *Context, m64p_core_param param_type, int ne
  * This function initializes libmupen64plus for use by allocating memory,
  * creating data structures, and loading the configuration file.
  */
-typedef m64p_error (*ptr_CoreStartup)(int, const char *, const char *, void *, ptr_DebugCallback, void *, ptr_StateCallback);
+typedef m64p_error (*ptr_CoreStartup)(int, const char *, const char *, void *,
+                                      ptr_DebugCallback, void *,
+                                      ptr_StateCallback);
 #if defined(M64P_CORE_PROTOTYPES)
-EXPORT m64p_error CALL CoreStartup(int, const char *, const char *, void *, ptr_DebugCallback, void *, ptr_StateCallback);
+EXPORT m64p_error CALL CoreStartup(int, const char *, const char *, void *,
+                                   ptr_DebugCallback, void *,
+                                   ptr_StateCallback);
 #endif
 
 /* CoreShutdown()
@@ -64,17 +70,18 @@ EXPORT m64p_error CALL CoreShutdown(void);
 /* CoreAttachPlugin()
  *
  * This function attaches the given plugin to the emulator core. There can only
- * be one plugin of each type attached to the core at any given time. 
+ * be one plugin of each type attached to the core at any given time.
  */
-typedef m64p_error (*ptr_CoreAttachPlugin)(m64p_plugin_type, m64p_dynlib_handle);
+typedef m64p_error (*ptr_CoreAttachPlugin)(m64p_plugin_type,
+                                           m64p_dynlib_handle);
 #if defined(M64P_CORE_PROTOTYPES)
 EXPORT m64p_error CALL CoreAttachPlugin(m64p_plugin_type, m64p_dynlib_handle);
 #endif
 
 /* CoreDetachPlugin()
  *
- * This function detaches the given plugin from the emulator core, and re-attaches
- * the 'dummy' plugin functions. 
+ * This function detaches the given plugin from the emulator core, and
+ * re-attaches the 'dummy' plugin functions.
  */
 typedef m64p_error (*ptr_CoreDetachPlugin)(m64p_plugin_type);
 #if defined(M64P_CORE_PROTOTYPES)
@@ -125,10 +132,11 @@ EXPORT m64p_error CALL CoreCheatEnabled(const char *, int);
 
 /* CoreGetRomSettings()
  *
- * This function will retrieve the ROM settings from the mupen64plus INI file for
- * the ROM image corresponding to the given CRC values.
+ * This function will retrieve the ROM settings from the mupen64plus INI file
+ * for the ROM image corresponding to the given CRC values.
  */
-typedef m64p_error (*ptr_CoreGetRomSettings)(m64p_rom_settings *, int, int, int);
+typedef m64p_error (*ptr_CoreGetRomSettings)(m64p_rom_settings *, int, int,
+                                             int);
 #if defined(M64P_CORE_PROTOTYPES)
 EXPORT m64p_error CALL CoreGetRomSettings(m64p_rom_settings *, int, int, int);
 #endif
@@ -138,4 +146,3 @@ EXPORT m64p_error CALL CoreGetRomSettings(m64p_rom_settings *, int, int, int);
 #endif
 
 #endif /* #define M64P_FRONTEND_H */
-

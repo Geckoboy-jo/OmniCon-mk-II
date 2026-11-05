@@ -1,7 +1,7 @@
 #import "Document.h"
-#import "HexFiend/HexFiend.h"
 #import "HexFiend/HFByteSlice.h"
+#import "HexFiend/HexFiend.h"
 
 @interface GBCompleteByteSlice : HFByteSlice
-- (instancetype) initWithByteArray:(HFByteArray *)array;
+- (instancetype)initWithByteArray:(HFByteArray *)array;
 @end

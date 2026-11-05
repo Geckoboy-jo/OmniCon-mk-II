@@ -2,5 +2,3 @@
 
 @interface GBLibraryViewController : UITabBarController
 @end
-
-

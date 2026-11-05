@@ -38,9 +38,11 @@ extern "C" {
  * This function retrieves version information from a library. This
  * function is the same for the core library and the plugins.
  */
-typedef m64p_error (*ptr_PluginGetVersion)(m64p_plugin_type *, int *, int *, const char **, int *);
+typedef m64p_error (*ptr_PluginGetVersion)(m64p_plugin_type *, int *, int *,
+                                           const char **, int *);
 #if defined(M64P_PLUGIN_PROTOTYPES) || defined(M64P_CORE_PROTOTYPES)
-EXPORT m64p_error CALL PluginGetVersion(m64p_plugin_type *, int *, int *, const char **, int *);
+EXPORT m64p_error CALL PluginGetVersion(m64p_plugin_type *, int *, int *,
+                                        const char **, int *);
 #endif
 
 /* CoreGetAPIVersions()
@@ -56,27 +58,29 @@ EXPORT m64p_error CALL CoreGetAPIVersions(int *, int *, int *, int *);
  *
  * This function returns a pointer to a NULL-terminated string giving a
  * human-readable description of the error.
-*/
-typedef const char * (*ptr_CoreErrorMessage)(m64p_error);
+ */
+typedef const char *(*ptr_CoreErrorMessage)(m64p_error);
 #if defined(M64P_CORE_PROTOTYPES)
-EXPORT const char * CALL CoreErrorMessage(m64p_error);
+EXPORT const char *CALL CoreErrorMessage(m64p_error);
 #endif
 
 /* PluginStartup()
  *
  * This function initializes a plugin for use by allocating memory, creating
  * data structures, and loading the configuration data.
-*/
-typedef m64p_error (*ptr_PluginStartup)(m64p_dynlib_handle, void *, void (*)(void *, int, const char *));
+ */
+typedef m64p_error (*ptr_PluginStartup)(m64p_dynlib_handle, void *,
+                                        void (*)(void *, int, const char *));
 #if defined(M64P_PLUGIN_PROTOTYPES) || defined(M64P_CORE_PROTOTYPES)
-EXPORT m64p_error CALL PluginStartup(m64p_dynlib_handle, void *, void (*)(void *, int, const char *));
+EXPORT m64p_error CALL PluginStartup(m64p_dynlib_handle, void *,
+                                     void (*)(void *, int, const char *));
 #endif
 
 /* PluginShutdown()
  *
  * This function destroys data structures and releases memory allocated by
  * the plugin library.
-*/
+ */
 typedef m64p_error (*ptr_PluginShutdown)(void);
 #if defined(M64P_PLUGIN_PROTOTYPES) || defined(M64P_CORE_PROTOTYPES)
 EXPORT m64p_error CALL PluginShutdown(void);
@@ -87,4 +91,3 @@ EXPORT m64p_error CALL PluginShutdown(void);
 #endif
 
 #endif /* #define M64P_COMMON_H */
-
