@@ -7956,8 +7956,9 @@ struct retro_device_power {
  * @{
  */
 
-#define RETRO_EXEC_MEM_MODE_UNAVAILABLE 0 /**< No executable memory available  \
-                                           */
+#define RETRO_EXEC_MEM_MODE_UNAVAILABLE                                        \
+  0 /**< No executable memory available                                        \
+     */
 #define RETRO_EXEC_MEM_MODE_UNRESTRICTED                                       \
   1 /**< No restrictions; core should self-allocate */
 #define RETRO_EXEC_MEM_MODE_RWX 2 /**< Single mapping, read-write-execute */

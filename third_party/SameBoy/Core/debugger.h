@@ -14,8 +14,8 @@ bool /* Returns true if debugger waits for more commands. Not relevant for
 #else
 void
 #endif
-     GB_debugger_execute_command(GB_gameboy_t *gb,
-                                 char *input); /* Destroys input. */
+GB_debugger_execute_command(GB_gameboy_t *gb,
+                            char *input); /* Destroys input. */
 char *GB_debugger_complete_substring(
     GB_gameboy_t *gb, char *input,
     uintptr_t *context); /* Destroys input, result requires free */
