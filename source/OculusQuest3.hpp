@@ -1,5 +1,4 @@
-class OculusQuest3
-{
+class OculusQuest3 {
 public:
-    void launch() {return;}
+  void launch() { return; }
 };

@@ -1,5 +1,4 @@
-class PS5
-{
+class PS5 {
 public:
-    void launch() {return;}
+  void launch() { return; }
 };

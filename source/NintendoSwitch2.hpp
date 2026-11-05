@@ -1,5 +1,4 @@
-class NintendoSwitch2
-{
+class NintendoSwitch2 {
 public:
-    void launch() {return;}
+  void launch() { return; }
 };
