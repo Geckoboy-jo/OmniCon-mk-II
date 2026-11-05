@@ -33,7 +33,7 @@ run: $(TARGET)
 
 clean:
 	rm -f $(TARGET)
-reset:
+reset: 
 	make clean
 	clear
 	make
