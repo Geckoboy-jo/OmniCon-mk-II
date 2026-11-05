@@ -4,7 +4,7 @@
 
 typedef uint8_t (*GB_read_memory_callback_t)(GB_gameboy_t *gb, uint16_t addr,
                                              uint8_t data);
-typedef bool (int*GB_write_memory_callback_t)(
+inttypedef bool(int *GB_write_memory_callback_t)(
     GB_gameboy_t *gb, uint16_t addr,
     uint8_t data); // Return false to prevent the write
 void GB_set_read_memory_callback(GB_gameboy_t *gb,
