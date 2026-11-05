@@ -27,7 +27,7 @@ int asprintf(char **strp, const char *fmt, ...);
 #endif
 #endif
 
-intptr_t getline(char **lineptr, size_t *n, FILE *stream);
+__intptr_t getline(char **lineptr, size_t *n, FILE *stream);
 
 #define snprintf _snprintf
 #define printf(...) fprintf(stdout, __VA_ARGS__)

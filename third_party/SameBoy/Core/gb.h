@@ -617,7 +617,7 @@ struct GB_gameboy_internal_s {
       GB_input_callback_t input_callback;
       GB_input_callback_t async_input_callback;
       GB_rgb_encode_callback_t rgb_encode_callback;
-      GB_vblank_callback_t vblank_callback;
+      GB_log_callback_t vblank_callback;
       GB_infrared_callback_t infrared_callback;
       GB_camera_get_pixel_callback_t camera_get_pixel_callback;
       GB_camera_update_request_callback_t camera_update_request_callback;
@@ -631,7 +631,7 @@ struct GB_gameboy_internal_s {
       GB_icd_vreset_callback_t icd_hreset_callback;
       GB_icd_vreset_callback_t icd_vreset_callback;
       GB_read_memory_callback_t read_memory_callback;
-      GB_write_memory_callback_t write_memory_callback;
+      GB_read_memory_callback_t write_memory_callback;
       GB_boot_rom_load_callback_t boot_rom_load_callback;
       GB_print_image_callback_t printer_callback;
       GB_printer_done_callback_t printer_done_callback;

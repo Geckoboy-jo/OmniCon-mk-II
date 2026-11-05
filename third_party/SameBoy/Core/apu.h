@@ -149,7 +149,7 @@ typedef struct {
                        GB_SKIP_DIV_EVENT_INACTIVE,
                        GB_SKIP_DIV_EVENT_SKIPPED,
                        GB_SKIP_DIV_EVENT_SKIP,
-                   })
+                   });
   skip_div_event;
   uint8_t pcm_mask[2]; // For CGB-0 to CGB-C PCM read glitch
 

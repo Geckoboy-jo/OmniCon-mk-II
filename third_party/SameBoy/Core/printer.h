@@ -28,14 +28,14 @@ typedef struct {
                        GB_PRINTER_COMMAND_CHECKSUM_HIGH,
                        GB_PRINTER_COMMAND_ACTIVE,
                        GB_PRINTER_COMMAND_STATUS,
-                   })
+                   });
   command_state;
   GB_ENUM(uint8_t, {
                        GB_PRINTER_INIT_COMMAND = 1,
                        GB_PRINTER_START_COMMAND = 2,
                        GB_PRINTER_DATA_COMMAND = 4,
                        GB_PRINTER_NOP_COMMAND = 0xF,
-                   })
+                   });
   command_id;
   bool compression;
   uint16_t length_left;
