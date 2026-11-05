@@ -34,7 +34,7 @@ jobs:
       - name: Run Clang-Tidy
         run: |
           find . -name "*.cpp" \
-            -exec clang-tidy {} -p build \;
+            -exec clang-tidy {} -p build -fix-errors\;
 
       
       - name: Commit changes
