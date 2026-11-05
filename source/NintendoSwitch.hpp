@@ -4,7 +4,7 @@
 
 class NintendoSwitchConsoleLauncher final : public ConsoleLauncher {
 public:
-    bool launch(const std::string& contentPath) const override;
+  bool launch(const std::string &contentPath) const override;
 };
 
 #endif // NINTENDO_SWITCH_HPP

@@ -6,9 +6,9 @@
 // as a console machine with the content attached as media.
 class MameConsoleLauncher final : public ConsoleLauncher {
 public:
-    explicit MameConsoleLauncher(const ExtraSystemInfo& info) : info_(info) {}
-    bool launch(const std::string& contentPath) const override;
+  explicit MameConsoleLauncher(const ExtraSystemInfo &info) : info_(info) {}
+  bool launch(const std::string &contentPath) const override;
 
 private:
-    const ExtraSystemInfo& info_;
+  const ExtraSystemInfo &info_;
 };
