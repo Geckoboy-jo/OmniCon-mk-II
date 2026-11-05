@@ -255,6 +255,14 @@ SystemType GameLibrary::systemFromName(const std::string &name) {
     return SystemType::Dreamcast;
   if (name == "Steam")
     return SystemType::Steam;
+  if (name == "Oculus Rift" || name == "Rift")
+    return SystemType::OculusRift;
+  if (name == "HTC Vive" || name == "Vive")
+    return SystemType::HTCVive;
+  if (name == "Valve Index" || name == "Index")
+    return SystemType::ValveIndex;
+  if (name == "Pico 4" || name == "Pico4")
+    return SystemType::Pico4;
   if (name == "Sega Master System" || name == "Master System" || name == "SMS")
     return SystemType::SegaMasterSystem;
   if (name == "Game Gear" || name == "Sega Game Gear")
@@ -385,6 +393,14 @@ std::string GameLibrary::systemName(SystemType sys) {
     return "Dreamcast";
   case SystemType::Steam:
     return "Steam";
+  case SystemType::OculusRift:
+    return "Oculus Rift";
+  case SystemType::HTCVive:
+    return "HTC Vive";
+  case SystemType::ValveIndex:
+    return "Valve Index";
+  case SystemType::Pico4:
+    return "Pico 4";
   case SystemType::SegaMasterSystem:
     return "Sega Master System";
   case SystemType::GameGear:

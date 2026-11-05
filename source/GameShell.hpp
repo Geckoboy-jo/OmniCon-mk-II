@@ -57,9 +57,9 @@ public:
   static void loadConsoleBindings();
 
   // Public so free functions in the .cpp can access them
-  static const SystemType kSystems[107];
-  static const char *const kSysAbbrev[107];
-  static constexpr int kNumSystems = 107;
+  static const SystemType kSystems[111];
+  static const char *const kSysAbbrev[111];
+  static constexpr int kNumSystems = 111;
 
 private:
   // SDL resources

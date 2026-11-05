@@ -21,6 +21,7 @@
 #include "SaveManager.hpp"
 #include "SegaGenesis.hpp"
 #include "ShellMessage.hpp"
+#include "SteamVR.hpp"
 
 #include <algorithm>
 #include <cerrno>
@@ -43,7 +44,7 @@ namespace fs = std::filesystem;
 // Grouped by SystemFamily in header tab order (Nintendo, Sega, Sony, Microsoft,
 // Atari, NEC, SNK, Arcade, Other) so shoulder-button cycling moves linearly
 // across the tabs. kSysAbbrev must stay in the same order.
-const SystemType GameShell::kSystems[107] = {
+const SystemType GameShell::kSystems[111] = {
     // Nintendo
     SystemType::NES,
     SystemType::SNES,
@@ -160,13 +161,18 @@ const SystemType GameShell::kSystems[107] = {
     SystemType::FMTownsMarty,
     SystemType::HartungGameMaster,
     SystemType::GP32,
+    // PC VR (SteamVR)
+    SystemType::OculusRift,
+    SystemType::HTCVive,
+    SystemType::ValveIndex,
+    SystemType::Pico4,
 };
 
 static_assert(sizeof(GameShell::kSystems) / sizeof(GameShell::kSystems[0]) ==
                   GameShell::kNumSystems,
               "kSystems must list every filterable system");
 
-const char *const GameShell::kSysAbbrev[107] = {
+const char *const GameShell::kSysAbbrev[111] = {
     // Nintendo
     "NES", "SNES", "GB", "GBC", "GBA", "NDS", "3DS", "N64", "GCN", "WII",
     "WIIU", "SW", "VB", "PMIN", "FDS", "G&W", "BSX",
@@ -190,7 +196,9 @@ const char *const GameShell::kSysAbbrev[107] = {
     "ODY", "COLECO", "INTV", "3DO", "CD32", "WS", "WSC", "CRYS", "CHF", "VECX",
     "SV", "O2", "CDI", "CRV", "LOOP", "PIP", "SCV", "APF", "ARCD", "VC4K",
     "ASTR", "ST2", "GCOM", "ADV", "RX78", "SACN", "FM7", "MRTY", "GMST",
-    "GP32"};
+    "GP32",
+    // PC VR (SteamVR)
+    "RIFT", "VIVE", "INDX", "PICO"};
 
 static_assert(sizeof(GameShell::kSysAbbrev) /
                       sizeof(GameShell::kSysAbbrev[0]) ==
@@ -378,6 +386,14 @@ static SDL_Color sysBadgeColor(SystemType sys) {
     return {45, 145, 140, 255};
   case SystemType::Intellivision:
     return {120, 80, 150, 255};
+  case SystemType::OculusRift:
+    return {30, 30, 35, 255}; // Rift black
+  case SystemType::HTCVive:
+    return {15, 160, 190, 255}; // Vive teal
+  case SystemType::ValveIndex:
+    return {120, 60, 180, 255}; // Index purple
+  case SystemType::Pico4:
+    return {60, 90, 200, 255}; // Pico blue
   default:
     if (const ExtraSystemInfo *info = findExtraSystem(sys))
       return {info->color[0], info->color[1], info->color[2], 255};
@@ -2476,6 +2492,13 @@ void GameShell::launchGame(const GameEntry &game) {
   case SystemType::XboxOne:
   case SystemType::XboxSeriesX:
     XboxCloudConsoleLauncher().launch(path);
+    break;
+  // PC VR headsets run their Steam library entries through SteamVR.
+  case SystemType::OculusRift:
+  case SystemType::HTCVive:
+  case SystemType::ValveIndex:
+  case SystemType::Pico4:
+    SteamVRConsoleLauncher().launch(path);
     break;
   case SystemType::Atari7800:
     Atari7800ConsoleLauncher().launch(path);

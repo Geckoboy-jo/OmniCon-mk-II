@@ -716,6 +716,10 @@ SystemFamily systemFamily(SystemType t) {
   case SystemType::XboxOne:
   case SystemType::XboxSeriesX:
   case SystemType::Steam:
+  case SystemType::OculusRift:
+  case SystemType::HTCVive:
+  case SystemType::ValveIndex:
+  case SystemType::Pico4:
     return SystemFamily::Microsoft;
   case SystemType::Atari2600:
   case SystemType::Atari5200:

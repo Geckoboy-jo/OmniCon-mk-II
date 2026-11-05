@@ -19,6 +19,7 @@
 #include "SNES.hpp"
 #include "SaveManager.hpp"
 #include "SegaGenesis.hpp"
+#include "SteamVR.hpp"
 #include "WiiUConverter.hpp"
 #include "top.hpp"
 
@@ -1402,6 +1403,7 @@ void printHelp() {
       << "  play-genesis <path>  Load and run a Sega Genesis ROM "
          "(.md/.gen/.smd)\n"
       << "  play-n64 <path>  Load and run a Nintendo 64 ROM (.n64/.z64/.v64)\n"
+      << "  play-vr <appid>  Launch a Steam game in VR via SteamVR + ALVR\n"
       << "  shell           Open the graphical game library launcher\n"
       << "  scrape-covers   Download missing box art for all games in the "
          "library\n"
@@ -2435,6 +2437,7 @@ int main() {
     const std::string playGameCubeCommand = "play-gamecube ";
     const std::string playGenesisCommand = "play-genesis ";
     const std::string playN64Command = "play-n64 ";
+    const std::string playVrCommand = "play-vr ";
     const bool isPlayCommand = input.rfind(playCommand, 0) == 0 &&
                                input.rfind(playSnesCommand, 0) != 0 &&
                                input.rfind(playGbCommand, 0) != 0 &&
@@ -2462,6 +2465,17 @@ int main() {
     const bool isPlayGameCubeCommand = input.rfind(playGameCubeCommand, 0) == 0;
     const bool isPlayGenesisCommand = input.rfind(playGenesisCommand, 0) == 0;
     const bool isPlayN64Command = input.rfind(playN64Command, 0) == 0;
+    const bool isPlayVrCommand = input.rfind(playVrCommand, 0) == 0;
+
+    if (isPlayVrCommand) {
+      const std::string appId = trim(input.substr(playVrCommand.size()));
+      if (appId.empty()) {
+        std::cout << "A Steam AppID is required (e.g. play-vr 250820).\n";
+        continue;
+      }
+      SteamVRConsoleLauncher().launch(appId);
+      continue;
+    }
 
     if (isPlayCommand) {
       std::string romPath = trim(input.substr(playCommand.size()));

@@ -1,16 +1,11 @@
-#include "top.hpp"
+#pragma once
+#include "ConsoleLaunchers.hpp"
 
-class SteamVR {
+// Launches a Steam title in VR. contentPath is the numeric Steam AppID.
+// Starts the ALVR streamer (so a standalone headset can connect) and then asks
+// Steam to run the game. SteamVR itself starts automatically when a VR title
+// is launched through Steam.
+class SteamVRConsoleLauncher final : public ConsoleLauncher {
 public:
-    void LaunchVR(int steamAppId)
-    {
-        std::system("flatpak run org.alvr.ALVR &");
-
-        std::string steamCmd =
-            "steam steam://rungameid/" +
-            std::to_string(steamAppId) +
-            " &";
-
-        std::system(steamCmd.c_str());
-    }
+  bool launch(const std::string &contentPath) const override;
 };
