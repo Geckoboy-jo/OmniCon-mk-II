@@ -1,0 +1,92 @@
+{
+  "version": "1.5",
+  "default_core_path": "",
+  "default_core_name": "",
+  "label_display_mode": 0,
+  "right_thumbnail_mode": 0,
+  "left_thumbnail_mode": 0,
+  "thumbnail_match_mode": 0,
+  "sort_mode": 2,
+  "items": [
+    {
+      "path": "/mnt/c/Users/midge/Documents/GitHub/OmniCon-mk-II/Roms/wii/Punch-Out_21_20_5BR7PE01_5D.wbfs",
+      "label": "",
+      "core_path": "/mnt/c/Users/midge/Documents/GitHub/OmniCon-mk-II/third_party/libretro/dolphin_libretro.so",
+      "core_name": "dolphin-emu",
+      "crc32": "",
+      "db_name": ""
+    },
+    {
+      "path": "/mnt/c/Users/midge/Documents/GitHub/OmniCon-mk-II/Roms/virtualboy/Golf (U) [!].vb",
+      "label": "",
+      "core_path": "/mnt/c/Users/midge/Documents/GitHub/OmniCon-mk-II/third_party/libretro/mednafen_vb_libretro.so",
+      "core_name": "Beetle VB",
+      "crc32": "",
+      "db_name": ""
+    },
+    {
+      "path": "/mnt/c/Users/midge/Documents/GitHub/OmniCon-mk-II/Roms/saturn/2do Aru Koto wa Sando R (Japan) (Track 1).bin",
+      "label": "",
+      "core_path": "/mnt/c/Users/midge/Documents/GitHub/OmniCon-mk-II/third_party/libretro/mednafen_saturn_libretro.so",
+      "core_name": "Beetle Saturn",
+      "crc32": "",
+      "db_name": ""
+    },
+    {
+      "path": "/mnt/c/Users/midge/Documents/GitHub/OmniCon-mk-II/Roms/pokemonmini/Pichu Bros. Mini - Hoppip's Jump Match (Japan) (Preview).min",
+      "label": "",
+      "core_path": "/mnt/c/Users/midge/Documents/GitHub/OmniCon-mk-II/third_party/libretro/pokemini_libretro.so",
+      "core_name": "PokeMini",
+      "crc32": "",
+      "db_name": ""
+    },
+    {
+      "path": "/mnt/c/Users/midge/Documents/GitHub/OmniCon-mk-II/Roms/gameandwatch/Armor_20Battle_20_28Mattel_20Electronics_29.mgw",
+      "label": "",
+      "core_path": "/mnt/c/Users/midge/Documents/GitHub/OmniCon-mk-II/third_party/libretro/gw_libretro.so",
+      "core_name": "Game & Watch",
+      "crc32": "",
+      "db_name": ""
+    },
+    {
+      "path": "/mnt/c/Users/midge/Documents/GitHub/OmniCon-mk-II/Roms/saturn/Iron Storm (USA) (Track 1).bin",
+      "label": "",
+      "core_path": "/mnt/c/Users/midge/Documents/GitHub/OmniCon-mk-II/third_party/libretro/yabasanshiro_libretro.so",
+      "core_name": "YabaSanshiro",
+      "crc32": "",
+      "db_name": ""
+    },
+    {
+      "path": "/mnt/c/Users/midge/Documents/GitHub/OmniCon-mk-II/Roms/saturn/Area 51 (Europe) (En,Fr,De,Es) (Track 1).bin",
+      "label": "",
+      "core_path": "/mnt/c/Users/midge/Documents/GitHub/OmniCon-mk-II/third_party/libretro/mednafen_saturn_libretro.so",
+      "core_name": "Beetle Saturn",
+      "crc32": "",
+      "db_name": ""
+    },
+    {
+      "path": "/mnt/c/Users/midge/Documents/GitHub/OmniCon-mk-II/Roms/mastersystem/Double Dragon (World).sms",
+      "label": "",
+      "core_path": "/mnt/c/Users/midge/Documents/GitHub/OmniCon-mk-II/third_party/libretro/genesis_plus_gx_libretro.so",
+      "core_name": "Genesis Plus GX",
+      "crc32": "",
+      "db_name": ""
+    },
+    {
+      "path": "/mnt/c/Users/midge/Documents/GitHub/OmniCon-mk-II/Roms/wii/Kirby_27s_20Return_20to_20Dreamland_20_5BSUKE01_5D.wbfs",
+      "label": "",
+      "core_path": "/mnt/c/Users/midge/Documents/GitHub/OmniCon-mk-II/third_party/libretro/dolphin_libretro.so",
+      "core_name": "dolphin-emu",
+      "crc32": "",
+      "db_name": ""
+    },
+    {
+      "path": "/mnt/c/Users/midge/Documents/GitHub/OmniCon-mk-II/Roms/dreamcast/Soulcalibur_20_28Europe_29_20_28En_2CFr_2CDe_2CEs_29.chd",
+      "label": "",
+      "core_path": "/mnt/c/Users/midge/Documents/GitHub/OmniCon-mk-II/third_party/libretro/flycast_libretro.so",
+      "core_name": "Flycast",
+      "crc32": "",
+      "db_name": ""
+    }
+  ]
+}

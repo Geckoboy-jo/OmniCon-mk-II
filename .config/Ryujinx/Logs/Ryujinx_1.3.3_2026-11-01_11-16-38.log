@@ -1,0 +1,231 @@
+00:00:00.273 |I| Configuration LogValueChange: ResScale set to: 1
+00:00:00.287 |I| Configuration LogValueChange: ResScaleCustom set to: 1
+00:00:00.287 |I| Configuration LogValueChange: MaxAnisotropy set to: -1
+00:00:00.288 |I| Configuration LogValueChange: AspectRatio set to: Fixed16x9
+00:00:00.289 |I| Configuration LogValueChange: PreferredGpu set to: 
+00:00:00.290 |I| Configuration LogValueChange: ScalingFilterLevel set to: 80
+00:00:00.290 |I| Configuration LogValueChange: CustomVSyncInterval set to: 120
+00:00:00.290 |I| Configuration LogValueChange: EnableShaderCache set to: True
+00:00:00.290 |I| Configuration LogValueChange: EnableMacroHLE set to: True
+00:00:00.291 |I| Configuration LogValueChange: Language set to: AmericanEnglish
+00:00:00.292 |I| Configuration LogValueChange: Region set to: USA
+00:00:00.292 |I| Configuration LogValueChange: TimeZone set to: UTC
+00:00:00.293 |I| Configuration LogValueChange: EnableDockedMode set to: True
+00:00:00.293 |I| Configuration LogValueChange: EnablePtc set to: True
+00:00:00.294 |I| Configuration LogValueChange: EnableFsIntegrityChecks set to: True
+00:00:00.295 |I| Configuration LogValueChange: AudioBackend set to: SDL2
+00:00:00.295 |I| Configuration LogValueChange: AudioVolume set to: 1
+00:00:00.296 |I| Configuration LogValueChange: MemoryManagerMode set to: HostMappedUnsafe
+00:00:00.296 |I| Configuration LogValueChange: UseHypervisor set to: True
+00:00:00.298 |I| Configuration LogValueChange: LdnPassphrase set to: 
+00:00:00.298 |I| Configuration LogValueChange: LdnServer set to: 
+00:00:00.299 |I| Configuration LogValueChange: GdbStubPort set to: 55555
+00:00:00.305 |N| Application PrintSystemInfo:    ___                 __    _              
+00:00:00.305 |N| Application PrintSystemInfo:   / _ \  __ __ __ __  / /   (_)  ___   ___ _
+00:00:00.305 |N| Application PrintSystemInfo:  / , _/ / // // // / / _ \ / /  / _ \ / _ `/
+00:00:00.305 |N| Application PrintSystemInfo: /_/|_|  \_, / \_,_/ /_.__//_/  /_//_/ \_, / 
+00:00:00.305 |N| Application PrintSystemInfo:        /___/                         /___/  
+00:00:00.305 |N| Application PrintSystemInfo: Ryujinx Version: 1.3.3
+00:00:00.305 |N| Application PrintSystemInfo: .NET Runtime: .NET 9.0.9
+00:00:00.318 |N| Application PrintSystemInfo: Operating System: Ubuntu 22.04.3 LTS (X64)
+00:00:00.318 |N| Application PrintSystemInfo: CPU: 13th Gen Intel(R) Core(TM) i7-13700F ; 24 logical
+00:00:00.322 |N| Application PrintSystemInfo: RAM: Total 15.5 GiB ; Available 14.3 GiB
+00:00:00.325 |N| Application PrintSystemInfo: Logs Enabled: Info, Warning, Error, Guest, Stub
+00:00:00.326 |N| Application PrintSystemInfo: Launch Mode: UserProfile
+00:00:00.080 |I| Gpu : Backend Threading (Auto): True
+00:00:00.288 |N| Application LoadGuestApplication: Using Firmware Version: 21.1.0
+00:00:00.293 |N| Application LoadGuestApplication: Loading content archive from '/mnt/c/Users/midge/Documents/GitHub/OmniCon-mk-II/Roms/switch/Kirby_20and_20the_20Forgotten_20Land.nsp'.
+00:00:00.294 |I| Application LoadGuestApplication: Loading as NSP.
+00:00:00.321 |I| ModLoader QueryContentsDir: Searching mods for Application 01004D300C5AE000 in "/[redacted]/.config/Ryujinx/mods/contents"
+00:00:00.322 |I| ModLoader QueryContentsDir: Searching mods for Application 01004D300C5AE000 in "/[redacted]/.config/Ryujinx/sdcard/atmosphere/contents"
+00:00:00.328 |I| Loader Load: Loading rtld...
+00:00:00.340 |I| Loader PrintRoSectionInfo: rtld:
+    Module: nnrtld
+00:00:00.341 |I| Loader Load: Loading main...
+00:00:00.502 |I| Loader PrintRoSectionInfo: main:
+    Module: Q:\bln15\dev\program\output\build\nx64\final_glb_prod\src\.exe\Balloon15.nss
+    SDK Libraries: SDK MW+NVIDIA+PhysX-3_4_1-release
+                   SDK MW+NINTENDO+nlib_LZ4-19_0910
+                   SDK MW+Nintendo+NEX_DS-4_6_5
+                   SDK MW+Nintendo+NEX-4_6_5-
+                   SDK MW+Nintendo+NEX_UT-4_6_5
+                   SDK MW+Nintendo+NEX_R2-4_6_5
+                   SDK MW+Nintendo+NintendoSDK_libcurl-11_4_0-Release
+                   SDK MW+Nintendo+NintendoSDK_libz-11_4_0-Release
+                   SDK MW+Nintendo+NintendoWare_Fxt-1_55_0-Release
+                   SDK MW+Nintendo+NintendoWare_Atk2-For-11_4_0-Release
+                   SDK MW+Nintendo+NintendoWare_Vfx2-11_4_0-Release
+                   SDK MW+Nintendo+NintendoWare_Font-11_4_0-Release
+                   SDK MW+Nintendo+NintendoWare_Ui2d-11_4_0-Release
+                   SDK MW+Nintendo+NintendoWare_G3d-11_4_0-Release
+                   SDK MW+Nintendo+NintendoSDK_gfx-11_4_0-Release
+00:00:00.503 |I| Loader Load: Loading subsdk0...
+00:00:00.591 |I| Loader PrintRoSectionInfo: subsdk0:
+    Module: multimedia
+    SDK Libraries: SDK MW+Nintendo+NintendoSDK_movie-11_4_0-Release
+00:00:00.592 |I| Loader Load: Loading sdk...
+00:00:00.740 |I| Loader PrintRoSectionInfo: sdk:
+    Module: nnSdk
+    FS SDK Version: 11.4.0
+    SDK Libraries: SDK MW+Nintendo+NintendoSDK_libz-11_4_0-Release
+                   SDK MW+Nintendo+NintendoSdk_nnSdk-11_4_0-Release
+                   SDK MW+Nintendo+NintendoSDK_NVN-11_4_0-Release
+00:00:00.938 |I| Ptc Initialize: Initializing Profiled Persistent Translation Cache (enabled: True).
+00:00:00.939 |I| Ptc Initialize: PPTC (v7009) Profile: 1.0.0-default
+00:00:01.108 |I| Ptc Load: Loaded Translation Cache (size: 12396766 bytes, translated functions: 8781).
+00:00:01.115 |I| Ptc Load: Loaded Profiling Info (size: 38398 bytes, profiled functions: 8781).
+00:00:01.117 |I| Application ParseCapability: Application requested cores with index range 0 to 2
+00:00:01.118 |I| Loader LoadNsos: Loading image 0 at 0x0000000008500000...
+00:00:01.120 |I| Loader LoadNsos: Loading image 1 at 0x0000000008504000...
+00:00:01.125 |I| Loader LoadNsos: Loading image 2 at 0x0000000008f78000...
+00:00:01.129 |I| Loader LoadNsos: Loading image 3 at 0x000000000961e000...
+00:00:01.138 |I| ModLoader LoadCheats: Build ids found for application 01004D300C5AE000:
+    6F8B1226CC8CD958021D6BFD226EBF23F892AB9B000000000000000000000000
+    D9BA7DB72FFAFECD07F5F5535DEC05734E59BCE1000000000000000000000000
+    535249A546887CAC875A099E9C8EF367077CF58B000000000000000000000000
+    B39ADD63421BE525D352E576DAB438D3812EFDF0000000000000000000000000
+00:00:01.143 |I| Application EnsureSaveData: Ensuring required savedata exists.
+00:00:01.175 |I| Loader Start: Application Loaded: Kirby and the Forgotten Land v1.0.0 [01004d300c5ae000] [64-bit]
+00:00:01.213 |I| Application QueryLatestAsync: Checking for updates from: https://update.ryujinx.app/latest/query?os=linux&arch=amd64&rc=stable
+00:00:01.381 |I| GUI.WindowThread Hid Configure: Configured Controller ProController to Player1
+00:00:01.391 |I| GUI.WindowThread Hid SetupNpad: Connected Controller ProController to Player1
+00:00:01.670 |N| GUI.RenderThread Gpu PrintGpuInformation: Mesallvmpipe (LLVM 15.0.7, 256 bits) (Vulkan v1.3.255, Driver v0.0.1)
+00:00:01.673 |N| GUI.RenderThread Gpu PrintGpuInformation: GPU Memory: 15908 MiB
+00:00:01.683 |I| GPU.MainThread Gpu LoadShaders: Loading 27 shaders from the cache...
+00:00:01.979 |I| GPU.MainThread Gpu LoadShaders: Shader cache loaded.
+00:00:02.128 |I| Application CheckVersionAsync: Up to date.
+00:00:02.434 |I| HLE.GuestThread.46 Ptc LoadTranslations: 8781 translated functions loaded
+00:00:02.548 |S| HLE.OsThread.47 ServiceAm GetAppletResourceUserId: Stubbed. {appletResourceUserId: 1}
+00:00:02.557 |S| HLE.OsThread.47 ServiceAm AcquireForegroundRights: Stubbed. 
+00:00:02.558 |S| HLE.OsThread.47 ServiceAm SetFocusHandlingMode: Stubbed. {unknownFlag1: False ; unknownFlag2: False ; unknownFlag3: True}
+00:00:02.558 |S| HLE.OsThread.47 ServiceAm SetOutOfFocusSuspendingEnabled: Stubbed. {outOfFocusSuspendingEnabled: False}
+00:00:02.569 |S| HLE.OsThread.47 ServicePctl Initialize: Stubbed. 
+00:00:04.592 |S| HLE.OsThread.47 ServiceAm SetPerformanceModeChangedNotification: Stubbed. {performanceModeChangedNotification: True}
+00:00:04.593 |S| HLE.OsThread.47 ServiceAm LockExit: Stubbed. 
+00:00:04.593 |S| HLE.OsThread.47 ServiceAm SetRestartMessageEnabled: Stubbed. {restartMessageEnabled: True}
+00:00:04.594 |S| HLE.OsThread.47 ServiceAm SetFocusHandlingMode: Stubbed. {unknownFlag1: True ; unknownFlag2: False ; unknownFlag3: True}
+00:00:04.594 |S| HLE.OsThread.47 ServiceAm SetOutOfFocusSuspendingEnabled: Stubbed. {outOfFocusSuspendingEnabled: False}
+00:00:04.639 |W| HLE.GuestThread.46 KernelSvc : MapSharedMemory() = InvalidMemoryRegion
+00:00:04.642 |S| HLE.OsThread.3 ServiceHid ActiveNpadImpl: Stubbed. {appletResourceUserId: 1 ; revision: 3}
+00:00:04.643 |S| HLE.OsThread.3 ServiceHid SetSupportedNpadStyleSet: Stubbed. {pid: 127 ; appletResourceUserId: 1 ; type: ProController, Handheld, JoyconPair, JoyconLeft, JoyconRight}
+00:00:04.649 |S| HLE.OsThread.3 ServiceHid SetSupportedNpadIdType: Stubbed. 5 Players: Player1,Player2,Player3,Player4,Handheld
+00:00:04.649 |S| HLE.OsThread.3 ServiceHid StartSixAxisSensor: Stubbed. {appletResourceUserId: 1 ; sixAxisSensorHandle: 131075}
+00:00:04.650 |S| HLE.OsThread.3 ServiceHid StartSixAxisSensor: Stubbed. {appletResourceUserId: 1 ; sixAxisSensorHandle: 131076}
+00:00:04.650 |S| HLE.OsThread.3 ServiceHid StartSixAxisSensor: Stubbed. {appletResourceUserId: 1 ; sixAxisSensorHandle: 5}
+00:00:04.651 |S| HLE.OsThread.3 ServiceHid StartSixAxisSensor: Stubbed. {appletResourceUserId: 1 ; sixAxisSensorHandle: 65541}
+00:00:04.653 |S| HLE.OsThread.3 ServiceHid StartSixAxisSensor: Stubbed. {appletResourceUserId: 1 ; sixAxisSensorHandle: 6}
+00:00:04.653 |S| HLE.OsThread.3 ServiceHid StartSixAxisSensor: Stubbed. {appletResourceUserId: 1 ; sixAxisSensorHandle: 65543}
+00:00:04.653 |S| HLE.OsThread.3 ServiceHid StartSixAxisSensor: Stubbed. {appletResourceUserId: 1 ; sixAxisSensorHandle: 131331}
+00:00:04.653 |S| HLE.OsThread.3 ServiceHid StartSixAxisSensor: Stubbed. {appletResourceUserId: 1 ; sixAxisSensorHandle: 131332}
+00:00:04.653 |S| HLE.OsThread.3 ServiceHid StartSixAxisSensor: Stubbed. {appletResourceUserId: 1 ; sixAxisSensorHandle: 261}
+00:00:04.653 |S| HLE.OsThread.3 ServiceHid StartSixAxisSensor: Stubbed. {appletResourceUserId: 1 ; sixAxisSensorHandle: 65797}
+00:00:04.654 |S| HLE.OsThread.3 ServiceHid StartSixAxisSensor: Stubbed. {appletResourceUserId: 1 ; sixAxisSensorHandle: 262}
+00:00:04.654 |S| HLE.OsThread.3 ServiceHid StartSixAxisSensor: Stubbed. {appletResourceUserId: 1 ; sixAxisSensorHandle: 65799}
+00:00:04.654 |S| HLE.OsThread.3 ServiceHid StartSixAxisSensor: Stubbed. {appletResourceUserId: 1 ; sixAxisSensorHandle: 131587}
+00:00:04.654 |S| HLE.OsThread.3 ServiceHid StartSixAxisSensor: Stubbed. {appletResourceUserId: 1 ; sixAxisSensorHandle: 131588}
+00:00:04.654 |S| HLE.OsThread.3 ServiceHid StartSixAxisSensor: Stubbed. {appletResourceUserId: 1 ; sixAxisSensorHandle: 517}
+00:00:04.654 |S| HLE.OsThread.3 ServiceHid StartSixAxisSensor: Stubbed. {appletResourceUserId: 1 ; sixAxisSensorHandle: 66053}
+00:00:04.655 |S| HLE.OsThread.3 ServiceHid StartSixAxisSensor: Stubbed. {appletResourceUserId: 1 ; sixAxisSensorHandle: 518}
+00:00:04.655 |S| HLE.OsThread.3 ServiceHid StartSixAxisSensor: Stubbed. {appletResourceUserId: 1 ; sixAxisSensorHandle: 66055}
+00:00:04.655 |S| HLE.OsThread.3 ServiceHid StartSixAxisSensor: Stubbed. {appletResourceUserId: 1 ; sixAxisSensorHandle: 131843}
+00:00:04.655 |S| HLE.OsThread.3 ServiceHid StartSixAxisSensor: Stubbed. {appletResourceUserId: 1 ; sixAxisSensorHandle: 131844}
+00:00:04.655 |S| HLE.OsThread.3 ServiceHid StartSixAxisSensor: Stubbed. {appletResourceUserId: 1 ; sixAxisSensorHandle: 773}
+00:00:04.655 |S| HLE.OsThread.3 ServiceHid StartSixAxisSensor: Stubbed. {appletResourceUserId: 1 ; sixAxisSensorHandle: 66309}
+00:00:04.656 |S| HLE.OsThread.3 ServiceHid StartSixAxisSensor: Stubbed. {appletResourceUserId: 1 ; sixAxisSensorHandle: 774}
+00:00:04.656 |S| HLE.OsThread.3 ServiceHid StartSixAxisSensor: Stubbed. {appletResourceUserId: 1 ; sixAxisSensorHandle: 66311}
+00:00:04.656 |S| HLE.OsThread.3 ServiceHid StartSixAxisSensor: Stubbed. {appletResourceUserId: 1 ; sixAxisSensorHandle: 139267}
+00:00:04.656 |S| HLE.OsThread.3 ServiceHid StartSixAxisSensor: Stubbed. {appletResourceUserId: 1 ; sixAxisSensorHandle: 139268}
+00:00:04.656 |S| HLE.OsThread.3 ServiceHid StartSixAxisSensor: Stubbed. {appletResourceUserId: 1 ; sixAxisSensorHandle: 8197}
+00:00:04.656 |S| HLE.OsThread.3 ServiceHid StartSixAxisSensor: Stubbed. {appletResourceUserId: 1 ; sixAxisSensorHandle: 73733}
+00:00:04.657 |S| HLE.OsThread.3 ServiceHid StartSixAxisSensor: Stubbed. {appletResourceUserId: 1 ; sixAxisSensorHandle: 8198}
+00:00:04.657 |S| HLE.OsThread.3 ServiceHid StartSixAxisSensor: Stubbed. {appletResourceUserId: 1 ; sixAxisSensorHandle: 73735}
+00:00:04.658 |S| HLE.OsThread.3 ServiceHid ActivateTouchScreen: Stubbed. {appletResourceUserId: 1}
+00:00:04.660 |S| HLE.OsThread.3 ServiceHid StartSixAxisSensor: Stubbed. {appletResourceUserId: 1 ; sixAxisSensorHandle: 131075}
+00:00:04.660 |S| HLE.OsThread.3 ServiceHid StartSixAxisSensor: Stubbed. {appletResourceUserId: 1 ; sixAxisSensorHandle: 131076}
+00:00:04.661 |S| HLE.OsThread.3 ServiceHid StartSixAxisSensor: Stubbed. {appletResourceUserId: 1 ; sixAxisSensorHandle: 5}
+00:00:04.661 |S| HLE.OsThread.3 ServiceHid StartSixAxisSensor: Stubbed. {appletResourceUserId: 1 ; sixAxisSensorHandle: 65541}
+00:00:04.661 |S| HLE.OsThread.3 ServiceHid StartSixAxisSensor: Stubbed. {appletResourceUserId: 1 ; sixAxisSensorHandle: 6}
+00:00:04.661 |S| HLE.OsThread.3 ServiceHid StartSixAxisSensor: Stubbed. {appletResourceUserId: 1 ; sixAxisSensorHandle: 65543}
+00:00:04.662 |S| HLE.OsThread.3 ServiceHid StartSixAxisSensor: Stubbed. {appletResourceUserId: 1 ; sixAxisSensorHandle: 139267}
+00:00:04.662 |S| HLE.OsThread.3 ServiceHid StartSixAxisSensor: Stubbed. {appletResourceUserId: 1 ; sixAxisSensorHandle: 139268}
+00:00:04.662 |S| HLE.OsThread.3 ServiceHid StartSixAxisSensor: Stubbed. {appletResourceUserId: 1 ; sixAxisSensorHandle: 8197}
+00:00:04.662 |S| HLE.OsThread.3 ServiceHid StartSixAxisSensor: Stubbed. {appletResourceUserId: 1 ; sixAxisSensorHandle: 73733}
+00:00:04.662 |S| HLE.OsThread.3 ServiceHid StartSixAxisSensor: Stubbed. {appletResourceUserId: 1 ; sixAxisSensorHandle: 8198}
+00:00:04.663 |S| HLE.OsThread.3 ServiceHid StartSixAxisSensor: Stubbed. {appletResourceUserId: 1 ; sixAxisSensorHandle: 73735}
+00:00:04.663 |S| HLE.OsThread.3 ServiceHid StartSixAxisSensor: Stubbed. {appletResourceUserId: 1 ; sixAxisSensorHandle: 131331}
+00:00:04.663 |S| HLE.OsThread.3 ServiceHid StartSixAxisSensor: Stubbed. {appletResourceUserId: 1 ; sixAxisSensorHandle: 131332}
+00:00:04.663 |S| HLE.OsThread.3 ServiceHid StartSixAxisSensor: Stubbed. {appletResourceUserId: 1 ; sixAxisSensorHandle: 261}
+00:00:04.663 |S| HLE.OsThread.3 ServiceHid StartSixAxisSensor: Stubbed. {appletResourceUserId: 1 ; sixAxisSensorHandle: 65797}
+00:00:04.663 |S| HLE.OsThread.3 ServiceHid StartSixAxisSensor: Stubbed. {appletResourceUserId: 1 ; sixAxisSensorHandle: 262}
+00:00:04.663 |S| HLE.OsThread.3 ServiceHid StartSixAxisSensor: Stubbed. {appletResourceUserId: 1 ; sixAxisSensorHandle: 65799}
+00:00:04.664 |S| HLE.OsThread.3 ServiceHid StartSixAxisSensor: Stubbed. {appletResourceUserId: 1 ; sixAxisSensorHandle: 131587}
+00:00:04.664 |S| HLE.OsThread.3 ServiceHid StartSixAxisSensor: Stubbed. {appletResourceUserId: 1 ; sixAxisSensorHandle: 131588}
+00:00:04.664 |S| HLE.OsThread.3 ServiceHid StartSixAxisSensor: Stubbed. {appletResourceUserId: 1 ; sixAxisSensorHandle: 517}
+00:00:04.664 |S| HLE.OsThread.3 ServiceHid StartSixAxisSensor: Stubbed. {appletResourceUserId: 1 ; sixAxisSensorHandle: 66053}
+00:00:04.664 |S| HLE.OsThread.3 ServiceHid StartSixAxisSensor: Stubbed. {appletResourceUserId: 1 ; sixAxisSensorHandle: 518}
+00:00:04.664 |S| HLE.OsThread.3 ServiceHid StartSixAxisSensor: Stubbed. {appletResourceUserId: 1 ; sixAxisSensorHandle: 66055}
+00:00:04.664 |S| HLE.OsThread.3 ServiceHid StartSixAxisSensor: Stubbed. {appletResourceUserId: 1 ; sixAxisSensorHandle: 131843}
+00:00:04.665 |S| HLE.OsThread.3 ServiceHid StartSixAxisSensor: Stubbed. {appletResourceUserId: 1 ; sixAxisSensorHandle: 131844}
+00:00:04.665 |S| HLE.OsThread.3 ServiceHid StartSixAxisSensor: Stubbed. {appletResourceUserId: 1 ; sixAxisSensorHandle: 773}
+00:00:04.665 |S| HLE.OsThread.3 ServiceHid StartSixAxisSensor: Stubbed. {appletResourceUserId: 1 ; sixAxisSensorHandle: 66309}
+00:00:04.665 |S| HLE.OsThread.3 ServiceHid StartSixAxisSensor: Stubbed. {appletResourceUserId: 1 ; sixAxisSensorHandle: 774}
+00:00:04.665 |S| HLE.OsThread.3 ServiceHid StartSixAxisSensor: Stubbed. {appletResourceUserId: 1 ; sixAxisSensorHandle: 66311}
+00:00:04.676 |I| HLE.OsThread.11 AudioRenderer AcquireSessionId: Registered new renderer (0)
+00:00:04.679 |I| HLE.OsThread.11 AudioRenderer Initialize: Initializing with REV8
+00:00:04.693 |I| AudioProcessor.Worker AudioRenderer Work: Starting audio processor
+00:00:04.694 |I| AudioRendererManager.Worker AudioRenderer SendCommands: Starting audio renderer
+00:00:04.720 |I| HLE.OsThread.11 AudioRenderer Start: Starting renderer id 0
+00:00:04.735 |I| AudioProcessor.Worker Audio EnsureAudioStreamSetup: New audio stream setup with a target sample count of 240
+00:00:04.751 |S| HLE.OsThread.4 ServiceNv FinishInitialize: Stubbed. 
+00:00:04.761 |I| HLE.OsThread.47 SurfaceFlinger CreateLayerFromId: Creating layer 1
+00:00:04.763 |I| HLE.OsThread.47 SurfaceFlinger CreateLayerFromId: Creating layer 2
+00:00:04.786 |S| HLE.OsThread.4 ServiceNv InitializeEx: Stubbed. 
+00:00:04.810 |S| HLE.OsThread.4 ServiceNv GetActiveSlotMask: Stubbed. 
+00:00:05.119 |S| HLE.OsThread.4 ServiceNv SetNvMapFd: Stubbed. 
+00:00:05.119 |S| HLE.OsThread.4 ServiceNv AllocGpfifoEx2: Stubbed. 
+00:00:05.120 |S| HLE.OsThread.4 ServiceNv AllocObjCtx: Stubbed. 
+00:00:05.121 |S| HLE.OsThread.4 ServiceNv SetErrorNotifier: Stubbed. 
+00:00:05.121 |S| HLE.OsThread.4 ServiceNv SetUserData: Stubbed. 
+00:00:05.122 |S| HLE.OsThread.4 ServiceNv SetTimeout: Stubbed. 
+00:00:05.122 |S| HLE.OsThread.4 ServiceNv SetTimeslice: Stubbed. 
+00:00:05.125 |S| HLE.OsThread.4 ServiceNv ZcullBind: Stubbed. 
+00:00:05.319 |S| HLE.OsThread.47 ServiceAcc InitializeApplicationInfo: Stubbed. {TitleId: 72142462798979072}
+00:00:05.322 |S| HLE.OsThread.47 ServiceAcc IsUserAccountSwitchLocked: Stubbed. 
+00:00:06.472 |S| HLE.OsThread.1 ServiceBsd RegisterClient: Stubbed. 
+00:00:06.472 |S| HLE.OsThread.1 ServiceBsd StartMonitoring: Stubbed. {unknown0: 0}
+00:00:06.478 |S| HLE.OsThread.47 ServiceSsl SetInterfaceVersion: Stubbed. {interfaceVersion: 3}
+00:00:06.483 |S| HLE.OsThread.3 ServiceHid GetSupportedNpadStyleSet: Stubbed. {appletResourceUserId: 1 ; SupportedStyleSets: ProController, Handheld, JoyconPair, JoyconLeft, JoyconRight}
+00:00:06.979 |I| HLE.OsThread.22 ServicePrepo ProcessPlayReport: 
+PlayReport log:
+ Kind: Normal
+ Pid: 127
+ ApplicationVersion: 0
+ UserId: 00000000000000010000000000000000
+ Room: app_boot 
+ Report: {
+    "ApplicationVersion": 1000000,
+    "Language": "UsEnglish"
+}
+
+00:01:47.687 |W| HLE.GuestThread.46 KernelSvc : WaitSynchronization(handleIndex: 0xFFFFFFFF) = TerminationRequested
+00:01:47.687 |W| HLE.GuestThread.49 KernelSvc : WaitProcessWideKeyAtomic() = TerminationRequested
+00:01:47.687 |W| HLE.GuestThread.48 KernelSvc : WaitSynchronization(handleIndex: 0xFFFFFFFF) = TerminationRequested
+00:01:47.687 |W| HLE.GuestThread.52 KernelSvc : WaitProcessWideKeyAtomic() = TerminationRequested
+00:01:47.687 |W| HLE.GuestThread.50 KernelSvc : WaitProcessWideKeyAtomic() = TerminationRequested
+00:01:47.687 |W| HLE.GuestThread.58 KernelSvc : WaitProcessWideKeyAtomic() = TerminationRequested
+00:01:47.687 |W| HLE.GuestThread.51 KernelSvc : WaitSynchronization(handleIndex: 0xFFFFFFFF) = TerminationRequested
+00:01:47.688 |W| HLE.GuestThread.57 KernelSvc : WaitProcessWideKeyAtomic() = TerminationRequested
+00:01:47.688 |W| HLE.GuestThread.53 KernelSvc : WaitProcessWideKeyAtomic() = TerminationRequested
+00:01:47.688 |W| HLE.GuestThread.66 KernelSvc : WaitProcessWideKeyAtomic() = TerminationRequested
+00:01:47.688 |W| HLE.GuestThread.65 KernelSvc : WaitProcessWideKeyAtomic() = TerminationRequested
+00:01:47.688 |W| HLE.GuestThread.54 KernelSvc : WaitProcessWideKeyAtomic() = TerminationRequested
+00:01:47.688 |W| HLE.GuestThread.67 KernelSvc : WaitProcessWideKeyAtomic() = TerminationRequested
+00:01:47.688 |W| HLE.GuestThread.68 KernelSvc : WaitProcessWideKeyAtomic() = TerminationRequested
+00:01:47.688 |W| HLE.GuestThread.59 KernelSvc : WaitProcessWideKeyAtomic() = TerminationRequested
+00:01:47.693 |I| HLE.OsThread.11 AudioRenderer Stop: Stopping renderer id 0
+00:01:47.693 |I| HLE.OsThread.11 AudioRenderer Stop: Stopped renderer id 0
+00:01:47.694 |I| HLE.OsThread.11 AudioRenderer ReleaseSessionId: Unregistered renderer (0)
+00:01:47.697 |I| AudioProcessor.Worker AudioRenderer Work: Stopping audio processor
+00:01:47.714 |I| HLE.OsThread.11 AudioRenderer StopLocked: Stopped audio renderer
+00:01:47.747 |W| GUI.WindowThread ServiceNv Close: Closing channel
+00:01:48.001 |N| GUI.RenderThread Application ReloadConfig: Loading configuration from: /[redacted]/.config/Ryujinx/Config.json
