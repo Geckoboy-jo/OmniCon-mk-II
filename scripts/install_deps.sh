@@ -267,6 +267,8 @@ steamvr_installed() {
     return 1
 }
 
+
+
 # Steam comes from Valve's official .deb (needs i386 multiarch for the client).
 install_steam() {
     local deb
@@ -301,7 +303,13 @@ install_steamvr() {
         warn "Steam is unavailable; install SteamVR manually."
     fi
 }
-
+install_ALVR()
+{
+    flatpak install flathub org.alvr.ALVR
+    flatpak run org.alvr.ALVR
+    sudo apt install libopenxr-dev
+    sudo apt install monado-service
+}
 ensure_steam_deps() {
     if windows_steam_root >/dev/null; then
         log "Using Windows Steam at $(windows_steam_root)"
