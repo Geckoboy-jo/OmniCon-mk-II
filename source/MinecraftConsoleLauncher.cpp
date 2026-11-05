@@ -50,15 +50,14 @@ bool MinecraftConsoleLauncher::launch(const std::string &contentPath) const {
     // Prism Launcher can launch a specific instance directly with
     // `--launch <instance>`; the official launcher only opens its UI.
     if (hasCommand("prismlauncher")) {
-      started = openLauncher
-                    ? launchExternalApplication("prismlauncher", {})
-                    : launchExternalApplication("prismlauncher",
-                                                {"--launch", contentPath});
+      started = openLauncher ? launchExternalApplication("prismlauncher", {})
+                             : launchExternalApplication(
+                                   "prismlauncher", {"--launch", contentPath});
     } else if (hasCommand("minecraft-launcher")) {
       started = launchExternalApplication("minecraft-launcher", {});
     } else if (hasCommand("flatpak")) {
-      started = launchExternalApplication("flatpak",
-                                          {"run", "com.mojang.Minecraft"});
+      started =
+          launchExternalApplication("flatpak", {"run", "com.mojang.Minecraft"});
     } else if (hasCommand("prismlauncher")) {
       started = launchExternalApplication("prismlauncher", {});
     }

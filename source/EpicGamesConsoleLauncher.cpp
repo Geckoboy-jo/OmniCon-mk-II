@@ -26,7 +26,8 @@ bool hasCommand(const std::string &command) {
 bool EpicGamesConsoleLauncher::launch(const std::string &contentPath) const {
   // contentPath is the Epic app name (from the Legendary/Heroic scan), or
   // kEpicLauncherId to just open the launcher (the "+" tile).
-  const bool openLauncher = (contentPath.empty() || contentPath == kEpicLauncherId);
+  const bool openLauncher =
+      (contentPath.empty() || contentPath == kEpicLauncherId);
 
   // Allow an override (e.g. a specific Heroic/Lutris invocation).
   if (const char *env = std::getenv("OMNICON_EPIC_LAUNCHER"); env && *env) {
@@ -38,9 +39,10 @@ bool EpicGamesConsoleLauncher::launch(const std::string &contentPath) const {
   bool started = false;
   if (runningInWSL()) {
     // The launcher lives on Windows; open it (or the game) via its protocol.
-    const std::string uri = openLauncher
-                                ? "com.epicgames.launcher://"
-                                : "com.epicgames.launcher://apps/" + contentPath + "?action=launch&silent=true";
+    const std::string uri = openLauncher ? "com.epicgames.launcher://"
+                                         : "com.epicgames.launcher://apps/" +
+                                               contentPath +
+                                               "?action=launch&silent=true";
     started = launchExternalApplication("cmd.exe", {"/c", "start", "", uri});
   }
   if (!started) {
@@ -53,13 +55,12 @@ bool EpicGamesConsoleLauncher::launch(const std::string &contentPath) const {
                     : launchExternalApplication(
                           "heroic", {"heroic://launch/" + contentPath});
     } else if (hasCommand("flatpak")) {
-      started =
-          openLauncher
-              ? launchExternalApplication("flatpak",
-                                          {"run", "com.heroicgameslauncher.hgl"})
-              : launchExternalApplication(
-                    "flatpak", {"run", "com.heroicgameslauncher.hgl",
-                                "heroic://launch/" + contentPath});
+      started = openLauncher
+                    ? launchExternalApplication(
+                          "flatpak", {"run", "com.heroicgameslauncher.hgl"})
+                    : launchExternalApplication(
+                          "flatpak", {"run", "com.heroicgameslauncher.hgl",
+                                      "heroic://launch/" + contentPath});
     } else if (hasCommand("legendary") && !openLauncher) {
       started = launchExternalApplication("legendary", {"launch", contentPath});
     } else if (hasCommand("lutris")) {

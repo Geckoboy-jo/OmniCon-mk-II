@@ -1731,10 +1731,10 @@ int main() {
   // Auto-launch the game library shell on startup
   {
     GameLibrary lib;
-    lib.scan("Roms"); // local ROMs first
-    lib.scanSteam();  // installed Steam games
-    lib.scanMinecraft();  // Prism Launcher instances
-    lib.scanEpicGames();  // Legendary/Heroic installed Epic games
+    lib.scan("Roms");    // local ROMs first
+    lib.scanSteam();     // installed Steam games
+    lib.scanMinecraft(); // Prism Launcher instances
+    lib.scanEpicGames(); // Legendary/Heroic installed Epic games
     lib.scanSteamOwned(
         "~/.omnicon/steam.conf"); // all owned Steam games via Web API
     lib.scanXboxCloud(

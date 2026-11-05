@@ -1234,9 +1234,10 @@ void GameLibrary::scanEpicGames() {
   if (const char *home = getenv("HOME")) {
     candidates.push_back(fs::path(home) / ".config/legendary/installed.json");
     // Heroic's Flatpak bundles its own Legendary config.
-    candidates.push_back(fs::path(home) /
-                         ".var/app/com.heroicgameslauncher.hgl/config/legendary/"
-                         "installed.json");
+    candidates.push_back(
+        fs::path(home) /
+        ".var/app/com.heroicgameslauncher.hgl/config/legendary/"
+        "installed.json");
   }
 
   fs::path file;
@@ -1255,8 +1256,7 @@ void GameLibrary::scanEpicGames() {
 
   // Each entry looks like:  "<appName>": { ... "title": "<Title>" ... }
   // Match the key, then the title within the following object body.
-  std::regex entryRe(
-      R"re("([^"]+)"\s*:\s*\{[^{}]*?"title"\s*:\s*"([^"]+)")re");
+  std::regex entryRe(R"re("([^"]+)"\s*:\s*\{[^{}]*?"title"\s*:\s*"([^"]+)")re");
   int added = 0;
   for (auto it = std::sregex_iterator(json.begin(), json.end(), entryRe);
        it != std::sregex_iterator(); ++it) {
