@@ -1,5 +1,5 @@
 #include "SteamVR.hpp"
-  
+
 #include "ShellMessage.hpp"
 
 #include <algorithm>
@@ -27,8 +27,8 @@ bool hasCommand(const std::string &command) {
 // True if the ALVR flatpak is installed.
 bool alvrInstalled() {
   return hasCommand("flatpak") &&
-         std::system("flatpak list --app 2>/dev/null | grep -q org.alvr.ALVR") ==
-             0;
+         std::system(
+             "flatpak list --app 2>/dev/null | grep -q org.alvr.ALVR") == 0;
 }
 
 } // namespace
