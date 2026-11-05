@@ -20,12 +20,6 @@ if(CLANG_TIDY_EXE)
     )
 endif()
 
-add_executable(OmniCon
-    src/main.cpp
-    src/Game.cpp
-    src/Player.cpp
-)
-
 target_include_directories(OmniCon PRIVATE
     include
 )
