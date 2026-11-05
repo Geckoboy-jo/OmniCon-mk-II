@@ -31,6 +31,13 @@ jobs:
           cmake -B build \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+      - name: Install clang-format
+        run: sudo apt-get update && sudo apt-get install -y clang-format
+
+      - name: Format files
+        run: |
+          find . \( -name "*.cpp" -o -name "*.h" -o -name "*.hpp" \) \
+          -exec clang-format -i {} \;
       - name: Run Clang-Tidy
         run: |
           find . -name "*.cpp" \
