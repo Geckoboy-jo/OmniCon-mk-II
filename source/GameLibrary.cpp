@@ -255,6 +255,10 @@ SystemType GameLibrary::systemFromName(const std::string &name) {
     return SystemType::Dreamcast;
   if (name == "Steam")
     return SystemType::Steam;
+  if (name == "Minecraft" || name == "Minecraft Launcher")
+    return SystemType::Minecraft;
+  if (name == "Epic Games" || name == "Epic Games Launcher" || name == "Epic")
+    return SystemType::EpicGames;
   if (name == "Oculus Rift" || name == "Rift")
     return SystemType::OculusRift;
   if (name == "HTC Vive" || name == "Vive")
@@ -393,6 +397,10 @@ std::string GameLibrary::systemName(SystemType sys) {
     return "Dreamcast";
   case SystemType::Steam:
     return "Steam";
+  case SystemType::Minecraft:
+    return "Minecraft";
+  case SystemType::EpicGames:
+    return "Epic Games";
   case SystemType::OculusRift:
     return "Oculus Rift";
   case SystemType::HTCVive:
@@ -486,6 +494,10 @@ std::string GameLibrary::systemDirName(SystemType sys) {
     return "dreamcast";
   case SystemType::Steam:
     return "steam";
+  case SystemType::Minecraft:
+    return "minecraft";
+  case SystemType::EpicGames:
+    return "epicgames";
   case SystemType::SegaMasterSystem:
     return "mastersystem";
   case SystemType::GameGear:

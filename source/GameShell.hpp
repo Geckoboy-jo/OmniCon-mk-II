@@ -57,9 +57,9 @@ public:
   static void loadConsoleBindings();
 
   // Public so free functions in the .cpp can access them
-  static const SystemType kSystems[111];
-  static const char *const kSysAbbrev[111];
-  static constexpr int kNumSystems = 111;
+  static const SystemType kSystems[113];
+  static const char *const kSysAbbrev[113];
+  static constexpr int kNumSystems = 113;
 
 private:
   // SDL resources
@@ -147,6 +147,8 @@ private:
   XboxSignIn xboxSignIn_;
   GameEntry xboxAddEntry_;   // the "+" tile shown last in XONE / XSX
   GameEntry steamAddEntry_;  // the "+" tile shown last in Steam
+  GameEntry minecraftEntry_; // launcher tile shown in the Minecraft tab
+  GameEntry epicEntry_;      // launcher tile shown in the Epic Games tab
   bool xboxLoading_ = false; // library fetch in progress (UI thread)
 
   static bool xboxSignedIn();

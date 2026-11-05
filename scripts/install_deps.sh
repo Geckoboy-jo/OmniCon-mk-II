@@ -320,6 +320,41 @@ install_alvr() {
 
     log "ALVR installed."
 }
+
+# Minecraft Launcher (Java Edition). Native Linux build via the Flatpak; the
+# .deb from minecraft.net is an alternative but needs sudo and multiarch.
+install_minecraft() {
+    if have minecraft-launcher; then
+        return 0
+    fi
+    log "Installing the Minecraft Launcher..."
+    have flatpak || apt_install flatpak
+    flatpak remote-add --if-not-exists flathub \
+        https://flathub.org/repo/flathub.flatpakrepo
+    if ! flatpak list | grep -q "com.mojang.Minecraft"; then
+        flatpak install --noninteractive flathub com.mojang.Minecraft \
+            || warn "Failed to install the Minecraft Launcher."
+    fi
+    log "Minecraft Launcher installed."
+}
+
+# Epic Games Launcher has no native Linux build, so install Heroic Games
+# Launcher (open-source Epic/GOG front-end) as the way to run it.
+install_epic() {
+    if have heroic; then
+        return 0
+    fi
+    log "Installing Heroic Games Launcher (for Epic Games)..."
+    have flatpak || apt_install flatpak
+    flatpak remote-add --if-not-exists flathub \
+        https://flathub.org/repo/flathub.flatpakrepo
+    if ! flatpak list | grep -q "com.heroicgameslauncher.hgl"; then
+        flatpak install --noninteractive flathub com.heroicgameslauncher.hgl \
+            || warn "Failed to install Heroic Games Launcher."
+    fi
+    log "Heroic Games Launcher installed."
+}
+
 ensure_steam_deps() {
     if windows_steam_root >/dev/null; then
         log "Using Windows Steam at $(windows_steam_root)"
@@ -344,6 +379,10 @@ ensure_runtime_deps() {
     if ! have flatpak || ! flatpak list | grep -q "org.alvr.ALVR"; then
     install_alvr
     fi
+
+    # Game launchers with their own tabs in the shell.
+    install_minecraft
+    install_epic
 
     # AppImage emulators need FUSE 2; unzip/7z are used to unpack downloaded ROMs.
     apt_install libfuse2t64 || apt_install libfuse2 \

@@ -716,6 +716,8 @@ SystemFamily systemFamily(SystemType t) {
   case SystemType::XboxOne:
   case SystemType::XboxSeriesX:
   case SystemType::Steam:
+  case SystemType::Minecraft:
+  case SystemType::EpicGames:
   case SystemType::OculusRift:
   case SystemType::HTCVive:
   case SystemType::ValveIndex:

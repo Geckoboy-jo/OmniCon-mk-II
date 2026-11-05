@@ -5,11 +5,13 @@
 #include "Atari800.hpp"
 #include "ConsoleLaunchers.hpp"
 #include "DownloadManager.hpp"
+#include "EpicGames.hpp"
 #include "ExtraSystems.hpp"
 #include "GBA.hpp"
 #include "GameBoy.hpp"
 #include "GameBoyColor.hpp"
 #include "GameCube.hpp"
+#include "Minecraft.hpp"
 #include "N64.hpp"
 #include "NDS.hpp"
 #include "NES.hpp"
@@ -44,7 +46,7 @@ namespace fs = std::filesystem;
 // Grouped by SystemFamily in header tab order (Nintendo, Sega, Sony, Microsoft,
 // Atari, NEC, SNK, Arcade, Other) so shoulder-button cycling moves linearly
 // across the tabs. kSysAbbrev must stay in the same order.
-const SystemType GameShell::kSystems[111] = {
+const SystemType GameShell::kSystems[113] = {
     // Nintendo
     SystemType::NES,
     SystemType::SNES,
@@ -82,6 +84,8 @@ const SystemType GameShell::kSystems[111] = {
     // Microsoft
     SystemType::PC,
     SystemType::Steam,
+    SystemType::Minecraft,
+    SystemType::EpicGames,
     SystemType::Xbox,
     SystemType::Xbox360,
     SystemType::XboxOne,
@@ -172,7 +176,7 @@ static_assert(sizeof(GameShell::kSystems) / sizeof(GameShell::kSystems[0]) ==
                   GameShell::kNumSystems,
               "kSystems must list every filterable system");
 
-const char *const GameShell::kSysAbbrev[111] = {
+const char *const GameShell::kSysAbbrev[113] = {
     // Nintendo
     "NES", "SNES", "GB", "GBC", "GBA", "NDS", "3DS", "N64", "GCN", "WII",
     "WIIU", "SW", "VB", "PMIN", "FDS", "G&W", "BSX",
@@ -181,7 +185,7 @@ const char *const GameShell::kSysAbbrev[111] = {
     // Sony
     "PS1", "PS2", "PS3", "PSP", "VITA",
     // Microsoft
-    "PC", "STM", "XBOX", "360", "XONE", "XSX",
+    "PC", "STM", "MC", "EPIC", "XBOX", "360", "XONE", "XSX",
     // Atari
     "2600", "5200", "800", "7800", "LYNX", "JAG", "XEGS",
     // NEC
@@ -394,6 +398,10 @@ static SDL_Color sysBadgeColor(SystemType sys) {
     return {120, 60, 180, 255}; // Index purple
   case SystemType::Pico4:
     return {60, 90, 200, 255}; // Pico blue
+  case SystemType::Minecraft:
+    return {90, 160, 60, 255}; // Minecraft grass green
+  case SystemType::EpicGames:
+    return {40, 40, 45, 255}; // Epic dark grey
   default:
     if (const ExtraSystemInfo *info = findExtraSystem(sys))
       return {info->color[0], info->color[1], info->color[2], 255};
@@ -678,6 +686,23 @@ void GameShell::rebuildFilter() {
     steamAddEntry_.displayName = "Add more games";
     steamAddEntry_.system = SystemType::Steam;
     filteredGames_.push_back(&steamAddEntry_);
+  }
+  // Minecraft and Epic Games have no scannable library; show a single tile
+  // that opens the respective launcher.
+  if (currentFilter_ >= 0 && currentFilter_ < kNumSystems &&
+      searchQuery_.empty()) {
+    const SystemType sys = kSystems[currentFilter_];
+    if (sys == SystemType::Minecraft) {
+      minecraftEntry_.romPath = "";
+      minecraftEntry_.displayName = "Minecraft Launcher";
+      minecraftEntry_.system = SystemType::Minecraft;
+      filteredGames_.push_back(&minecraftEntry_);
+    } else if (sys == SystemType::EpicGames) {
+      epicEntry_.romPath = "";
+      epicEntry_.displayName = "Epic Games Launcher";
+      epicEntry_.system = SystemType::EpicGames;
+      filteredGames_.push_back(&epicEntry_);
+    }
   }
   selectedIdx_ = 0;
   scrollRow_ = 0;
@@ -1931,6 +1956,8 @@ void GameShell::run(GameLibrary &library, const std::string &coversDir) {
       // and the shell stays open.
       const bool launchesExternally =
           launchTarget.system == SystemType::Steam ||
+          launchTarget.system == SystemType::Minecraft ||
+          launchTarget.system == SystemType::EpicGames ||
           launchTarget.system == SystemType::XboxOne ||
           launchTarget.system == SystemType::XboxSeriesX;
       if (!launchesExternally && !launchTarget.downloadUrl.empty() &&
@@ -2567,6 +2594,12 @@ void GameShell::launchGame(const GameEntry &game) {
     // Parent returns immediately; Steam launches asynchronously
     break;
   }
+  case SystemType::Minecraft:
+    MinecraftConsoleLauncher().launch(path);
+    break;
+  case SystemType::EpicGames:
+    EpicGamesConsoleLauncher().launch(path);
+    break;
   default:
     if (!launchExtraSystem(sys, path))
       std::cerr << "[GameShell] Unknown system for ROM: " << path << "\n";
