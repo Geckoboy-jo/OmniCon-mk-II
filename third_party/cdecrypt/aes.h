@@ -30,9 +30,10 @@
 #define AES_ENCRYPT 1
 #define AES_DECRYPT 0
 
-#define ERR_AES_INVALID_KEY_LENGTH -0x0020   /**< Invalid key length. */
-#define ERR_AES_INVALID_INPUT_LENGTH -0x0022 /**< Invalid data input length.   \
-                                              */
+#define ERR_AES_INVALID_KEY_LENGTH -0x0020 /**< Invalid key length. */
+#define ERR_AES_INVALID_INPUT_LENGTH                                           \
+  -0x0022 /**< Invalid data input length.                                      \
+           */
 
 #ifdef __cplusplus
 extern "C" {
