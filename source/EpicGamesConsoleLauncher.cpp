@@ -24,7 +24,9 @@ bool hasCommand(const std::string &command) {
 } // namespace
 
 bool EpicGamesConsoleLauncher::launch(const std::string &contentPath) const {
-  (void)contentPath; // the launcher manages its own library
+  // contentPath is the Epic app name (from the Legendary/Heroic scan), or
+  // kEpicLauncherId to just open the launcher (the "+" tile).
+  const bool openLauncher = (contentPath.empty() || contentPath == kEpicLauncherId);
 
   // Allow an override (e.g. a specific Heroic/Lutris invocation).
   if (const char *env = std::getenv("OMNICON_EPIC_LAUNCHER"); env && *env) {
@@ -35,21 +37,35 @@ bool EpicGamesConsoleLauncher::launch(const std::string &contentPath) const {
 
   bool started = false;
   if (runningInWSL()) {
-    // The launcher lives on Windows; open it via its protocol handler.
-    started = launchExternalApplication(
-        "cmd.exe", {"/c", "start", "", "com.epicgames.launcher://"});
+    // The launcher lives on Windows; open it (or the game) via its protocol.
+    const std::string uri = openLauncher
+                                ? "com.epicgames.launcher://"
+                                : "com.epicgames.launcher://apps/" + contentPath + "?action=launch&silent=true";
+    started = launchExternalApplication("cmd.exe", {"/c", "start", "", uri});
   }
   if (!started) {
     // Native Linux: no official build, so use a compatibility front-end.
-    // Heroic Games Launcher is the most common; fall back to Lutris, then a
-    // Wine-installed Epic Games Launcher.
-    if (hasCommand("heroic"))
-      started = launchExternalApplication("heroic", {});
-    else if (hasCommand("flatpak"))
-      started = launchExternalApplication(
-          "flatpak", {"run", "com.heroicgameslauncher.hgl"});
-    else if (hasCommand("lutris"))
-      started = launchExternalApplication("lutris", {"lutris:rungame/epic-games-store"});
+    // Heroic Games Launcher is the most common; it understands the
+    // heroic://launch/<appName> protocol for individual games.
+    if (hasCommand("heroic")) {
+      started = openLauncher
+                    ? launchExternalApplication("heroic", {})
+                    : launchExternalApplication(
+                          "heroic", {"heroic://launch/" + contentPath});
+    } else if (hasCommand("flatpak")) {
+      started =
+          openLauncher
+              ? launchExternalApplication("flatpak",
+                                          {"run", "com.heroicgameslauncher.hgl"})
+              : launchExternalApplication(
+                    "flatpak", {"run", "com.heroicgameslauncher.hgl",
+                                "heroic://launch/" + contentPath});
+    } else if (hasCommand("legendary") && !openLauncher) {
+      started = launchExternalApplication("legendary", {"launch", contentPath});
+    } else if (hasCommand("lutris")) {
+      started = launchExternalApplication("lutris",
+                                          {"lutris:rungame/epic-games-store"});
+    }
   }
 
   if (!started) {

@@ -1162,6 +1162,120 @@ void GameLibrary::scanSteam() {
       });
 }
 
+// ─── scanMinecraft (Prism Launcher instances) ───────────────────────────────
+
+void GameLibrary::scanMinecraft() {
+  namespace fs = std::filesystem;
+  std::error_code ec;
+
+  // Prism Launcher stores instances as subfolders of an "instances" dir, each
+  // with an instance.cfg holding a name= line. Check the native and Flatpak
+  // data dirs.
+  std::vector<fs::path> roots;
+  if (const char *home = getenv("HOME")) {
+    roots.push_back(fs::path(home) / ".local/share/PrismLauncher/instances");
+    roots.push_back(fs::path(home) /
+                    ".var/app/org.prismlauncher.PrismLauncher/data/"
+                    "PrismLauncher/instances");
+  }
+  if (const char *xdg = getenv("XDG_DATA_HOME"))
+    roots.push_back(fs::path(xdg) / "PrismLauncher/instances");
+
+  int added = 0;
+  for (const auto &root : roots) {
+    if (!fs::is_directory(root, ec))
+      continue;
+    for (const auto &inst : fs::directory_iterator(root, ec)) {
+      if (!inst.is_directory(ec))
+        continue;
+      const fs::path cfg = inst.path() / "instance.cfg";
+      if (!fs::exists(cfg, ec))
+        continue;
+      // Read the display name from instance.cfg (name=...); fall back to the
+      // folder name.
+      std::string name = inst.path().filename().string();
+      std::ifstream in(cfg);
+      std::string line;
+      while (std::getline(in, line)) {
+        if (line.rfind("name=", 0) == 0) {
+          std::string v = line.substr(5);
+          while (!v.empty() &&
+                 (v.back() == '\r' || v.back() == '\n' || v.back() == ' '))
+            v.pop_back();
+          if (!v.empty())
+            name = v;
+          break;
+        }
+      }
+
+      GameEntry ge;
+      ge.romPath = inst.path().filename().string(); // Prism instance id
+      ge.displayName = name;
+      ge.system = SystemType::Minecraft;
+      games_.push_back(std::move(ge));
+      ++added;
+    }
+  }
+  if (added > 0)
+    std::cout << "[Minecraft] Found " << added << " Prism instance(s).\n";
+}
+
+// ─── scanEpicGames (Legendary / Heroic) ─────────────────────────────────────
+
+void GameLibrary::scanEpicGames() {
+  namespace fs = std::filesystem;
+  std::error_code ec;
+
+  // Legendary (the CLI Heroic uses for Epic) records installed games in
+  // installed.json: an object keyed by app_name, each with a "title".
+  std::vector<fs::path> candidates;
+  if (const char *xdg = getenv("XDG_CONFIG_HOME"))
+    candidates.push_back(fs::path(xdg) / "legendary/installed.json");
+  if (const char *home = getenv("HOME")) {
+    candidates.push_back(fs::path(home) / ".config/legendary/installed.json");
+    // Heroic's Flatpak bundles its own Legendary config.
+    candidates.push_back(fs::path(home) /
+                         ".var/app/com.heroicgameslauncher.hgl/config/legendary/"
+                         "installed.json");
+  }
+
+  fs::path file;
+  for (const auto &c : candidates) {
+    if (fs::exists(c, ec)) {
+      file = c;
+      break;
+    }
+  }
+  if (file.empty())
+    return;
+
+  std::ifstream in(file);
+  std::string json((std::istreambuf_iterator<char>(in)),
+                   std::istreambuf_iterator<char>());
+
+  // Each entry looks like:  "<appName>": { ... "title": "<Title>" ... }
+  // Match the key, then the title within the following object body.
+  std::regex entryRe(
+      R"re("([^"]+)"\s*:\s*\{[^{}]*?"title"\s*:\s*"([^"]+)")re");
+  int added = 0;
+  for (auto it = std::sregex_iterator(json.begin(), json.end(), entryRe);
+       it != std::sregex_iterator(); ++it) {
+    const std::string appName = (*it)[1].str();
+    const std::string title = (*it)[2].str();
+    if (appName.empty() || title.empty())
+      continue;
+
+    GameEntry ge;
+    ge.romPath = appName; // Epic app name, used by heroic://launch/<appName>
+    ge.displayName = title;
+    ge.system = SystemType::EpicGames;
+    games_.push_back(std::move(ge));
+    ++added;
+  }
+  if (added > 0)
+    std::cout << "[Epic Games] Found " << added << " installed game(s).\n";
+}
+
 // ─── loadFromDB ──────────────────────────────────────────────────────────────
 
 void GameLibrary::loadFromDB(const OracleDBConfig &cfg) {

@@ -1733,6 +1733,8 @@ int main() {
     GameLibrary lib;
     lib.scan("Roms"); // local ROMs first
     lib.scanSteam();  // installed Steam games
+    lib.scanMinecraft();  // Prism Launcher instances
+    lib.scanEpicGames();  // Legendary/Heroic installed Epic games
     lib.scanSteamOwned(
         "~/.omnicon/steam.conf"); // all owned Steam games via Web API
     lib.scanXboxCloud(
@@ -1812,6 +1814,8 @@ int main() {
       GameLibrary lib;
       lib.scan("Roms");
       lib.scanSteam();
+      lib.scanMinecraft();
+      lib.scanEpicGames();
       lib.scanSteamOwned("~/.omnicon/steam.conf");
       lib.scanXboxCloud("saves/xbox_cloud_library.json", "saves/covers");
       lib.loadFromDB(oracleCfg);
@@ -2288,6 +2292,8 @@ int main() {
       GameLibrary lib;
       lib.scan("Roms");
       lib.scanSteam();
+      lib.scanMinecraft();
+      lib.scanEpicGames();
       lib.scanSteamOwned("~/.omnicon/steam.conf");
       lib.loadFromDB(oracleCfg);
       lib.fetchSteamAchievements("~/.omnicon/steam.conf",

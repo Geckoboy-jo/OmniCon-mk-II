@@ -22,6 +22,12 @@ public:
   // Scan the local Steam installation for installed games.
   void scanSteam();
 
+  // Scan Prism Launcher instances for Minecraft (each instance is a tile).
+  void scanMinecraft();
+
+  // Scan Legendary/Heroic for installed Epic Games titles.
+  void scanEpicGames();
+
   // Scan Steam-owned games via the Steam Web API.
   // apiKey and steamId are saved to credFile on first use.
   void scanSteamOwned(const std::string &credFile);

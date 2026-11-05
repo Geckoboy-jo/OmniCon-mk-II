@@ -686,19 +686,18 @@ void GameShell::rebuildFilter() {
     steamAddEntry_.system = SystemType::Steam;
     filteredGames_.push_back(&steamAddEntry_);
   }
-  // Minecraft and Epic Games have no scannable library; show a single tile
-  // that opens the respective launcher.
+  // Minecraft and Epic Games end with a "+" tile that opens the launcher.
   if (currentFilter_ >= 0 && currentFilter_ < kNumSystems &&
       searchQuery_.empty()) {
     const SystemType sys = kSystems[currentFilter_];
     if (sys == SystemType::Minecraft) {
-      minecraftEntry_.romPath = "";
-      minecraftEntry_.displayName = "Minecraft Launcher";
+      minecraftEntry_.romPath = kMinecraftLauncherId;
+      minecraftEntry_.displayName = "Open launcher";
       minecraftEntry_.system = SystemType::Minecraft;
       filteredGames_.push_back(&minecraftEntry_);
     } else if (sys == SystemType::EpicGames) {
-      epicEntry_.romPath = "";
-      epicEntry_.displayName = "Epic Games Launcher";
+      epicEntry_.romPath = kEpicLauncherId;
+      epicEntry_.displayName = "Open launcher";
       epicEntry_.system = SystemType::EpicGames;
       filteredGames_.push_back(&epicEntry_);
     }
@@ -960,13 +959,23 @@ void GameShell::renderGrid() {
       SDL_Texture *tex = getCoverTexture(ge);
       if (tex) {
         SDL_RenderCopy(renderer_, tex, nullptr, &coverR);
-      } else if (&ge == &xboxAddEntry_ || &ge == &steamAddEntry_) {
-        // "+" tile (Xbox green / Steam blue)
-        const bool steam = (&ge == &steamAddEntry_);
-        const SDL_Color tileBg =
-            steam ? SDL_Color{18, 32, 54, 255} : SDL_Color{20, 48, 24, 255};
-        const SDL_Color tilePlus =
-            steam ? SDL_Color{90, 160, 220, 255} : SDL_Color{80, 190, 90, 255};
+      } else if (&ge == &xboxAddEntry_ || &ge == &steamAddEntry_ ||
+                 &ge == &minecraftEntry_ || &ge == &epicEntry_) {
+        // "+" tile — colour keyed to the launcher it opens.
+        SDL_Color tileBg, tilePlus;
+        if (&ge == &steamAddEntry_) {
+          tileBg = {18, 32, 54, 255};
+          tilePlus = {90, 160, 220, 255}; // Steam blue
+        } else if (&ge == &minecraftEntry_) {
+          tileBg = {24, 44, 16, 255};
+          tilePlus = {110, 180, 70, 255}; // Minecraft green
+        } else if (&ge == &epicEntry_) {
+          tileBg = {28, 28, 32, 255};
+          tilePlus = {160, 160, 170, 255}; // Epic grey
+        } else {
+          tileBg = {20, 48, 24, 255};
+          tilePlus = {80, 190, 90, 255}; // Xbox green
+        }
         SDL_SetRenderDrawColor(renderer_, tileBg.r, tileBg.g, tileBg.b, 255);
         SDL_RenderFillRect(renderer_, &coverR);
         SDL_SetRenderDrawColor(renderer_, tilePlus.r, tilePlus.g, tilePlus.b,

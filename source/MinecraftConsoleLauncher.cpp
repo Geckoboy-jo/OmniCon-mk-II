@@ -24,9 +24,12 @@ bool hasCommand(const std::string &command) {
 } // namespace
 
 bool MinecraftConsoleLauncher::launch(const std::string &contentPath) const {
-  (void)contentPath; // the launcher manages its own instances
+  // contentPath is a Prism Launcher instance name (from the scan), or
+  // kMinecraftLauncherId to just open the launcher (the "+" tile).
+  const bool openLauncher =
+      (contentPath.empty() || contentPath == kMinecraftLauncherId);
 
-  // Allow an override (e.g. Prism Launcher for a specific instance).
+  // Allow an override (e.g. a specific launcher binary).
   if (const char *env = std::getenv("OMNICON_MINECRAFT_LAUNCHER");
       env && *env) {
     if (launchExternalApplication(env, {}))
@@ -42,15 +45,19 @@ bool MinecraftConsoleLauncher::launch(const std::string &contentPath) const {
         "cmd.exe", {"/c", "start", "", "shell:AppsFolder\\Microsoft.4297127D64EC6_8wekyb3d8bbwe!Minecraft"});
   }
   if (!started) {
-    // Native Linux: the official launcher installs a minecraft-launcher
-    // command; fall back to the Flatpak, then Prism Launcher.
-    if (hasCommand("minecraft-launcher"))
+    // Prism Launcher can launch a specific instance directly with
+    // `--launch <instance>`; the official launcher only opens its UI.
+    if (hasCommand("prismlauncher")) {
+      started = openLauncher
+                    ? launchExternalApplication("prismlauncher", {})
+                    : launchExternalApplication("prismlauncher",
+                                                {"--launch", contentPath});
+    } else if (hasCommand("minecraft-launcher")) {
       started = launchExternalApplication("minecraft-launcher", {});
-    else if (hasCommand("flatpak"))
+    } else if (hasCommand("flatpak")) {
       started = launchExternalApplication("flatpak",
                                           {"run", "com.mojang.Minecraft"});
-    else if (hasCommand("prismlauncher"))
-      started = launchExternalApplication("prismlauncher", {});
+    }
   }
 
   if (!started) {
