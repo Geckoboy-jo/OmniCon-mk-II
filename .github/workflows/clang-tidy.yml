@@ -35,9 +35,7 @@ jobs:
           find . -name "*.cpp" \
             -exec clang-tidy {} -p build \;
 
-      - name: Build
-        run: |
-          cmake --build build
+      
       - name: Commit changes
         run: |
           git config user.name "github-actions"
