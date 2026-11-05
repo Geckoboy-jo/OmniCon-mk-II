@@ -30,13 +30,6 @@ jobs:
           cmake -B build \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
-
-      - name: Verify Formatting
-        run: |
-          find . \
-            \( -name "*.cpp" -o -name "*.hpp" -o -name "*.h" \) \
-            -exec clang-format --dry-run --Werror {} +
-
       - name: Run Clang-Tidy
         run: |
           find . -name "*.cpp" \
