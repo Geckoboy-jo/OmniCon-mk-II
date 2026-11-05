@@ -18,4 +18,13 @@ if(CLANG_TIDY_EXE)
         ${CLANG_TIDY_EXE};
         -p=${CMAKE_BINARY_DIR}
     )
+
+
+find_package(OpenXR REQUIRED)
+
+target_link_libraries(
+    OmniCon
+    PRIVATE
+    OpenXR::openxr_loader
+)
 endif()
