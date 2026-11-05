@@ -42,7 +42,9 @@ bool MinecraftConsoleLauncher::launch(const std::string &contentPath) const {
   if (runningInWSL()) {
     // The launcher lives on Windows; open it via the Start Menu shortcut.
     started = launchExternalApplication(
-        "cmd.exe", {"/c", "start", "", "shell:AppsFolder\\Microsoft.4297127D64EC6_8wekyb3d8bbwe!Minecraft"});
+        "cmd.exe",
+        {"/c", "start", "",
+         "shell:AppsFolder\\Microsoft.4297127D64EC6_8wekyb3d8bbwe!Minecraft"});
   }
   if (!started) {
     // Prism Launcher can launch a specific instance directly with
@@ -57,6 +59,8 @@ bool MinecraftConsoleLauncher::launch(const std::string &contentPath) const {
     } else if (hasCommand("flatpak")) {
       started = launchExternalApplication("flatpak",
                                           {"run", "com.mojang.Minecraft"});
+    } else if (hasCommand("prismlauncher")) {
+      started = launchExternalApplication("prismlauncher", {});
     }
   }
 
