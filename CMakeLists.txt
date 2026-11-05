@@ -19,7 +19,3 @@ if(CLANG_TIDY_EXE)
         -p=${CMAKE_BINARY_DIR}
     )
 endif()
-
-target_include_directories(OmniCon PRIVATE
-    include
-)
