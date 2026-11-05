@@ -45,6 +45,14 @@ jobs:
       - name: Build
         run: |
           cmake --build build
+      - name: Commit changes
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+
+          git add .
+          git diff --cached --quiet || git commit -m "Auto upgrading code"
+          git push
 
       
        
