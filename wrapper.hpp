@@ -1,13 +1,10 @@
 #include "top.hpp"
 
-
-
-class wrapper
-{
-private:  
-    //TODO 
+class wrapper {
+private:
+  // TODO
 public:
-    wrapper(){}
-    ~wrapper(){}
-    void run();
+  wrapper() {}
+  ~wrapper() {}
+  void run();
 };
