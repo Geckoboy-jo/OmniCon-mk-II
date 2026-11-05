@@ -21,7 +21,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential git curl ca-certificates python3 unzip xz-utils \
         libsdl2-dev libsdl2-ttf-dev libsdl2-image-dev \
-        default-libmysqlclient-dev libmgba-dev \
+        default-libmysqlclient-dev libmgba-dev libmupen64plus-dev \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -51,6 +51,8 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
         libsdl2-2.0-0 libsdl2-ttf-2.0-0 libsdl2-image-2.0-0 \
         libmysqlclient21 libmgba0.10 \
+        libmupen64plus2 mupen64plus-video-glide64mk2 mupen64plus-video-rice \
+        mupen64plus-audio-sdl mupen64plus-input-sdl mupen64plus-rsp-hle \
         fonts-dejavu-core curl unzip ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
     && useradd -m -s /bin/bash omnicon
