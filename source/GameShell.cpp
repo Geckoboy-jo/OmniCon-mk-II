@@ -195,8 +195,7 @@ const char *const GameShell::kSysAbbrev[111] = {
     // Other
     "ODY", "COLECO", "INTV", "3DO", "CD32", "WS", "WSC", "CRYS", "CHF", "VECX",
     "SV", "O2", "CDI", "CRV", "LOOP", "PIP", "SCV", "APF", "ARCD", "VC4K",
-    "ASTR", "ST2", "GCOM", "ADV", "RX78", "SACN", "FM7", "MRTY", "GMST",
-    "GP32",
+    "ASTR", "ST2", "GCOM", "ADV", "RX78", "SACN", "FM7", "MRTY", "GMST", "GP32",
     // PC VR (SteamVR)
     "RIFT", "VIVE", "INDX", "PICO"};
 
