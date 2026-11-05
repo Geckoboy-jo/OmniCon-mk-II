@@ -12,9 +12,9 @@
 #define kHFRepresenterTextViewCalloutMaxGlyphCount 2u
 
 @interface HFRepresenterTextViewCallout : NSObject {
-    CGFloat rotation;
-    NSPoint tipOrigin;
-    NSPoint pinStart, pinEnd;
+  CGFloat rotation;
+  NSPoint tipOrigin;
+  NSPoint pinStart, pinEnd;
 }
 
 @property(nonatomic) NSInteger byteOffset;
@@ -23,7 +23,8 @@
 @property(nonatomic, retain) id representedObject;
 @property(readonly) NSRect rect;
 
-+ (void)layoutCallouts:(NSArray *)callouts inView:(HFRepresenterTextView *)textView;
++ (void)layoutCallouts:(NSArray *)callouts
+                inView:(HFRepresenterTextView *)textView;
 
 - (void)drawShadowWithClip:(NSRect)clip;
 - (void)drawWithClip:(NSRect)clip;
