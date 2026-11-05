@@ -1,9 +1,9 @@
 #import <Cocoa/Cocoa.h>
 
 @interface NSSlider (GBHueSlider)
--(NSColor *)colorValue;
+- (NSColor *)colorValue;
 @end
 
 @interface GBHueSliderCell : NSSliderCell
--(NSColor *)colorValue;
+- (NSColor *)colorValue;
 @end

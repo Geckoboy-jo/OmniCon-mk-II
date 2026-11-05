@@ -15,12 +15,13 @@ typedef unsigned long long HFBTreeIndex;
 @end
 
 @interface HFBTree : NSObject <NSMutableCopying, HFBTreeEntry> {
-    unsigned int depth;
-    HFBTreeNode *root;
+  unsigned int depth;
+  HFBTreeNode *root;
 }
 
 - (void)insertEntry:(id)entry atOffset:(HFBTreeIndex)offset;
-- (id)entryContainingOffset:(HFBTreeIndex)offset beginningOffset:(HFBTreeIndex *)outBeginningOffset;
+- (id)entryContainingOffset:(HFBTreeIndex)offset
+            beginningOffset:(HFBTreeIndex *)outBeginningOffset;
 - (void)removeEntryAtOffset:(HFBTreeIndex)offset;
 - (void)removeAllEntries;
 
@@ -34,7 +35,12 @@ typedef unsigned long long HFBTreeIndex;
 
 - (HFBTreeIndex)length;
 
-/* Applies the given function to the entry at the given offset, continuing with subsequent entries until the function returns NO.  Do not modify the tree from within this function. */
-- (void)applyFunction:(BOOL (*)(id entry, HFBTreeIndex offset, void *userInfo))func toEntriesStartingAtOffset:(HFBTreeIndex)offset withUserInfo:(void *)userInfo;
+/* Applies the given function to the entry at the given offset, continuing with
+ * subsequent entries until the function returns NO.  Do not modify the tree
+ * from within this function. */
+- (void)applyFunction:(BOOL (*)(id entry, HFBTreeIndex offset,
+                                void *userInfo))func
+    toEntriesStartingAtOffset:(HFBTreeIndex)offset
+                 withUserInfo:(void *)userInfo;
 
 @end

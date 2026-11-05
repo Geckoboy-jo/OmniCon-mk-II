@@ -8,8 +8,8 @@
 #include_next <stdio.h>
 #endif
 
-#include <stdlib.h>
 #include <stdarg.h>
+#include <stdlib.h>
 
 #if _WIN64
 #define fseek(...) _fseeki64(__VA_ARGS__)

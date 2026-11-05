@@ -7,11 +7,13 @@
 #ifndef __APPLE__
 #define GL_COMPAT_NAME(func) gl_compat_##func
 
-#define GL_COMPAT_WRAPPER(func) \
-({  extern typeof(func) *GL_COMPAT_NAME(func); \
-if (!GL_COMPAT_NAME(func)) GL_COMPAT_NAME(func) = SDL_GL_GetProcAddress(#func); \
-    GL_COMPAT_NAME(func); \
-})
+#define GL_COMPAT_WRAPPER(func)                                                \
+  ({                                                                           \
+    extern typeof(func) *GL_COMPAT_NAME(func);                                 \
+    if (!GL_COMPAT_NAME(func))                                                 \
+      GL_COMPAT_NAME(func) = SDL_GL_GetProcAddress(#func);                     \
+    GL_COMPAT_NAME(func);                                                      \
+  })
 
 #define glCreateShader GL_COMPAT_WRAPPER(glCreateShader)
 #define glGetAttribLocation GL_COMPAT_WRAPPER(glGetAttribLocation)

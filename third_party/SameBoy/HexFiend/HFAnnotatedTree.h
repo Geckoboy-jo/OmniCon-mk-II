@@ -7,16 +7,16 @@
 
 #import <Foundation/NSObject.h>
 
-typedef unsigned long long (*HFAnnotatedTreeAnnotaterFunction_t)(id left, id right);
-
+typedef unsigned long long (*HFAnnotatedTreeAnnotaterFunction_t)(id left,
+                                                                 id right);
 
 @interface HFAnnotatedTreeNode : NSObject <NSMutableCopying> {
-    HFAnnotatedTreeNode *left;
-    HFAnnotatedTreeNode *right;
-    HFAnnotatedTreeNode *parent;
-    uint32_t level;
+  HFAnnotatedTreeNode *left;
+  HFAnnotatedTreeNode *right;
+  HFAnnotatedTreeNode *parent;
+  uint32_t level;
 @public
-    unsigned long long annotation;
+  unsigned long long annotation;
 }
 
 /* Pure virtual method, which must be overridden. */
@@ -29,18 +29,16 @@ typedef unsigned long long (*HFAnnotatedTreeAnnotaterFunction_t)(id left, id rig
 - (id)rightNode;
 - (id)parentNode;
 
-#if ! NDEBUG
+#if !NDEBUG
 - (void)verifyIntegrity;
 - (void)verifyAnnotation:(HFAnnotatedTreeAnnotaterFunction_t)annotater;
 #endif
 
-
 @end
 
-
 @interface HFAnnotatedTree : NSObject <NSMutableCopying> {
-    HFAnnotatedTreeAnnotaterFunction_t annotater;
-    HFAnnotatedTreeNode *root;
+  HFAnnotatedTreeAnnotaterFunction_t annotater;
+  HFAnnotatedTreeNode *root;
 }
 
 - (instancetype)initWithAnnotater:(HFAnnotatedTreeAnnotaterFunction_t)annotater;
@@ -50,7 +48,7 @@ typedef unsigned long long (*HFAnnotatedTreeAnnotaterFunction_t)(id left, id rig
 - (id)firstNode;
 - (BOOL)isEmpty;
 
-#if ! NDEBUG
+#if !NDEBUG
 - (void)verifyIntegrity;
 #endif
 

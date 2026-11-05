@@ -1,9 +1,9 @@
 #import <UIKit/UIKit.h>
 
 typedef enum {
-    GBSliderStyleTemperature,
-    GBSliderStyleHue,
-    GBSliderStyleTicks,
+  GBSliderStyleTemperature,
+  GBSliderStyleHue,
+  GBSliderStyleTicks,
 } GBSliderStyle;
 
 @interface GBSlider : UISlider
