@@ -145,12 +145,11 @@ typedef struct {
     GB_envelope_clock_t envelope_clock;
   } noise_channel;
 
-  GB_ENUM(uint8_t,
-          {
-              GB_SKIP_DIV_EVENT_INACTIVE,
-              GB_SKIP_DIV_EVENT_SKIPPED,
-              GB_SKIP_DIV_EVENT_SKIP,
-          })
+  GB_ENUM(uint8_t, {
+                       GB_SKIP_DIV_EVENT_INACTIVE,
+                       GB_SKIP_DIV_EVENT_SKIPPED,
+                       GB_SKIP_DIV_EVENT_SKIP,
+                   })
   skip_div_event;
   uint8_t pcm_mask[2]; // For CGB-0 to CGB-C PCM read glitch
 
