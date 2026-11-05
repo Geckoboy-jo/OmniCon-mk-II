@@ -25,12 +25,6 @@ jobs:
             clang-format \
             cmake \
             ninja-build
-
-      - name: Configure Build
-        run: |
-          cmake -B build \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
       - name: Install clang-format
         run: sudo apt-get update && sudo apt-get install -y clang-format
 
@@ -40,7 +34,7 @@ jobs:
           -exec clang-format -i {} \;
       - name: Run Clang-Tidy
         run: |
-          find . -name "*.cpp" \
+          find . \( -name "*.cpp" -o -name "*.h" -o -name "*.hpp" \) \
             -exec clang-tidy {} -p build -fix-errors \;
 
       
