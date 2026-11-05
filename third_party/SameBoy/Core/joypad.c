@@ -70,7 +70,7 @@ static inline bool get_input(GB_gameboy_t *gb, uint8_t player, GB_key_t key)
     
     if (likely(gb->key_bounce_timing[key] == 0)) return ret;
     if (likely((gb->key_bounce_timing[key] & 0x3FF) > 0x300)) return ret;
-    uint16_t semi_random = ((((key << 5) + gb->div_counter) * 17) ^ ((gb->apu.apu_cycles + gb->display_cycles) * 13));
+    uint16_t semi_random = ((((key << 5) + gb->div_counter) * 17) ^ ((gb->display_cycles) * 13));
     semi_random >>= 3;
     if (semi_random < gb->key_bounce_timing[key]) {
         ret ^= true;
@@ -166,7 +166,7 @@ void GB_set_key_state(GB_gameboy_t *gb, GB_key_t index, bool pressed)
         gb->key_bounce_timing[index] = bounce_for_key(gb, index);
     }
     gb->keys[0][index] = pressed;
-    GB_update_joyp(gb);
+    gb->inputs_changed = true;
 }
 
 void GB_set_key_state_for_player(GB_gameboy_t *gb, GB_key_t index, unsigned player, bool pressed)
@@ -178,7 +178,7 @@ void GB_set_key_state_for_player(GB_gameboy_t *gb, GB_key_t index, unsigned play
         gb->key_bounce_timing[index] = bounce_for_key(gb, index);
     }
     gb->keys[player][index] = pressed;
-    GB_update_joyp(gb);
+    gb->inputs_changed = true;
 }
 
 void GB_set_key_mask(GB_gameboy_t *gb, GB_key_mask_t mask)
@@ -192,7 +192,7 @@ void GB_set_key_mask(GB_gameboy_t *gb, GB_key_mask_t mask)
         gb->keys[0][i] = pressed;
     }
     
-    GB_update_joyp(gb);
+    gb->inputs_changed = true;
 }
 
 void GB_set_key_mask_for_player(GB_gameboy_t *gb, GB_key_mask_t mask, unsigned player)
@@ -206,12 +206,18 @@ void GB_set_key_mask_for_player(GB_gameboy_t *gb, GB_key_mask_t mask, unsigned p
         gb->keys[player][i] = pressed;
     }
     
-    GB_update_joyp(gb);
+    gb->inputs_changed = true;
 }
 
 void GB_joypad_run(GB_gameboy_t *gb, unsigned cycles)
 {
-    if (gb->joypad_is_stable) return;
+    if (likely(gb->joypad_is_stable)) {
+        if (unlikely(gb->inputs_changed)) {
+            GB_update_joyp(gb);
+            gb->inputs_changed = false;
+        }
+        return;
+    }
     bool should_update_joyp = gb->use_faux_analog[gb->sgb? gb->sgb->current_player : 0];
     gb->joypad_is_stable = true;
     if (gb->joyp_switching_delay) {
@@ -239,8 +245,9 @@ void GB_joypad_run(GB_gameboy_t *gb, unsigned cycles)
         }
     }
     
-    if (should_update_joyp) {
+    if (gb->inputs_changed || should_update_joyp) {
         GB_update_joyp(gb);
+        gb->inputs_changed = false;
     }
 }
 
@@ -279,7 +286,7 @@ void GB_set_use_faux_analog_inputs(GB_gameboy_t *gb, unsigned player, bool use)
     for (GB_key_t key = GB_KEY_RIGHT; key <= GB_KEY_DOWN; key++) {
         gb->keys[player][key] = false;
     }
-    GB_update_joyp(gb);
+    gb->inputs_changed = true;
 }
 
 void GB_set_faux_analog_inputs(GB_gameboy_t *gb, unsigned player, double x, double y)
@@ -312,7 +319,7 @@ void GB_set_faux_analog_inputs(GB_gameboy_t *gb, unsigned player, double x, doub
         gb->faux_analog_inputs[player].x = round(x * multiplier);
         gb->faux_analog_inputs[player].y = round(y * multiplier);
     }
-    GB_update_joyp(gb);
+    gb->inputs_changed = true;
 }
 
 void GB_update_faux_analog(GB_gameboy_t *gb)

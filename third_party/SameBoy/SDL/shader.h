@@ -4,24 +4,24 @@
 #include <stdbool.h>
 
 typedef struct shader_s {
-  GLuint resolution_uniform;
-  GLuint origin_uniform;
-  GLuint texture_uniform;
-  GLuint previous_texture_uniform;
-  GLuint blending_mode_uniform;
-
-  GLuint position_attribute;
-  GLuint texture;
-  GLuint previous_texture;
-  GLuint program;
+    GLuint resolution_uniform;
+    GLuint origin_uniform;
+    GLuint texture_uniform;
+    GLuint previous_texture_uniform;
+    GLuint blending_mode_uniform;
+    
+    GLuint position_attribute;
+    GLuint texture;
+    GLuint previous_texture;
+    GLuint program;
 } shader_t;
 
 typedef enum {
-  GB_FRAME_BLENDING_MODE_DISABLED,
-  GB_FRAME_BLENDING_MODE_SIMPLE,
-  GB_FRAME_BLENDING_MODE_ACCURATE,
-  GB_FRAME_BLENDING_MODE_ACCURATE_EVEN = GB_FRAME_BLENDING_MODE_ACCURATE,
-  GB_FRAME_BLENDING_MODE_ACCURATE_ODD,
+    GB_FRAME_BLENDING_MODE_DISABLED,
+    GB_FRAME_BLENDING_MODE_SIMPLE,
+    GB_FRAME_BLENDING_MODE_ACCURATE,
+    GB_FRAME_BLENDING_MODE_ACCURATE_EVEN = GB_FRAME_BLENDING_MODE_ACCURATE,
+    GB_FRAME_BLENDING_MODE_ACCURATE_ODD,
 } GB_frame_blending_mode_t;
 
 bool init_shader_with_name(shader_t *shader, const char *name);

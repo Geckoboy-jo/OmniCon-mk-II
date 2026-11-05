@@ -256,7 +256,7 @@ int GB_load_boot_rom(GB_gameboy_t *gb, const char *path)
 {
     FILE *f = fopen(path, "rb");
     if (!f) {
-        GB_log(gb, "Could not open boot ROM: %s.\n", strerror(errno));
+        GB_attributed_log(gb, GB_LOG_ERROR, "Could not open boot ROM: %s.\n", strerror(errno));
         return errno;
     }
     fread(gb->boot_rom, sizeof(gb->boot_rom), 1, f);
@@ -334,7 +334,7 @@ int GB_load_rom(GB_gameboy_t *gb, const char *path)
     
     FILE *f = fopen(path, "rb");
     if (!f) {
-        GB_log(gb, "Could not open ROM: %s.\n", strerror(errno));
+        GB_attributed_log(gb, GB_LOG_ERROR, "Could not open ROM: %s.\n", strerror(errno));
         return errno;
     }
     fseek(f, 0, SEEK_END);
@@ -508,7 +508,7 @@ int GB_load_gbs(GB_gameboy_t *gb, const char *path, GB_gbs_info_t *info)
     
     FILE *f = fopen(path, "rb");
     if (!f) {
-        GB_log(gb, "Could not open GBS: %s.\n", strerror(errno));
+        GB_attributed_log(gb, GB_LOG_ERROR, "Could not open GBS: %s.\n", strerror(errno));
         return errno;
     }
     fseek(f, 0, SEEK_END);
@@ -529,7 +529,7 @@ int GB_load_isx(GB_gameboy_t *gb, const char *path)
     
     FILE *f = fopen(path, "rb");
     if (!f) {
-        GB_log(gb, "Could not open ISX file: %s.\n", strerror(errno));
+        GB_attributed_log(gb, GB_LOG_ERROR, "Could not open ISX file: %s.\n", strerror(errno));
         return errno;
     }
     char magic[4];
@@ -577,6 +577,7 @@ int GB_load_isx(GB_gameboy_t *gb, const char *path)
 
                 READ(length);
                 length = LE16(length);
+                if (!length) goto error;
 
                 size_t needed_size = bank * 0x4000 + address + length;
                 if (needed_size > 1024 * 1024 * 32) goto error;
@@ -601,8 +602,8 @@ int GB_load_isx(GB_gameboy_t *gb, const char *path)
                 
                 READ(length);
                 length = LE32(length);
+                if (!length || address > 1024 * 1024 * 32 || length > 1024 * 1024 * 32 - address) goto error;
                 size_t needed_size = address + length;
-                if (needed_size > 1024 * 1024 * 32) goto error;
 
                 if (gb->rom_size < needed_size) {
                     gb->rom = realloc(gb->rom, needed_size);
@@ -745,9 +746,9 @@ error:
     GB_log(gb, "Invalid or unsupported ISX file.\n");
     if (gb->rom) {
         free(gb->rom);
-        gb->rom = old_rom;
-        gb->rom_size = old_size;
     }
+    gb->rom = old_rom;
+    gb->rom_size = old_size;
     fclose(f);
     gb->tried_loading_sgb_border = false;
     gb->has_sgb_border = false;
@@ -901,7 +902,7 @@ int GB_save_battery(GB_gameboy_t *gb, const char *path)
     if (gb->mbc_ram_size == 0 && !gb->cartridge_type->has_rtc) return 0; /* Claims to have battery, but has no RAM or RTC */
     FILE *f = fopen(path, "wb");
     if (!f) {
-        GB_log(gb, "Could not open battery save: %s.\n", strerror(errno));
+        GB_attributed_log(gb, GB_LOG_ERROR, "Could not open battery save: %s.\n", strerror(errno));
         return errno;
     }
 
@@ -959,6 +960,7 @@ int GB_save_battery(GB_gameboy_t *gb, const char *path)
 
 static void load_tpp1_save_data(GB_gameboy_t *gb, const tpp1_rtc_save_t *data)
 {
+    gb->tpp1_mr4 = data->mr4;
     gb->last_rtc_second = LE64(data->last_rtc_second);
     unrolled for (unsigned i = 4; i--;) {
         gb->rtc_real.data[i ^ 3] = data->rtc_data[i];
@@ -1010,7 +1012,7 @@ void GB_load_battery_from_buffer(GB_gameboy_t *gb, const uint8_t *buffer, size_t
     }
 
     rtc_save_t rtc_save;
-    memcpy(&rtc_save, buffer + gb->mbc_ram_size, MIN(sizeof(rtc_save), size));
+    memcpy(&rtc_save, buffer + gb->mbc_ram_size, MIN(sizeof(rtc_save), size - gb->mbc_ram_size));
     switch (size - gb->mbc_ram_size) {
         case sizeof(rtc_save.sameboy_legacy):
             memcpy(&gb->rtc_real, &rtc_save.sameboy_legacy.rtc_real, sizeof(gb->rtc_real));
@@ -1706,12 +1708,14 @@ static void GB_reset_internal(GB_gameboy_t *gb, bool quick)
     
     uint32_t mbc_ram_size = gb->mbc_ram_size;
     GB_model_t model = gb->model;
+    GB_accessory_t accessory = gb->accessory;
     GB_update_clock_rate(gb);
     uint8_t rtc_section[GB_SECTION_SIZE(rtc)];
     memcpy(rtc_section, GB_GET_SECTION(gb, rtc), sizeof(rtc_section));
     memset(gb, 0, GB_SECTION_OFFSET(unsaved));
     memcpy(GB_GET_SECTION(gb, rtc), rtc_section, sizeof(rtc_section));
     gb->model = model;
+    gb->accessory = accessory;
     gb->version = STRUCT_VERSION;
     
     GB_reset_mbc(gb);

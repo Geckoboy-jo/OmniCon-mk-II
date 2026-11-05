@@ -3,9 +3,9 @@
 #include "defs.h"
 
 typedef enum {
-  GB_RUMBLE_DISABLED,
-  GB_RUMBLE_CARTRIDGE_ONLY,
-  GB_RUMBLE_ALL_GAMES
+    GB_RUMBLE_DISABLED,
+    GB_RUMBLE_CARTRIDGE_ONLY,
+    GB_RUMBLE_ALL_GAMES
 } GB_rumble_mode_t;
 
 #ifdef GB_INTERNAL

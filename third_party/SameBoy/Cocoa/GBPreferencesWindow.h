@@ -1,10 +1,9 @@
-#import "GBPaletteEditorController.h"
-#import "GBTitledPopUpButton.h"
 #import <Cocoa/Cocoa.h>
 #import <JoyKit/JoyKit.h>
+#import "GBPaletteEditorController.h"
+#import "GBTitledPopUpButton.h"
 
-@interface GBPreferencesWindow
-    : NSWindow <NSTableViewDelegate, NSTableViewDataSource, JOYListener>
+@interface GBPreferencesWindow : NSWindow <NSTableViewDelegate, NSTableViewDataSource, JOYListener>
 @property IBOutlet NSTableView *controlsTableView;
 @property IBOutlet NSButton *configureJoypadButton;
 @property IBOutlet NSButton *skipButton;

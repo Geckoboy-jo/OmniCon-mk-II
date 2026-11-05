@@ -1,7 +1,6 @@
 #import <UIKit/UIKit.h>
 
-@interface GBROMViewController
-    : UITableViewController <UIDocumentPickerDelegate>
+@interface GBROMViewController : UITableViewController<UIDocumentPickerDelegate>
 
 /* For inheritance */
 - (void)romSelectedAtIndex:(unsigned)index;

@@ -45,7 +45,7 @@ bool GB_cheat_search_filter(GB_gameboy_t *gb, const char *expression, GB_cheat_s
         if (data_type & GB_CHEAT_SEARCH_DATA_TYPE_16BIT) {
             // The last byte of each section always fails on 16-bit searches
             if ((new_data != gb->ram + gb->ram_size - 1 &&
-                 new_data != gb->mbc_ram + gb->mbc_ram_size - 1 &&
+                 (!gb->mbc_ram_size || new_data != gb->mbc_ram + gb->mbc_ram_size - 1) &&
                  new_data != gb->hram + sizeof(gb->hram) - 1)) {
                 uint16_t old = old_data[0] | (old_data[1] << 8);
                 uint16_t new = new_data[0] | (new_data[1] << 8);
@@ -59,24 +59,17 @@ bool GB_cheat_search_filter(GB_gameboy_t *gb, const char *expression, GB_cheat_s
         else {
             GB_debugger_evaluate_cheat_filter(gb, expression, &result, *old_data, *new_data);
         }
-        if (result) {
-            // Filter passed, update old value
-            *old_data = *new_data;
-            if (data_type & GB_CHEAT_SEARCH_DATA_TYPE_16BIT) {
-                old_data[1] = new_data[1];
-            }
-        }
-        else {
+        if (!result) {
             // Did not pass filter, remove address
             *bitmap |= mask;
             gb->cheat_search_count--;
         }
     skip:;
         old_data++;
-        if (new_data == gb->ram + gb->ram_size - 1 && gb->mbc_ram_size) {
-            new_data = gb->mbc_ram;
+        if (new_data == gb->ram + gb->ram_size - 1) {
+            new_data = gb->mbc_ram_size ? gb->mbc_ram : gb->hram;
         }
-        else if (new_data == gb->mbc_ram + gb->mbc_ram_size - 1) {
+        else if (gb->mbc_ram_size && new_data == gb->mbc_ram + gb->mbc_ram_size - 1) {
             new_data = gb->hram;
         }
         else {
@@ -89,6 +82,12 @@ bool GB_cheat_search_filter(GB_gameboy_t *gb, const char *expression, GB_cheat_s
         }
     }
     
+    // Keep the previous snapshot intact while evaluating overlapping words.
+    memcpy(gb->cheat_search_data, gb->ram, gb->ram_size);
+    if (gb->mbc_ram_size) {
+        memcpy(gb->cheat_search_data + gb->ram_size, gb->mbc_ram, gb->mbc_ram_size);
+    }
+    memcpy(gb->cheat_search_data + gb->ram_size + gb->mbc_ram_size, gb->hram, sizeof(gb->hram));
     return true;
 }
 

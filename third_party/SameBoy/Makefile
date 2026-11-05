@@ -171,10 +171,10 @@ RGBASM  := $(RGBDS)rgbasm
 RGBLINK := $(RGBDS)rgblink
 RGBGFX  := $(RGBDS)rgbgfx
 
-# RGBASM 0.7+ deprecate and remove `-h`
-RGBASM_FLAGS := $(if $(filter $(shell echo 'println __RGBDS_MAJOR__ || (!__RGBDS_MAJOR__ && __RGBDS_MINOR__ > 6)' | $(RGBASM) -), $$0), -h,) --include $(OBJ)/BootROMs/ --include BootROMs/
+# RGBASM 0.7+ deprecated and remove `-h`
+RGBASM_FLAGS := $(if $(filter $(shell echo 'println __RGBDS_MAJOR__ || (!__RGBDS_MAJOR__ && __RGBDS_MINOR__ > 6)' | $(RGBASM) - 2> $(NULL)), $$0), -h,) --include $(OBJ)/BootROMs/ --include BootROMs/
 # RGBGFX 0.6+ replace `-h` with `-Z`, and need `-c embedded`
-RGBGFX_FLAGS := $(if $(filter $(shell echo 'println __RGBDS_MAJOR__ || (!__RGBDS_MAJOR__ && __RGBDS_MINOR__ > 5)' | $(RGBASM) -), $$0), -h -u, -Z -u -c embedded)
+RGBGFX_FLAGS := $(if $(filter $(shell echo 'println __RGBDS_MAJOR__ || (!__RGBDS_MAJOR__ && __RGBDS_MINOR__ > 5)' | $(RGBASM) - 2> $(NULL)), $$0), -h -u, -Z -u -c embedded)
 
 
 # Set compilation and linkage flags based on target, platform and configuration
@@ -409,7 +409,7 @@ cocoa: $(BIN)/SameBoy.app
 xdg-thumbnailer: $(BIN)/XdgThumbnailer/sameboy-thumbnailer
 sdl: $(SDL_TARGET) $(BIN)/SDL/dmg_boot.bin $(BIN)/SDL/mgb_boot.bin $(BIN)/SDL/cgb0_boot.bin $(BIN)/SDL/cgb_boot.bin $(BIN)/SDL/agb_boot.bin $(BIN)/SDL/sgb_boot.bin $(BIN)/SDL/sgb2_boot.bin $(BIN)/SDL/LICENSE $(BIN)/SDL/registers.sym $(BIN)/SDL/background.bmp $(BIN)/SDL/Shaders $(BIN)/SDL/Palettes
 bootroms: $(BIN)/BootROMs/agb_boot.bin $(BIN)/BootROMs/cgb_boot.bin $(BIN)/BootROMs/cgb0_boot.bin $(BIN)/BootROMs/dmg_boot.bin $(BIN)/BootROMs/mgb_boot.bin $(BIN)/BootROMs/sgb_boot.bin $(BIN)/BootROMs/sgb2_boot.bin
-tester: $(TESTER_TARGET) $(BIN)/tester/dmg_boot.bin $(BIN)/tester/cgb_boot.bin $(BIN)/tester/agb_boot.bin $(BIN)/tester/sgb_boot.bin $(BIN)/tester/sgb2_boot.bin
+tester: $(TESTER_TARGET) $(BIN)/tester/dmg_boot.bin $(BIN)/tester/mgb_boot.bin $(BIN)/tester/cgb0_boot.bin $(BIN)/tester/cgb_boot.bin $(BIN)/tester/agb_boot.bin $(BIN)/tester/sgb_boot.bin $(BIN)/tester/sgb2_boot.bin
 _ios: $(BIN)/SameBoy-iOS.app $(OBJ)/installer
 ios-ipa: $(BIN)/SameBoy-iOS.ipa
 ios-deb: $(BIN)/SameBoy-iOS.deb
@@ -609,10 +609,14 @@ ifeq ($(CONF), release)
 endif
 
 $(BIN)/SameBoy.app/Contents/Resources/%.nib: Cocoa/%.xib
+	-@rm -rf $@
 	$(IBTOOL) --target-device mac --minimum-deployment-target 10.9 --compile $@ $^ 2>&1 | cat -
+	@ls $@ 2> /dev/null
 	
 $(BIN)/SameBoy-iOS.app/%.storyboardc: iOS/%.storyboard
+	-@rm -rf $@
 	$(IBTOOL) --target-device iphone --target-device ipad --minimum-deployment-target $(IOS_MIN) --compile $@ $^ 2>&1 | cat -
+	@ls $@ 2> /dev/null
 
 # Quick Look generators
 

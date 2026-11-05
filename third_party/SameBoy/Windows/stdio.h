@@ -8,8 +8,8 @@
 #include_next <stdio.h>
 #endif
 
-#include <stdarg.h>
 #include <stdlib.h>
+#include <stdarg.h>
 
 #if _WIN64
 #define fseek(...) _fseeki64(__VA_ARGS__)
@@ -27,7 +27,7 @@ int asprintf(char **strp, const char *fmt, ...);
 #endif
 #endif
 
-__intptr_t getline(char **lineptr, size_t *n, FILE *stream);
+intptr_t getline(char **lineptr, size_t *n, FILE *stream);
 
 #define snprintf _snprintf
 #define printf(...) fprintf(stdout, __VA_ARGS__)

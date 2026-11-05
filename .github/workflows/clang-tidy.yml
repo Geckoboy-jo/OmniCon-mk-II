@@ -32,10 +32,6 @@ jobs:
         run: |
           find . \( -name "*.cpp" -o -name "*.h" -o -name "*.hpp" \) \
           -exec clang-format -i {} \;
-      - name: Run Clang-Tidy
-        run: |
-          find . \( -name "*.cpp" -o -name "*.h" -o -name "*.hpp" \) \
-            -exec clang-tidy {} -p build -fix-errors \;
 
       
       - name: Commit changes

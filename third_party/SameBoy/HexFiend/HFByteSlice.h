@@ -12,50 +12,33 @@
 /*! @class HFByteSlice
 @brief A class representing a source of data for an HFByteArray.
 
-HFByteSlice is an abstract class encapsulating primitive data sources (files,
-memory buffers, etc.).  Each source must support random access reads, and have a
-well defined length.  All HFByteSlices are \b immutable.
+HFByteSlice is an abstract class encapsulating primitive data sources (files, memory buffers, etc.).  Each source must support random access reads, and have a well defined length.  All HFByteSlices are \b immutable.
 
-The two principal subclasses of HFByteSlice are HFSharedMemoryByteSlice and
-HFFileByteSlice, which respectively encapsulate data from memory and from a
-file.
+The two principal subclasses of HFByteSlice are HFSharedMemoryByteSlice and HFFileByteSlice, which respectively encapsulate data from memory and from a file.
 */
 @interface HFByteSlice : NSObject {
-  NSUInteger retainCount;
+    NSUInteger retainCount;
 }
 
-/*! Return the length of the byte slice as a 64 bit value.  This is an abstract
- * method that concrete subclasses must override. */
+/*! Return the length of the byte slice as a 64 bit value.  This is an abstract method that concrete subclasses must override. */
 - (unsigned long long)length;
 
-/*! Copies a range of data from the byte slice into an in-memory buffer.  This
- * is an abstract method that concrete subclasses must override. */
+/*! Copies a range of data from the byte slice into an in-memory buffer.  This is an abstract method that concrete subclasses must override. */
 - (void)copyBytes:(unsigned char *)dst range:(HFRange)range;
 
-/*! Returns a new slice containing a subrange of the given slice.  This is an
- * abstract method that concrete subclasses must override. */
+/*! Returns a new slice containing a subrange of the given slice.  This is an abstract method that concrete subclasses must override. */
 - (HFByteSlice *)subsliceWithRange:(HFRange)range;
 
-/*! Attempts to create a new byte slice by appending one byte slice to another.
- * This does not modify the receiver or the slice argument (after all, both are
- * immutable).  This is provided as an optimization, and is allowed to return
- * nil if the appending cannot be done efficiently.  The default implementation
- * returns nil.
- */
+/*! Attempts to create a new byte slice by appending one byte slice to another.  This does not modify the receiver or the slice argument (after all, both are immutable).  This is provided as an optimization, and is allowed to return nil if the appending cannot be done efficiently.  The default implementation returns nil.
+*/
 - (HFByteSlice *)byteSliceByAppendingSlice:(HFByteSlice *)slice;
 
-/*! Returns YES if the receiver is sourced from a file.  The default
- * implementation returns NO.  This is used to estimate cost when writing to a
- * file.
- */
+/*! Returns YES if the receiver is sourced from a file.  The default implementation returns NO.  This is used to estimate cost when writing to a file.
+*/
 - (BOOL)isSourcedFromFile;
 
-/*! For a given file reference, returns the range within the file that the
- * receiver is sourced from.  If the receiver is not sourced from this file,
- * returns {ULLONG_MAX, ULLONG_MAX}.  The default implementation returns
- * {ULLONG_MAX, ULLONG_MAX}.  This is used during file saving to to determine
- * how to properly overwrite a given file.
- */
+/*! For a given file reference, returns the range within the file that the receiver is sourced from.  If the receiver is not sourced from this file, returns {ULLONG_MAX, ULLONG_MAX}.  The default implementation returns {ULLONG_MAX, ULLONG_MAX}.  This is used during file saving to to determine how to properly overwrite a given file.
+*/
 - (HFRange)sourceRangeForFile:(HFFileReference *)reference;
 
 @end

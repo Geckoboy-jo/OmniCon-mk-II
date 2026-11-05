@@ -370,7 +370,7 @@ static uint8_t read_mbc_ram(GB_gameboy_t *gb, uint16_t addr)
             case 0xE: // IR mode
                 return gb->effective_ir_input; // TODO: What are the other bits?
             default:
-                GB_log(gb, "Unsupported HuC-3 mode %x read: %04x\n", gb->huc3.mode, addr);
+                GB_attributed_log(gb, GB_LOG_WARNING, "Unsupported HuC-3 mode %x read: %04x\n", gb->huc3.mode, addr);
                 return 1; // TODO: What happens in this case?
             case 0: // TODO: R/O RAM? (or is it disabled?)
             case 0xA: // RAM
@@ -988,9 +988,15 @@ static void write_mbc(GB_gameboy_t *gb, uint16_t addr, uint8_t value)
                             gb->tpp1_mr4 &= ~0x8;
                             break;
                         case 0x18:
+                            if (gb->rtc_mode == GB_RTC_MODE_SYNC_TO_HOST) {
+                                GB_rtc_set_time(gb, time(NULL));
+                            }
                             gb->tpp1_mr4 &= ~0x4;
                             break;
                         case 0x19:
+                            if (!(gb->tpp1_mr4 & 0x4) && gb->rtc_mode == GB_RTC_MODE_SYNC_TO_HOST) {
+                                gb->last_rtc_second = time(NULL);
+                            }
                             gb->tpp1_mr4 |= 0x4;
                             break;
                             
@@ -1277,6 +1283,11 @@ static void write_mbc_ram(GB_gameboy_t *gb, uint16_t addr, uint8_t value)
 
     if (gb->cartridge_type->has_rtc && gb->mbc3.rtc_mapped) {
         if (gb->mbc_ram_bank <= 4) {
+            if (gb->mbc_ram_bank == 4 && ((gb->rtc_real.high ^ value) & 0x40) && gb->rtc_mode == GB_RTC_MODE_SYNC_TO_HOST) {
+                uint64_t current_time = time(NULL);
+                GB_rtc_set_time(gb, current_time);
+                gb->last_rtc_second = current_time;
+            }
             if (gb->mbc_ram_bank == 0) {
                 gb->rtc_cycles = 0;
             }
@@ -1419,7 +1430,7 @@ static void write_high_memory(GB_gameboy_t *gb, uint16_t addr, uint8_t value)
             case GB_IO_WX:
                 gb->io_registers[addr & 0xFF] = value;
                 GB_update_wx_glitch(gb);
-                break;
+                return;
                 
             case GB_IO_IF:
             case GB_IO_SCX:

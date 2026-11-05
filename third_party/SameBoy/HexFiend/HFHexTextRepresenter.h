@@ -9,16 +9,13 @@
 
 /*! @class HFHexTextRepresenter
 
-    @brief HFHexTextRepresenter is an HFRepresenter responsible for showing data
-   in hexadecimal form.
+    @brief HFHexTextRepresenter is an HFRepresenter responsible for showing data in hexadecimal form.
 
-    HFHexTextRepresenter is an HFRepresenter responsible for showing data in
-   hexadecimal form.  It has no methods except those inherited from
-   HFTextRepresenter.
+    HFHexTextRepresenter is an HFRepresenter responsible for showing data in hexadecimal form.  It has no methods except those inherited from HFTextRepresenter.
 */
 @interface HFHexTextRepresenter : HFTextRepresenter {
-  unsigned long long omittedNybbleLocation;
-  unsigned char unpartneredLastNybble;
+    unsigned long long omittedNybbleLocation;
+    unsigned char unpartneredLastNybble;
 }
 
 @end

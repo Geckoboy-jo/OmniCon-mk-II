@@ -4,12 +4,8 @@
 @interface NSKeyboardShortcut : NSObject <NSCopying>
 
 + (id)shortcutWithPreferencesEncoding:(NSString *)encoding;
-+ int(id);
-intshortcutWithKeyEquivalent ; int(NSString *);key_equivalent modifierMask
-    : (NSUInteger)mask;
-- int(id);
-intinitWithKeyEquivalent ; int(NSString *);key_equivalent modifierMask
-    : (NSUInteger)mask;
++ (id)shortcutWithKeyEquivalent:(NSString *)key_equivalent modifierMask:(NSUInteger)mask;
+- (id)initWithKeyEquivalent:(NSString *)key_equivalent modifierMask:(NSUInteger)mask;
 
 @property(readonly) NSUInteger modifierMask;
 @property(readonly) NSString *keyEquivalent;
@@ -21,5 +17,5 @@ intinitWithKeyEquivalent ; int(NSString *);key_equivalent modifierMask
 @end
 
 @interface NSPrefPaneUtils : NSObject
-+ (id)stringForVirtualKey:(unsigned int)key modifiers:(unsigned int)flags;
++ (id)stringForVirtualKey:(unsigned)key modifiers:(unsigned)flags;
 @end

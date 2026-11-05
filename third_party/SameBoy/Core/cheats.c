@@ -20,6 +20,14 @@ static uint16_t bank_for_addr(GB_gameboy_t *gb, uint16_t addr)
     if (addr < 0x8000) {
         return gb->mbc_rom_bank;
     }
+
+    if (addr >= 0xA000 && addr < 0xC000) {
+        if (gb->mbc_ram_size &&
+            !(gb->cartridge_type->mbc_type == GB_MBC3 && gb->cartridge_type->has_rtc && gb->mbc3.rtc_mapped)) {
+            return ((gb->mbc_ram_bank * 0x2000) & (gb->mbc_ram_size - 1)) / 0x2000;
+        }
+        return gb->mbc_ram_bank;
+    }
     
     if (addr < 0xD000) {
         return 0;
@@ -213,7 +221,7 @@ const GB_cheat_t *GB_import_cheat(GB_gameboy_t *gb, const char *cheat, const cha
             if (address > 0x7FFF) {
                 return false;
             }
-            return GB_add_cheat(gb, description, address, GB_CHEAT_ANY_BANK, value, false, true, enabled);
+            return GB_add_cheat(gb, description, address, GB_CHEAT_ANY_BANK, value, 0, false, enabled);
         }
     }
     return NULL;
@@ -296,12 +304,12 @@ int GB_load_cheats(GB_gameboy_t *gb, const char *path, bool replace_existing)
         goto error;
     }
     if (magic != LE32(CHEAT_MAGIC) && magic != BE32(CHEAT_MAGIC)) {
-        GB_log(gb, "The file is not a SameBoy cheat database");
+        GB_attributed_log(gb, GB_LOG_ERROR, "The file is not a SameBoy cheat database");
         goto error;
     }
     
     if (struct_size != sizeof(GB_cheat_t)) {
-        GB_log(gb, "This cheat database is not compatible with this version of SameBoy");
+        GB_attributed_log(gb, GB_LOG_ERROR, "This cheat database is not compatible with this version of SameBoy");
         goto error;
     }
     
@@ -333,7 +341,7 @@ int GB_save_cheats(GB_gameboy_t *gb, const char *path)
     if (!gb->cheat_count) return 0; // Nothing to save.
     FILE *f = fopen(path, "wb");
     if (!f) {
-        GB_log(gb, "Could not dump cheat database: %s.\n", strerror(errno));
+        GB_attributed_log(gb, GB_LOG_ERROR, "Could not dump cheat database: %s.\n", strerror(errno));
         return errno;
     }
     

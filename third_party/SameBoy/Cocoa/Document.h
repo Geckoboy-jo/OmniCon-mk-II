@@ -1,31 +1,30 @@
-#import "GBCPUView.h"
-#import "GBDebuggerButton.h"
-#import "GBImageView.h"
-#import "GBOSDView.h"
-#import "GBSplitView.h"
-#import "GBView.h"
-#import "GBVisualizerView.h"
 #import <Cocoa/Cocoa.h>
+#import "GBView.h"
+#import "GBImageView.h"
+#import "GBSplitView.h"
+#import "GBVisualizerView.h"
+#import "GBCPUView.h"
+#import "GBOSDView.h"
+#import "GBDebuggerButton.h"
 
 enum model {
-  MODEL_NONE,
-  MODEL_DMG,
-  MODEL_CGB,
-  MODEL_AGB,
-  MODEL_SGB,
-  MODEL_MGB,
-  MODEL_AUTO,
-
-  MODEL_QUICK_RESET = -1,
+    MODEL_NONE,
+    MODEL_DMG,
+    MODEL_CGB,
+    MODEL_AGB,
+    MODEL_SGB,
+    MODEL_MGB,
+    MODEL_AUTO,
+    
+    MODEL_QUICK_RESET = -1,
 };
 
 @class GBCheatWindowController;
 @class GBPaletteView;
 @class GBObjectView;
 
-@interface Document
-    : NSDocument <NSWindowDelegate, GBImageViewDelegate, NSSplitViewDelegate>
-@property(readonly) GB_gameboy_t *gb;
+@interface Document : NSDocument <NSWindowDelegate, GBImageViewDelegate, NSSplitViewDelegate>
+@property (readonly) GB_gameboy_t *gb;
 @property IBOutlet GBView *view;
 @property IBOutlet NSTextView *consoleOutput;
 @property IBOutlet NSPanel *consoleWindow;
@@ -33,7 +32,7 @@ enum model {
 @property IBOutlet NSWindow *mainWindow;
 @property IBOutlet NSView *memoryView;
 @property IBOutlet NSPanel *memoryWindow;
-@property(readonly) GB_gameboy_t *gameboy;
+@property (readonly) GB_gameboy_t *gameboy;
 @property IBOutlet NSTextField *memoryBankInput;
 @property IBOutlet NSToolbarItem *memoryBankItem;
 @property IBOutlet NSPopUpButton *memorySpaceButton;
@@ -58,8 +57,8 @@ enum model {
 @property IBOutlet NSBox *debuggerVerticalLine;
 @property IBOutlet NSPanel *cheatsWindow;
 @property IBOutlet GBCheatWindowController *cheatWindowController;
-@property(readonly) Document *partner;
-@property(readonly) bool isSlave;
+@property (readonly) Document *partner;
+@property (readonly) bool isSlave;
 @property IBOutlet NSView *gbsPlayerView;
 @property IBOutlet NSTextField *gbsTitle;
 @property IBOutlet NSTextField *gbsAuthor;
@@ -70,13 +69,12 @@ enum model {
 @property IBOutlet NSSegmentedControl *gbsNextPrevButton;
 @property IBOutlet GBVisualizerView *gbsVisualizer;
 @property IBOutlet GBOSDView *osdView;
-@property(readonly) GB_oam_info_t *oamInfo;
+@property (readonly) GB_oam_info_t *oamInfo;
 @property uint8_t oamCount;
 @property uint8_t oamHeight;
 @property IBOutlet NSView *audioRecordingAccessoryView;
 @property IBOutlet NSPopUpButton *audioFormatButton;
-@property IBOutlet NSVisualEffectView *debuggerSidebarEffectView API_AVAILABLE(
-    macos(10.10));
+@property IBOutlet NSVisualEffectView *debuggerSidebarEffectView API_AVAILABLE(macos(10.10));
 
 @property IBOutlet GBDebuggerButton *debuggerContinueButton;
 @property IBOutlet GBDebuggerButton *debuggerNextButton;
@@ -89,16 +87,14 @@ enum model {
 
 @property IBOutlet GBCPUView *cpuView;
 @property IBOutlet NSTextField *cpuCounter;
+@property IBOutlet NSSegmentedControl *vramTabs;
 
-+ (NSImage *)imageFromData:(NSData *)data
-                     width:(NSUInteger)width
-                    height:(NSUInteger)height
-                     scale:(double)scale;
-- (void)performAtomicBlock:(void (^)())block;
-- (void)connectLinkCable:(NSMenuItem *)sender;
-- (int)loadStateFile:(const char *)path
-    noErrorOnNotFound:(bool)noErrorOnFileNotFound;
-- (NSString *)captureOutputForBlock:(void (^)())block;
++ (NSImage *) imageFromData:(NSData *)data width:(NSUInteger) width height:(NSUInteger) height scale:(double) scale;
+- (void) performAtomicBlock: (void (^)())block;
+- (void) connectLinkCable:(NSMenuItem *)sender;
+- (int)loadStateFile:(const char *)path noErrorOnNotFound:(bool)noErrorOnFileNotFound;
+- (NSString *)captureOutputForBlock: (void (^)())block;
 - (NSFont *)debuggerFontOfSize:(unsigned)size;
 - (void)setROMModified;
 @end
+

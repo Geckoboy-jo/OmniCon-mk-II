@@ -5,5 +5,5 @@
 + (instancetype)sharedManager;
 - (void)doTapHaptic;
 - (void)setRumbleStrength:(double)rumble;
-@property(weak) GCController *controller;
+@property (weak) GCController *controller;
 @end
