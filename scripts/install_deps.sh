@@ -198,7 +198,7 @@ clone_sameboy() {
 ensure_build_deps() {
     log "Checking build dependencies..."
     apt_install build-essential git curl python3 unzip
-
+    apt_install libopenxr-dev
     # Capability-based checks: only apt-install when the tool/header itself is
     # missing, so equivalent distro packages don't trigger false positives.
     have sdl2-config || apt_install libsdl2-dev
@@ -303,12 +303,22 @@ install_steamvr() {
         warn "Steam is unavailable; install SteamVR manually."
     fi
 }
-install_ALVR()
-{
-    flatpak install flathub org.alvr.ALVR
-    flatpak run org.alvr.ALVR
-    sudo apt install libopenxr-dev
-    sudo apt install monado-service
+install_alvr() {
+    log "Installing ALVR..."
+
+    have flatpak || apt_install flatpak
+
+    flatpak remote-add --if-not-exists flathub \
+        https://flathub.org/repo/flathub.flatpakrepo
+
+    if ! flatpak list | grep -q "org.alvr.ALVR"; then
+        flatpak install --noninteractive flathub org.alvr.ALVR \
+            || warn "Failed to install ALVR."
+    fi
+
+    apt_install monado-service || true
+
+    log "ALVR installed."
 }
 ensure_steam_deps() {
     if windows_steam_root >/dev/null; then
@@ -326,6 +336,14 @@ ensure_runtime_deps() {
     log "Checking runtime dependencies..."
     have curl  || apt_install curl
     have mysql || apt_install default-mysql-client
+
+
+
+
+    
+    if ! have flatpak || ! flatpak list | grep -q "org.alvr.ALVR"; then
+    install_alvr
+    fi
 
     # AppImage emulators need FUSE 2; unzip/7z are used to unpack downloaded ROMs.
     apt_install libfuse2t64 || apt_install libfuse2 \
