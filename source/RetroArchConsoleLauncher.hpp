@@ -14,8 +14,9 @@ protected:
       const std::string &systemName, const char *coreEnvironmentVariable,
       const char *defaultCore, const std::string &contentPath,
       const char *requiredFiles);
+  static void configureGpuEnvironment();
 };
-
+#include <cstdlib>
 // Concrete launchers derive from the class above, so they are pulled in last.
 #include "Atari7800.hpp"
 #include "AtariJaguar.hpp"

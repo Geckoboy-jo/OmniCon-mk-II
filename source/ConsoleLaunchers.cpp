@@ -73,6 +73,7 @@ bool RetroArchConsoleLauncher::launchRetroArchWithSystemFiles(
     const std::string &systemName, const char *coreEnvironmentVariable,
     const char *defaultCore, const std::string &contentPath,
     const char *requiredFiles) {
+  configureGpuEnvironment();
   static const char *const kSystemDirs[] = {"Misc BIOS",
                                             "third_party/libretro/system"};
   auto present = [&](const std::string &name) {
@@ -103,7 +104,15 @@ bool RetroArchConsoleLauncher::launchRetroArchWithSystemFiles(
   return launchRetroArch(systemName, coreEnvironmentVariable, defaultCore,
                          contentPath);
 }
+void RetroArchConsoleLauncher::configureGpuEnvironment()
+{
+    unsetenv("LIBGL_ALWAYS_SOFTWARE");
+    unsetenv("MESA_LOADER_DRIVER_OVERRIDE");
+    unsetenv("GALLIUM_DRIVER");
 
+    // Do not hardcode VK_ICD_FILENAMES unless GPU selection is intentional.
+    unsetenv("VK_ICD_FILENAMES");
+}
 bool RetroArchConsoleLauncher::launchRetroArch(
     const std::string &systemName, const char *coreEnvironmentVariable,
     const char *defaultCore, const std::string &contentPath) {
