@@ -231,6 +231,9 @@ executable is not named `retroarch`. Per-system core paths can be overridden:
 | ColecoVision | `OMNICON_COLECO_CORE` | `bluemsx_libretro.so` |
 | Intellivision | `OMNICON_INTELLIVISION_CORE` | `freeintv_libretro.so` |
 
+For Wii (Dolphin core), default Wiimote bindings map IR cursor movement to the
+mouse (X/Y movement) and A/B to mouse left/right clicks.
+
 Wii U, Switch, Vita, Xbox, and Xbox 360 launch through external emulators:
 `cemu` (`OMNICON_WIIU_LAUNCHER`), `Ryubing` (`OMNICON_SWITCH_LAUNCHER`),
 `Vita3K` (`OMNICON_VITA_LAUNCHER`), `xemu` (`OMNICON_XBOX_LAUNCHER`), and
