@@ -151,6 +151,15 @@ bool RetroArchConsoleLauncher::launchRetroArch(
     command.push_back("--appendconfig");
     command.push_back(controllerConfig.string());
   }
+  const fs::path gpuConfig = fs::absolute("retroarch_gpu.cfg");
+  if (fs::exists(gpuConfig)) {
+    command.push_back("--appendconfig");
+    command.push_back(gpuConfig.string());
+  } else {
+    std::cerr << "[" << systemName
+              << "] GPU override config missing: " << gpuConfig
+              << " (RetroArch may fall back to software rendering).\n";
+  }
   command.insert(command.end(), {"-L", fs::absolute(core).string(),
                                  fs::absolute(contentPath).string()});
   if (!launchExternalChecked(command)) {

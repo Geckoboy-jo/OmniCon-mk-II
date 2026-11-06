@@ -146,6 +146,9 @@ export OMNICON_FLYCAST_CORE=/path/to/flycast_libretro.so
 The default core path is `third_party/libretro/flycast_libretro.so`. The
 launcher appends `retroarch_flycast.cfg`, which points RetroArch at `Misc BIOS`
 and uses borderless windowed fullscreen so Dreamcast games fit the display.
+All RetroArch launches also append `retroarch_gpu.cfg`, which forces
+`video_driver = "vulkan"` and GPU index `0` so cores do not start with software
+rendering defaults.
 The Dreamcast child process also prefers the system WSL graphics libraries to
 avoid an NVIDIA/Mesa Wayland symbol mismatch seen with some AppImage setups.
 Use a current RetroArch frontend; older versions may crash while loading CHD
