@@ -215,8 +215,20 @@ external-process handling lives in `ConsoleLaunchers.cpp`.
 
 RetroArch systems use an installed core or a core placed in
 `third_party/libretro/`. Set `OMNICON_RETROARCH_LAUNCHER` if the RetroArch
-executable is not named `retroarch`. Per-system core paths can be overridden:
+executable is not named `retroarch`.
 
+The repo's `.config/retroarch/` directory is the single source of truth for
+RetroArch settings (frontend config and per-core options such as
+`config/dolphin-emu/dolphin-emu.opt`). On startup OmniCon mirrors that tree
+into the live RetroArch config directory (`$XDG_CONFIG_HOME/retroarch`, or
+`~/.config/retroarch`), so the same settings apply on every device the repo is
+cloned to. The sync only overwrites files that differ and is skipped while
+RetroArch is running (RetroArch rewrites its own config on exit). Edit the
+files under `.config/retroarch/` and commit them to change settings
+permanently; changes made inside the running RetroArch UI are overwritten on
+the next launch.
+
+Per-system core paths can be overridden:
 | System | Core environment variable | Default core filename |
 | --- | --- | --- |
 | Master System | `OMNICON_SMS_CORE` | `genesis_plus_gx_libretro.so` |

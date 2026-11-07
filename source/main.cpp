@@ -158,6 +158,56 @@ bool hasCommand(const std::string &command) {
   return std::system(probe.c_str()) == 0;
 }
 
+// The repo's .config/retroarch is the single source of truth for RetroArch
+// settings so they can be version-controlled and carried to other devices.
+// RetroArch itself reads from $XDG_CONFIG_HOME/retroarch (or ~/.config/
+// retroarch), so mirror the repo tree there on startup. Only files that
+// differ are overwritten, and only when RetroArch is not running (it rewrites
+// its config on exit and would clobber the sync).
+void syncRetroArchConfig() {
+  namespace fs = std::filesystem;
+  std::error_code ec;
+
+  const fs::path source = fs::absolute(".config/retroarch", ec);
+  if (ec || !fs::is_directory(source, ec))
+    return; // Repo has no RetroArch config to publish.
+
+  const char *xdg = std::getenv("XDG_CONFIG_HOME");
+  const char *home = std::getenv("HOME");
+  fs::path target;
+  if (xdg && *xdg)
+    target = fs::path(xdg) / "retroarch";
+  else if (home && *home)
+    target = fs::path(home) / ".config" / "retroarch";
+  else
+    return;
+
+  if (fs::equivalent(source, target, ec))
+    return; // Already the same directory (e.g. XDG_CONFIG_HOME points here).
+
+  // RetroArch rewrites its config on exit; syncing over a running instance
+  // would be undone when it closes.
+  if (std::system("pgrep -x retroarch >/dev/null 2>&1") == 0)
+    return;
+
+  std::size_t copied = 0;
+  for (const auto &entry : fs::recursive_directory_iterator(source, ec)) {
+    if (ec || !entry.is_regular_file())
+      continue;
+    const fs::path rel = entry.path().lexically_relative(source);
+    const fs::path dest = target / rel;
+    fs::create_directories(dest.parent_path(), ec);
+    if (ec)
+      continue;
+    fs::copy_file(entry.path(), dest, fs::copy_options::overwrite_existing, ec);
+    if (!ec)
+      ++copied;
+  }
+  if (copied > 0)
+    std::cout << "[config] Synced RetroArch config to " << target << " ("
+              << copied << " file(s)).\n";
+}
+
 // Windows Steam on a WSL mount (/mnt/<drive>), if any. Mirrors the roots
 // GameLibrary::scanSteam() searches.
 bool windowsSteamInstalled() {
@@ -1695,6 +1745,10 @@ int main() {
 
   // Load any per-console button bindings saved from previous remap sessions.
   GameShell::loadConsoleBindings();
+
+  // Publish the repo's RetroArch config (the source of truth) into the live
+  // config directory before anything launches RetroArch.
+  syncRetroArchConfig();
 
   // Download any missing runtime dependencies (emulators, clients) so a
   // fresh device can get them automatically.

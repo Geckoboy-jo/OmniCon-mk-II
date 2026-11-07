@@ -115,6 +115,13 @@ void RetroArchConsoleLauncher::configureGpuEnvironment() {
 bool RetroArchConsoleLauncher::launchRetroArch(
     const std::string &systemName, const char *coreEnvironmentVariable,
     const char *defaultCore, const std::string &contentPath) {
+  // Some in-process emulator backends (e.g. GameCube/3DS) set
+  // LIBGL_ALWAYS_SOFTWARE=1 for their own software GL context. That variable
+  // leaks into the RetroArch child process and forces llvmpipe software
+  // rendering (~16 FPS) even on real GPUs. Clear it for every RetroArch
+  // launch, not just the ones that go through launchRetroArchWithSystemFiles.
+  configureGpuEnvironment();
+
   const char *configuredCore = std::getenv(coreEnvironmentVariable);
   const std::string core =
       configuredCore && *configuredCore
