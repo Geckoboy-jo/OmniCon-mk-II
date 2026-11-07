@@ -2479,9 +2479,9 @@ void GameShell::launchGame(const GameEntry &game) {
     const std::string gpuConfigPath =
         fs::absolute("retroarch_gpu.cfg").string();
     if (!fs::exists(gpuConfigPath)) {
-      std::cerr
-          << "[Dreamcast] GPU override config not found: " << gpuConfigPath
-          << " (RetroArch may fall back to software rendering).\n";
+      std::cerr << "[Dreamcast] GPU override config not found: "
+                << gpuConfigPath
+                << " (RetroArch may fall back to software rendering).\n";
     }
     const std::string contentPath = fs::absolute(path).string();
     std::cerr << "[Dreamcast] Launching " << launcher << " with core "
@@ -2497,9 +2497,8 @@ void GameShell::launchGame(const GameEntry &game) {
         "/usr/lib/x86_64-linux-gnu/libwayland-client.so.0";
     if (fs::exists(systemWayland))
       dcCommand.push_back("LD_PRELOAD=" + systemWayland);
-    dcCommand.insert(dcCommand.end(),
-                     {"LD_LIBRARY_PATH=" + libraryPath, launcher,
-                      "--appendconfig", configPath});
+    dcCommand.insert(dcCommand.end(), {"LD_LIBRARY_PATH=" + libraryPath,
+                                       launcher, "--appendconfig", configPath});
     if (fs::exists(gpuConfigPath)) {
       dcCommand.push_back("--appendconfig");
       dcCommand.push_back(gpuConfigPath);
