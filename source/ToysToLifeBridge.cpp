@@ -157,8 +157,9 @@ bool filenameMatches(const std::string &path,
                      const std::initializer_list<const char *> &keywords,
                      std::string &matched) {
   std::string name = fs::path(path).filename().string();
-  std::transform(name.begin(), name.end(), name.begin(),
-                 [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+  std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c) {
+    return static_cast<char>(std::tolower(c));
+  });
   std::replace(name.begin(), name.end(), '_', ' ');
   for (const char *keyword : keywords) {
     if (name.find(keyword) != std::string::npos) {
@@ -188,12 +189,12 @@ ToysToLifeProfile detectToysToLifeProfile(SystemType system,
                                           const std::string &contentPath) {
   ToysToLifeProfile profile;
   if (systemSupportsSkylanders(system)) {
-    profile.skylanders = filenameMatches(
-        contentPath,
-        {"skylander", "spyro's adventure", "spyros adventure", "swap force",
-         "swap-force", "trap team", "superchargers", "super chargers",
-         "imaginators"},
-        profile.keyword);
+    profile.skylanders =
+        filenameMatches(contentPath,
+                        {"skylander", "spyro's adventure", "spyros adventure",
+                         "swap force", "swap-force", "trap team",
+                         "superchargers", "super chargers", "imaginators"},
+                        profile.keyword);
     profile.infinity = filenameMatches(
         contentPath,
         {"disney infinity", "infinity 1.0", "infinity 2.0", "infinity 3.0"},
@@ -230,9 +231,9 @@ void ToysToLifeBridge::prepareForLaunch(SystemType system,
   }
 
   const std::string title = fs::path(contentPath).stem().string();
-  const char *systemName = system == SystemType::Wii     ? "wii"
-                           : system == SystemType::PS3  ? "ps3"
-                           : system == SystemType::WiiU ? "wiiu"
+  const char *systemName = system == SystemType::Wii              ? "wii"
+                           : system == SystemType::PS3            ? "ps3"
+                           : system == SystemType::WiiU           ? "wiiu"
                            : system == SystemType::NintendoSwitch ? "switch"
                            : system == SystemType::ThreeDS        ? "3ds"
                                                                   : "misc";
