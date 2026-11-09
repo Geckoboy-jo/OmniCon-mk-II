@@ -1,0 +1,5 @@
+# amiibo display names, one per line: <amiibo id hex prefix>,<name>
+# The amiibo id is the 8-byte value at offset 0x54 of the NTAG215 image;
+# the longest matching hex prefix wins.
+# Example:
+# 01020000,Link (The Legend of Zelda)

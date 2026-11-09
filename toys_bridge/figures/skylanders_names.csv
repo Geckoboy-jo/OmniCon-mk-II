@@ -1,0 +1,5 @@
+# Skylanders display names, one per line: <figure id>,<name>
+# The figure id is the decimal u16 stored at offset 0x10 in the dump.
+# Display-only: the raw id is always shown too, and unknown ids are fine.
+# Example:
+# 20,Spyro

@@ -1,0 +1,4 @@
+# Disney Infinity display names, one per line: <uid hex>,<name>
+# The uid is the 7-byte tag uid at the start of the dump (14 hex chars).
+# Example:
+# 04a1b2c3d4e5f6,Mr. Incredible

@@ -271,6 +271,18 @@ its own Windows profile and is not touched. Xbox One and Xbox
 Series have no emulator backend; their games come from Xbox Cloud Gaming instead
 (see below).
 
+### Toys-to-life (Skylanders, Disney Infinity, amiibo)
+
+A separate bridge app simulates toys-to-life hardware — the Skylanders
+Portal of Power, the Disney Infinity base, and amiibo (NTAG215) tags — so
+games that need physical toys are playable with figure dumps you own.
+Launching a matching title (Skylanders / Disney Infinity on Wii, PS3, Wii U,
+Xbox 360, or Switch) starts the app automatically and stages the selected
+figures into `toys_bridge/active/<system>/` for the emulator's own emulated
+portal/base/NFC support. Run `python3 toys_bridge/bridge_app.py` to place or
+swap figures. See [toys_bridge/README.md](toys_bridge/README.md) for the
+protocol, emulator setup, and figure library layout.
+
 ### Xbox One and Xbox Series X|S (Xbox Cloud Gaming)
 
 OmniCon can list the games available to your Microsoft account on Xbox Cloud

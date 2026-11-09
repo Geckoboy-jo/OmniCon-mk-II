@@ -24,6 +24,7 @@
 #include "SegaGenesis.hpp"
 #include "ShellMessage.hpp"
 #include "SteamVR.hpp"
+#include "ToysToLifeBridge.hpp"
 
 #include <algorithm>
 #include <cerrno>
@@ -2191,6 +2192,10 @@ void GameShell::launchGame(const GameEntry &game) {
       }
     }
   }
+  // Toys-to-life titles (Skylanders portal, Disney Infinity base) get the
+  // bridge app started and their selected figures staged; amiibo-capable
+  // systems only pick up selections from an already-running app.
+  ToysToLifeBridge::prepareForLaunch(sys, path);
   switch (sys) {
   case SystemType::NES: {
     NESEmulation nes;
