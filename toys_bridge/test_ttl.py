@@ -147,6 +147,28 @@ class TestInfinityBase(unittest.TestCase):
         self.assertNotIn(SLOT_HEXAGON, base.occupied_slots())
 
 
+class TestNfcFolder(unittest.TestCase):
+    """Dumps dropped loose in figures/nfc/ are classified by content."""
+
+    def test_auto_classification(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            nfc = os.path.join(tmp, "nfc")
+            os.makedirs(nfc)
+            with open(os.path.join(nfc, "link.bin"), "wb") as handle:
+                handle.write(make_amiibo_image())
+            with open(os.path.join(nfc, "spyro.bin"), "wb") as handle:
+                handle.write(make_skylander_image())
+            with open(os.path.join(nfc, "token.bin"), "wb") as handle:
+                handle.write(bytes(range(256)))  # 0x100 -> infinity token
+            library = scan_library(tmp)
+            self.assertEqual(len(library["amiibo"]), 1)
+            self.assertEqual(library["amiibo"][0].figure_id, 0x0102)
+            self.assertEqual(len(library["skylanders"]), 1)
+            self.assertEqual(library["skylanders"][0].figure_id, 20)
+            self.assertEqual(len(library["infinity"]), 1)
+            self.assertTrue(library["infinity"][0].valid)
+
+
 class TestBridgeTcp(unittest.TestCase):
     """End-to-end: real TCP server, real figure library in a temp dir."""
 

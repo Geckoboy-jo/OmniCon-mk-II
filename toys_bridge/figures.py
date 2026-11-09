@@ -156,7 +156,13 @@ def inspect_figure(kind: str, path: str, figures_root: str) -> FigureInfo:
 
 
 def scan_library(figures_root: str) -> dict:
-    """-> {kind: [FigureInfo, ...]} for every dump under figures/<kind>/."""
+    """-> {kind: [FigureInfo, ...]} for every dump under figures/<kind>/.
+
+    Dumps dropped loose into figures/nfc/ (the general character-dump
+    folder) are auto-classified by content: 540 bytes -> amiibo (NTAG215),
+    0x400 bytes -> skylanders (MIFARE Classic 1K), anything else in the
+    Infinity token range -> infinity.
+    """
     library = {}
     for kind in KINDS:
         entries = []
@@ -168,6 +174,24 @@ def scan_library(figures_root: str) -> dict:
                 entries.append(inspect_figure(kind, os.path.join(folder, name),
                                               figures_root))
         library[kind] = entries
+
+    nfc_folder = os.path.join(figures_root, "nfc")
+    if os.path.isdir(nfc_folder):
+        for name in sorted(os.listdir(nfc_folder)):
+            if os.path.splitext(name)[1].lower() not in _DUMP_EXTS:
+                continue
+            path = os.path.join(nfc_folder, name)
+            try:
+                size = os.path.getsize(path)
+            except OSError:
+                continue
+            if size == AMIIBO_SIZE:
+                kind = "amiibo"
+            elif size == SKYLANDERS_SIZE:
+                kind = "skylanders"
+            else:
+                kind = "infinity"
+            library[kind].append(inspect_figure(kind, path, figures_root))
     return library
 
 

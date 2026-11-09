@@ -29,8 +29,11 @@ Interactive commands: `list`, `place <kind> <figure> [slot]`,
 `save`, `rescan`, `quit`.
 
 Put figure dumps in `toys_bridge/figures/skylanders/`, `.../infinity/`, or
-`.../amiibo/`. Optional `figures/<kind>_names.csv` files map ids to display
-names (format documented in the shipped CSVs).
+`.../amiibo/`. Dumps dropped loose into `toys_bridge/figures/nfc/` (the
+general character-dump folder) are auto-classified by content: 540 bytes ->
+amiibo, 0x400 bytes -> Skylanders, anything else in the token range ->
+Disney Infinity. Optional `figures/<kind>_names.csv` files map ids to
+display names (format documented in the shipped CSVs).
 
 ## How OmniCon uses it
 
