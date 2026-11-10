@@ -1,4 +1,5 @@
 #include "NES.hpp"
+#include "SaveManager.hpp"
 #include "audio_clock.hpp"
 #include <algorithm>
 #include <cctype>
@@ -1474,7 +1475,7 @@ void NESEmulation::runInteractive() {
   std::cout << "\n=== NES Emulator Running ===\n";
   std::cout << "ROM: " << romPath << "\n";
   std::cout << "Window opened. Close it to exit.\n";
-  std::cout << "Press ESC to exit emulator.\n\n";
+  std::cout << "Press 1 to load the save state, 2 to save, or ESC to exit.\n\n";
 
   agnes_input_t input = {};
   bool running = true;
@@ -1485,6 +1486,41 @@ void NESEmulation::runInteractive() {
     cleanupSDL();
     return;
   }
+
+  auto resumeWorker = [&]() {
+    if (running && isRunning.load() && !startEmulationWorker()) {
+      std::cerr << "Failed to restart NES emulation worker after save-state "
+                   "operation.\n";
+      running = false;
+    }
+  };
+  auto saveState = [&]() {
+    stopEmulationWorker();
+    const std::vector<unsigned char> data = dumpSaveData();
+    if (data.empty()) {
+      std::cerr << "Could not create NES save state.\n";
+    } else if (SaveManager::instance().put(romPath, data)) {
+      std::cout << "NES save state saved.\n";
+    } else {
+      std::cerr << "Could not write NES save state.\n";
+    }
+    resumeWorker();
+  };
+  auto loadState = [&]() {
+    std::vector<unsigned char> data;
+    if (!SaveManager::instance().get(romPath, data)) {
+      std::cout << "No NES save state found for this game.\n";
+      return;
+    }
+
+    stopEmulationWorker();
+    if (restoreSaveData(data)) {
+      std::cout << "NES save state loaded.\n";
+    } else {
+      std::cerr << "Could not load NES save state.\n";
+    }
+    resumeWorker();
+  };
 
   while (running && !windowClosed) {
     // Handle SDL events
@@ -1497,6 +1533,16 @@ void NESEmulation::runInteractive() {
         break;
 
       case SDL_KEYDOWN:
+        if (event.key.repeat == 0) {
+          if (event.key.keysym.sym == SDLK_1) {
+            loadState();
+            break;
+          }
+          if (event.key.keysym.sym == SDLK_2) {
+            saveState();
+            break;
+          }
+        }
         if (inputMode == InputMode::KeyboardOnly ||
             inputMode == InputMode::KeyboardAndController) {
           handleKeyboardEvent(event.key.keysym.sym, true, input, running);

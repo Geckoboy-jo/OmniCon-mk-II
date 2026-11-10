@@ -177,6 +177,12 @@ keep the coloured placeholder; their names are listed in
 (`pip install pillow`). `--quality`, `--max-size` and `--allow-title-screens`
 can be passed when running `scripts/scrape_db_covers.py` directly.
 
+## NES save states
+
+While a built-in NES game is running, press **2** to save a state or **1** to
+load it. OmniCon keeps one state per ROM in its save database; the latest state
+is also restored automatically the next time that game is launched.
+
 ## Steam library
 
 OmniCon lists installed Steam games, owned games from the Steam Web API
