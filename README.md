@@ -1,6 +1,44 @@
 # OmniCon-mk-II
 Private repo
 
+## Docker image publishing
+
+Every push to `main` runs `.github/workflows/docker-publish.yml`, builds the
+Linux AMD64 image from the Dockerfile, and publishes it to Docker Hub as:
+
+* `<dockerhub-username>/omnicon:latest`
+* `<dockerhub-username>/omnicon:main-<run-number>-<12-character-commit-sha>`
+
+Create the `omnicon` repository under your Docker Hub account first (choose
+private visibility if the image should not be public). In this GitHub
+repository's **Settings > Secrets and variables > Actions**, add:
+
+* `DOCKERHUB_USERNAME`: your Docker Hub username.
+* `DOCKERHUB_TOKEN`: a Docker Hub personal access token with **Read, Write,
+  Delete** permissions.
+
+After a successful publish, the workflow deletes **all other tags** in that
+Docker Hub repository, including manually created tags. Only `latest` and the
+new version remain; older versions are not available for rollback. Failed
+builds or pushes do not run cleanup. Deleting tags does not immediately reclaim
+registry storage; Docker Hub manages unreferenced image data.
+
+Publishing runs are serialized to prevent overlapping pushes and cleanup.
+Up to 100 pending runs can queue; GitHub cancels additional runs if that queue
+fills. Re-running a workflow uses the same version tag.
+Leave Docker Hub tag immutability disabled so `latest` can be replaced.
+
+Pull and run the newest image with:
+
+```sh
+docker pull <dockerhub-username>/omnicon:latest
+docker run --rm -it <dockerhub-username>/omnicon:latest
+```
+
+The REPL needs an interactive terminal. Graphical emulators additionally need
+display/device forwarding and their own runtime setup; the image disables the
+automatic runtime dependency installer.
+
 ## Dependencies
 
 OmniCon bootstraps itself on a new device. `make` (via the `deps` target) runs
