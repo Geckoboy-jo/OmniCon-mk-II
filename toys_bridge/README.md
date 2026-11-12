@@ -36,7 +36,7 @@ Disney Infinity. Optional `figures/<kind>_names.csv` files map ids to
 display names (format documented in the shipped CSVs).
 
 ## How OmniCon uses it
-
+//
 When you launch a title whose filename matches a toys-to-life game
 (Skylanders / Disney Infinity on Wii, PS3, Wii U, Xbox 360, Switch), OmniCon
 starts the app automatically, announces the game, and copies the figures
