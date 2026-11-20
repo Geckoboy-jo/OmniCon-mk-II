@@ -272,6 +272,12 @@ files under `.config/retroarch/` and commit them to change settings
 permanently; changes made inside the running RetroArch UI are overwritten on
 the next launch.
 
+On WSL, the USB controller bridge requests 1 ms Windows timer resolution while
+it runs so its 4 ms input polling interval is not rounded up by the default
+Windows timer. This can increase power use. Restart the controller bridge
+after updating it (restarting OmniCon alone may leave the old bridge running);
+timer errors are logged to `/tmp/omnicon_bridge.log`.
+
 Per-system core paths can be overridden:
 | System | Core environment variable | Default core filename |
 | --- | --- | --- |

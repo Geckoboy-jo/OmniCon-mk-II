@@ -350,7 +350,19 @@ def main():
     sys.stderr.write('[winmm] WinMM active (Switch Pro / HID gamepad support).\n')
     sys.stderr.flush()
 
-    run_bridge(xi)
+    winmm = ctypes.windll.winmm
+    timer_result = winmm.timeBeginPeriod(1)
+    if timer_result != 0:
+        sys.stderr.write(f'[bridge] Could not request 1 ms timer resolution: {timer_result}\n')
+        sys.stderr.flush()
+    try:
+        run_bridge(xi)
+    finally:
+        if timer_result == 0:
+            end_result = winmm.timeEndPeriod(1)
+            if end_result != 0:
+                sys.stderr.write(f'[bridge] Could not release timer resolution: {end_result}\n')
+                sys.stderr.flush()
 
 if __name__ == '__main__':
     main()
