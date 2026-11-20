@@ -1,1 +1,1 @@
-03000000c62400001a53000010010000,OmniCon Controller,a:b0,b:b2,x:b4,y:b1,leftshoulder:b1,rightshoulder:b0,lefttrigger:a1~,righttrigger:a1~,back:b1,start:b0,leftstick:b2,rightstick:b1,leftx:a1~,lefty:a1~,rightx:a1~,righty:a1~,dpup:h0.1,dpdown:h0.4,dpleft:h0.8,dpright:h0.2,platform:Linux,
+03000000c62400001a53000010010000,OmniCon Controller,a:b0,b:b1,x:b3,y:b2,leftshoulder:b4,rightshoulder:b5,lefttrigger:a2,righttrigger:a5,back:b6,start:b7,leftstick:b8,rightstick:b9,leftx:a0,lefty:a1,rightx:a3,righty:a4,dpup:h0.1,dpdown:h0.4,dpleft:h0.8,dpright:h0.2,platform:Linux,
